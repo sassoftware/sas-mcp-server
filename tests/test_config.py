@@ -1,3 +1,6 @@
+# Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 Tests for the config module.
 """
@@ -6,7 +9,6 @@ import os
 import importlib
 import sys
 from unittest.mock import patch
-
 
 def test_config_loading_with_env_vars(mock_env_vars):
     """Test that configuration values are loaded from environment variables."""
@@ -37,7 +39,6 @@ def test_config_loading_with_env_vars(mock_env_vars):
     assert TOKEN_ENDPOINT == "https://test.viya.com/SASLogon/oauth/token"
     assert JWKS_URI == "https://test.viya.com/SASLogon/token_keys"
 
-
 def test_config_viya_endpoint_trailing_slash(monkeypatch):
     """Test that trailing slashes are removed from VIYA_ENDPOINT."""
     # Remove config module from cache if it exists
@@ -53,7 +54,6 @@ def test_config_viya_endpoint_trailing_slash(monkeypatch):
     from sas_mcp_server import config as config_module
     
     assert config_module.VIYA_ENDPOINT == "https://test.viya.com"
-
 
 def test_config_missing_viya_endpoint(monkeypatch):
     """Test that missing VIYA_ENDPOINT raises an exception."""
@@ -74,7 +74,6 @@ def test_config_missing_viya_endpoint(monkeypatch):
     with patch('dotenv.load_dotenv'):
         with pytest.raises(Exception, match="VIYA_ENDPOINT is not set"):
             import sas_mcp_server.config as config_module
-
 
 def test_config_default_values(monkeypatch):
     """Test default values when optional env vars are not set."""
