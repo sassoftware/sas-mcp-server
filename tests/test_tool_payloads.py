@@ -161,19 +161,28 @@ async def test_get_castable_data_request(mcp_server_with_mock_client):
 
 
 async def test_upload_data_request(mcp_server_with_mock_client):
-    mcp, mock_client = mcp_server_with_mock_client
-    async with Client(mcp) as client:
-        await client.call_tool("upload_data", {
-            "server_id": "cas1", "caslib_name": "Public",
-            "table_name": "MY_TABLE", "csv_data": "a,b\n1,2\n3,4"
-        })
+    mcp, _ = mcp_server_with_mock_client
+    captured = {}
 
-    url = mock_client.put.call_args[0][0]
-    assert "/casManagement/servers/cas1/caslibs/Public/tables/MY_TABLE" in url
-    content = mock_client.put.call_args[1]["content"]
-    assert content == b"a,b\n1,2\n3,4"
-    headers = mock_client.put.call_args[1]["headers"]
-    assert headers["Content-Type"] == "text/csv"
+    async def mock_run_one_snippet(code, snippet_id, token):
+        captured["code"] = code
+        return (snippet_id, "completed", "NOTE: success", "")
+
+    with patch("sas_mcp_server.tools.run_one_snippet", side_effect=mock_run_one_snippet):
+        async with Client(mcp) as client:
+            result = (await client.call_tool("upload_data", {
+                "server_id": "cas1", "caslib_name": "Public",
+                "table_name": "MY_TABLE", "csv_data": "a,b\n1,2\n3,4"
+            })).data
+
+    assert result["status"] == "success"
+    assert result["table"] == "Public.MY_TABLE"
+    assert result["rows_uploaded"] == 2
+    code = captured["code"]
+    assert 'caslib="Public"' in code
+    assert "MY_TABLE" in code
+    assert "promote=yes" in code
+    assert "1,2" in code
 
 
 async def test_promote_table_to_memory_request(mcp_server_with_mock_client):
@@ -185,8 +194,8 @@ async def test_promote_table_to_memory_request(mcp_server_with_mock_client):
 
     url = mock_client.post.call_args[0][0]
     assert "/casManagement/servers/cas1/caslibs/Public/tables/MY_TABLE" in url
-    params = mock_client.post.call_args[1]["params"]
-    assert params == {"scope": "global"}
+    body = mock_client.post.call_args[1]["json"]
+    assert body == {"scope": "global"}
 
 
 async def test_list_files_request(mcp_server_with_mock_client):

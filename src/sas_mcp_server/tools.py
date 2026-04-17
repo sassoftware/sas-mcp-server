@@ -6,7 +6,11 @@ Shared tool registration for both HTTP and stdio MCP servers.
 All tools are registered via ``register_tools(mcp, get_token)``.
 """
 
+import io as _io
+import csv as _csv
+import re as _re
 from typing import Optional
+import httpx as _httpx
 from fastmcp import Context
 from fastmcp.tools.tool import ToolResult
 from .viya_utils import (
@@ -188,10 +192,63 @@ def register_tools(mcp, get_token):
         """
         logger.info("--- TOOL USED: upload_data ---")
         token = await get_token(ctx)
-        async with _make_client(token) as client:
-            return await _put_data(
-                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
-                client, data=csv_data.encode("utf-8"))
+
+        reader = _csv.reader(_io.StringIO(csv_data.strip()))
+        rows = list(reader)
+        if not rows:
+            return {"status": "error", "message": "Empty CSV data"}
+
+        headers = [h.strip() for h in rows[0]]
+        data_rows = rows[1:]
+
+        def _sanitize(name):
+            name = _re.sub(r'[^a-zA-Z0-9_]', '_', name)
+            if name and name[0].isdigit():
+                name = '_' + name
+            return name[:32] or '_col'
+
+        sas_headers = [_sanitize(h) for h in headers]
+
+        def _is_numeric(col_idx):
+            for row in data_rows:
+                val = row[col_idx].strip() if col_idx < len(row) else ""
+                if val:
+                    try:
+                        float(val)
+                    except ValueError:
+                        return False
+            return True
+
+        input_parts = [col if _is_numeric(i) else f"{col} $"
+                       for i, col in enumerate(sas_headers)]
+
+        buf = _io.StringIO()
+        _csv.writer(buf).writerows(data_rows)
+        datalines_content = buf.getvalue().rstrip("\n")
+
+        sas_code = (
+            f'cas _mcp_;\n'
+            f'libname _mcplib_ cas caslib="{caslib_name}" sessref=_mcp_;\n'
+            f'data _mcplib_.{table_name} (promote=yes);\n'
+            f'  infile datalines dsd;\n'
+            f'  input {" ".join(input_parts)};\n'
+            f'  datalines;\n'
+            f'{datalines_content}\n'
+            f';\n'
+            f'run;\n'
+            f'cas _mcp_ terminate;\n'
+        )
+
+        _, state, log, _ = await run_one_snippet(sas_code, "upload", token)
+
+        if state == "error" or "ERROR:" in log:
+            return {"status": "error", "log": log[:2000]}
+        return {
+            "status": "success",
+            "table": f"{caslib_name}.{table_name}",
+            "rows_uploaded": len(data_rows),
+            "columns": len(headers),
+        }
 
     @mcp.tool()
     async def promote_table_to_memory(server_id: str, caslib_name: str,
@@ -206,9 +263,14 @@ def register_tools(mcp, get_token):
         logger.info("--- TOOL USED: promote_table_to_memory ---")
         token = await get_token(ctx)
         async with _make_client(token) as client:
-            return await _post_json(
-                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
-                client, params={"scope": "global"})
+            try:
+                return await _post_json(
+                    f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
+                    client, body={"scope": "global"})
+            except _httpx.HTTPStatusError as e:
+                if e.response.status_code == 409:
+                    return {"status": "already_promoted", "table": f"{caslib_name}.{table_name}"}
+                raise
 
     @mcp.tool()
     async def list_files(ctx: Context, limit: int = 50,

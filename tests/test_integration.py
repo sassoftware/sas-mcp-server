@@ -7,6 +7,7 @@ Integration tests that call MCP tools against a real SAS Viya instance.
 Requires VIYA_ENDPOINT, VIYA_USERNAME, and VIYA_PASSWORD environment variables.
 Run with:  uv run python -m pytest -m integration
 """
+import json
 import pytest
 from fastmcp import Client
 
@@ -148,9 +149,9 @@ run;
 proc print data=work.mcp_test;
 run;
 """
-        result = (await client.call_tool("execute_sas_code", {
-            "sas_code": code
-        })).data
+        tool_result = await client.call_tool("execute_sas_code", {"sas_code": code})
+        # execute_sas_code returns a tuple serialized as JSON text content
+        result = json.loads(tool_result.content[0].text)
         assert isinstance(result, (tuple, list))
         assert len(result) == 4
         snippet_id, state, log, listing = result
