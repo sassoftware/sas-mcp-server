@@ -32,7 +32,14 @@
 - `examples/configuration.md` — Added Python registration script instructions and `SSL_VERIFY` to environment variables table
 
 ### Fixed
+- `upload_data` — Rewrote to use the CAS Management REST API (`POST /casManagement/servers/{server}/caslibs/{caslib}/tables` with `multipart/form-data`) instead of a SAS DATA step workaround; handles 409 (table already exists) gracefully
+- `_make_client` — Removed default `Content-Type: application/json` header that conflicted with multipart form-data uploads
 - `create_ml_project` — Fixed request body to match the MLPA API spec: `predictionType` → `targetLevel`, moved `targetVariable` inside `analyticsProjectAttributes`, added required `type`, `pipelineBuildMethod`, and `settings` fields, added `targetEventLevel` for binary/nominal classification
+- `get_castable_data` — Rewrote to use the dataTables/rowSets APIs instead of the non-existent `/casManagement/.../rows` endpoint: fetches column metadata via `GET /dataTables/dataSources/.../columns` (with full pagination), then row data via `GET /rowSets/tables/.../rows`; returns structured `{columns, rows}` with named fields; default row limit increased from 20 to 100
+- `get_report_image` — Fixed Content-Type to use `application/vnd.sas.report.images.job.request+json` (SAS media type) instead of `application/json`; switched from `json=` to `content=` to prevent httpx from overriding the Content-Type header
+- `get_job_log` — Rewrote to fetch log from the Files service (via the job's `results` map) instead of the non-existent `/jobExecution/jobs/{id}/log` endpoint; returns error message when job fails before producing a log
+- `run_ml_project` — Rewrote from `POST ?action=start` to correct `GET` (with ETag) → `PUT ?action=retrainProject` pattern with full project body, `If-Match`, `Accept-Language` headers, and `content=` instead of `json=` to preserve Content-Type
+- `submit_batch_job` — Added `arguments: {"_contextName": ...}` to route jobs to the correct compute context
 - `pyproject.toml` — Corrected `authors` field to PEP 621 format (`[{name = "..."}]`) fixing Docker build error
 - `.dockerignore` — Added `!README.md` exception so `uv build` can find the readme during container builds
 - `.env.sample` — Corrected `CONTEXT_NAME` to `COMPUTE_CONTEXT_NAME` to match the actual env var read by config

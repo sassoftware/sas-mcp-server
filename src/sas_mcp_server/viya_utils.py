@@ -36,7 +36,9 @@ async def _get_paged_items(url, client, limit=20, start=0, filters=None, extra_p
 async def _post_json(url, client, body=None, params=None, accept="application/json"):
     """POST JSON to a Viya REST endpoint and return the response JSON."""
     full_url = f"{VIYA_ENDPOINT}{url}"
-    resp = await client.post(full_url, json=body, headers={"Accept": accept},
+    resp = await client.post(full_url, json=body,
+                             headers={"Content-Type": "application/json",
+                                      "Accept": accept},
                              params=params or {})
     resp.raise_for_status()
     if resp.status_code == 204 or not resp.content:
@@ -67,7 +69,7 @@ def _make_client(token):
     """Create an httpx.AsyncClient with auth headers for Viya API calls."""
     if not token.startswith("Bearer "):
         token = f"Bearer {token}"
-    headers = {"Authorization": token, "Content-Type": "application/json"}
+    headers = {"Authorization": token}
     return httpx.AsyncClient(headers=headers, verify=SSL_VERIFY, timeout=300.0)
 
 

@@ -12,6 +12,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastmcp import Client
+from conftest import _make_mock_response
 
 
 EXPECTED_TOOLS = [
@@ -143,16 +144,51 @@ async def test_get_castable_columns_request(mcp_server_with_mock_client):
 
 async def test_get_castable_data_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
+
+    col_resp = _make_mock_response({
+        "items": [
+            {"name": "x", "type": "double", "index": 0},
+            {"name": "y", "type": "double", "index": 1},
+        ],
+        "count": 2,
+    })
+    row_resp = _make_mock_response({
+        "items": [{"cells": ["1", "2"]}, {"cells": ["3", "4"]}],
+        "count": 2,
+    })
+
+    original_get = mock_client.get.return_value
+
+    def route_get(url, **kwargs):
+        if "/dataTables/dataSources/" in url and "/columns" in url:
+            return col_resp
+        if "/rowSets/tables/" in url and "/rows" in url:
+            return row_resp
+        return original_get
+
+    mock_client.get.side_effect = route_get
+
     async with Client(mcp) as client:
-        await client.call_tool("get_castable_data", {
+        result = await client.call_tool("get_castable_data", {
             "server_id": "cas1", "caslib_name": "Public",
             "table_name": "HMEQ", "limit": 5, "start": 10
         })
 
-    url = mock_client.get.call_args[0][0]
-    assert "/casManagement/servers/cas1/caslibs/Public/tables/HMEQ/rows" in url
-    params = mock_client.get.call_args[1]["params"]
-    assert params == {"start": 10, "limit": 5}
+    mock_client.get.side_effect = None
+    mock_client.get.return_value = original_get
+
+    calls = mock_client.get.call_args_list
+    col_call = next(c for c in calls if "/dataTables/dataSources/" in c[0][0])
+    row_call = next(c for c in calls if "/rowSets/tables/" in c[0][0])
+
+    assert "/dataTables/dataSources/cas~fs~cas1~fs~Public/tables/HMEQ/columns" in col_call[0][0]
+    assert col_call[1]["params"]["limit"] == 100
+
+    assert "/rowSets/tables/cas~fs~cas1~fs~Public~fs~HMEQ/rows" in row_call[0][0]
+    assert row_call[1]["params"] == {"start": 10, "limit": 5}
+
+    assert result.data["columns"] == ["x", "y"]
+    assert result.data["rows"] == [{"x": "1", "y": "2"}, {"x": "3", "y": "4"}]
 
 
 # -----------------------------------------------------------------------
@@ -162,18 +198,31 @@ async def test_get_castable_data_request(mcp_server_with_mock_client):
 
 async def test_upload_data_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
+    mock_client.post.return_value.json = MagicMock(return_value={
+        "name": "MY_TABLE",
+        "rowCount": 2,
+        "columnCount": 2,
+        "caslibName": "Public",
+        "scope": "global",
+    })
     async with Client(mcp) as client:
-        await client.call_tool("upload_data", {
+        result = await client.call_tool("upload_data", {
             "server_id": "cas1", "caslib_name": "Public",
             "table_name": "MY_TABLE", "csv_data": "a,b\n1,2\n3,4"
         })
 
-    url = mock_client.put.call_args[0][0]
-    assert "/casManagement/servers/cas1/caslibs/Public/tables/MY_TABLE" in url
-    content = mock_client.put.call_args[1]["content"]
-    assert content == b"a,b\n1,2\n3,4"
-    headers = mock_client.put.call_args[1]["headers"]
-    assert headers["Content-Type"] == "text/csv"
+    url = mock_client.post.call_args[0][0]
+    assert "/casManagement/servers/cas1/caslibs/Public/tables" in url
+    kwargs = mock_client.post.call_args[1]
+    assert kwargs["data"]["tableName"] == "MY_TABLE"
+    assert kwargs["data"]["format"] == "csv"
+    assert kwargs["data"]["containsHeaderRow"] == "true"
+    assert "file" in kwargs["files"]
+    file_tuple = kwargs["files"]["file"]
+    assert file_tuple[0] == "data.csv"
+    assert file_tuple[2] == "text/csv"
+    assert result.data["status"] == "success"
+    assert result.data["rows_uploaded"] == 2
 
 
 async def test_promote_table_to_memory_request(mcp_server_with_mock_client):
@@ -185,8 +234,8 @@ async def test_promote_table_to_memory_request(mcp_server_with_mock_client):
 
     url = mock_client.post.call_args[0][0]
     assert "/casManagement/servers/cas1/caslibs/Public/tables/MY_TABLE" in url
-    params = mock_client.post.call_args[1]["params"]
-    assert params == {"scope": "global"}
+    body = mock_client.post.call_args[1]["json"]
+    assert body == {"scope": "global"}
 
 
 async def test_list_files_request(mcp_server_with_mock_client):
@@ -280,14 +329,16 @@ async def test_get_report_image_request(mcp_server_with_mock_client):
 
     url = mock_client.post.call_args[0][0]
     assert "/reportImages/jobs" in url
-    body = mock_client.post.call_args[1]["json"]
+    kwargs = mock_client.post.call_args[1]
+    body = json.loads(kwargs["content"])
     assert body["reportUri"] == "/reports/reports/rpt-456"
     assert body["layoutType"] == "thumbnail"
     assert body["selectionType"] == "perSection"
     assert body["sectionIndex"] == 2
     assert body["size"] == "800x600"
     assert body["renderLimit"] == 1
-    headers = mock_client.post.call_args[1]["headers"]
+    headers = kwargs["headers"]
+    assert headers["Content-Type"] == "application/vnd.sas.report.images.job.request+json"
     assert headers["Accept"] == "application/vnd.sas.report.images.job+json"
 
 
@@ -310,6 +361,7 @@ async def test_submit_batch_job_request(mcp_server_with_mock_client):
     assert body["name"] == "my-test-job"
     assert body["jobDefinition"]["type"] == "Compute"
     assert body["jobDefinition"]["code"] == "data test; x=1; run;"
+    assert "_contextName" in body["arguments"]
 
 
 async def test_submit_batch_job_default_name(mcp_server_with_mock_client):
@@ -354,16 +406,40 @@ async def test_cancel_job_request(mcp_server_with_mock_client):
 
 async def test_get_job_log_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
-    mock_client.get.return_value.json = MagicMock(return_value={
-        "items": [{"line": "NOTE: The data set has 1 observation"}]
+
+    job_resp = _make_mock_response({
+        "state": "completed",
+        "results": {
+            "COMPUTE_JOB": "ABC123",
+            "ABC123.log.txt": "/files/files/log-file-id",
+        },
     })
+    log_content_resp = _make_mock_response()
+    log_content_resp.text = "NOTE: The data set has 1 observation"
+
+    original_get = mock_client.get.return_value
+
+    def route_get(url, **kwargs):
+        if "/jobExecution/jobs/job-789" in url and "/content" not in url:
+            return job_resp
+        if "/files/files/log-file-id/content" in url:
+            return log_content_resp
+        return original_get
+
+    mock_client.get.side_effect = route_get
+
     async with Client(mcp) as client:
         result = await client.call_tool("get_job_log", {"job_id": "job-789"})
 
-    url = mock_client.get.call_args[0][0]
-    assert "/jobExecution/jobs/job-789/log" in url
-    headers = mock_client.get.call_args[1]["headers"]
-    assert headers["Accept"] == "application/vnd.sas.collection+json"
+    mock_client.get.side_effect = None
+    mock_client.get.return_value = original_get
+
+    calls = mock_client.get.call_args_list
+    job_call = next(c for c in calls if "/jobExecution/jobs/job-789" in c[0][0] and "/content" not in c[0][0])
+    assert "/jobExecution/jobs/job-789" in job_call[0][0]
+
+    log_call = next(c for c in calls if "/files/files/log-file-id/content" in c[0][0])
+    assert "/files/files/log-file-id/content" in log_call[0][0]
 
 
 # -----------------------------------------------------------------------
@@ -472,13 +548,22 @@ async def test_create_ml_project_auto_run_false(mcp_server_with_mock_client):
 
 async def test_run_ml_project_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"test-etag"', "Content-Type": "application/json"}
+    mock_client.get.return_value.json = MagicMock(return_value={"id": "proj-123", "name": "Test"})
     async with Client(mcp) as client:
         await client.call_tool("run_ml_project", {"project_id": "proj-123"})
 
-    url = mock_client.post.call_args[0][0]
-    assert "/mlPipelineAutomation/projects/proj-123" in url
-    params = mock_client.post.call_args[1]["params"]
-    assert params == {"action": "start"}
+    get_url = mock_client.get.call_args[0][0]
+    assert "/mlPipelineAutomation/projects/proj-123" in get_url
+
+    put_url = mock_client.put.call_args[0][0]
+    assert "/mlPipelineAutomation/projects/proj-123" in put_url
+    params = mock_client.put.call_args[1]["params"]
+    assert params == {"action": "retrainProject"}
+    headers = mock_client.put.call_args[1]["headers"]
+    assert headers["If-Match"] == '"test-etag"'
+    assert headers["Accept-Language"] == "en"
+    assert "content" in mock_client.put.call_args[1]
 
 
 async def test_list_registered_models_request(mcp_server_with_mock_client):
