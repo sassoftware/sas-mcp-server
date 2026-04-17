@@ -4,10 +4,78 @@
 import asyncio
 import httpx
 from fastmcp import utilities
-from .config import VIYA_ENDPOINT, CONTEXT_NAME
+from .config import VIYA_ENDPOINT, CONTEXT_NAME, SSL_VERIFY
 
 logger = utilities.logging.get_logger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Generic API helpers (used by new tools)
+# ---------------------------------------------------------------------------
+
+async def _get_json(url, client, params=None, accept="application/json"):
+    """GET a JSON response from a Viya REST endpoint."""
+    full_url = f"{VIYA_ENDPOINT}{url}"
+    resp = await client.get(full_url, headers={"Accept": accept}, params=params or {})
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def _get_paged_items(url, client, limit=20, start=0, filters=None, extra_params=None):
+    """GET a paginated collection and return the items list plus total count."""
+    params = {"start": start, "limit": limit}
+    if filters:
+        params["filter"] = filters
+    if extra_params:
+        params.update(extra_params)
+    data = await _get_json(url, client, params=params,
+                           accept="application/vnd.sas.collection+json")
+    return data.get("items", []), data.get("count", 0)
+
+
+async def _post_json(url, client, body=None, params=None, accept="application/json"):
+    """POST JSON to a Viya REST endpoint and return the response JSON."""
+    full_url = f"{VIYA_ENDPOINT}{url}"
+    resp = await client.post(full_url, json=body,
+                             headers={"Content-Type": "application/json",
+                                      "Accept": accept},
+                             params=params or {})
+    resp.raise_for_status()
+    if resp.status_code == 204 or not resp.content:
+        return {}
+    return resp.json()
+
+
+async def _put_data(url, client, data, content_type="text/csv", params=None):
+    """PUT raw data (e.g. CSV upload) to a Viya REST endpoint."""
+    full_url = f"{VIYA_ENDPOINT}{url}"
+    resp = await client.put(full_url, content=data,
+                            headers={"Content-Type": content_type},
+                            params=params or {})
+    resp.raise_for_status()
+    if resp.status_code == 204 or not resp.content:
+        return {}
+    return resp.json()
+
+
+async def _delete_resource(url, client):
+    """DELETE a Viya REST resource."""
+    full_url = f"{VIYA_ENDPOINT}{url}"
+    resp = await client.delete(full_url)
+    resp.raise_for_status()
+
+
+def _make_client(token):
+    """Create an httpx.AsyncClient with auth headers for Viya API calls."""
+    if not token.startswith("Bearer "):
+        token = f"Bearer {token}"
+    headers = {"Authorization": token}
+    return httpx.AsyncClient(headers=headers, verify=SSL_VERIFY, timeout=300.0)
+
+
+# ---------------------------------------------------------------------------
+# Original helpers (log/listing fetching)
+# ---------------------------------------------------------------------------
 
 async def _get_text(url, client, verify=True, extra_params=None):
     # Try text/plain in one shot
@@ -136,18 +204,9 @@ async def wait_job(client, session_id, job_id, poll=2):
 async def run_one_snippet(snippet_data, snippet_id, token):
     code = snippet_data
 
-    # Prepare authorization header
-    # Token should already be in the correct format
-    if not token.startswith("Bearer "):
-        token = f"Bearer {token}"
-
     logger.info(f"Creating session with token (length: {len(token)})")
 
-    # Create httpx client with authorization headers
-    headers = {"Authorization": token, "Content-Type": "application/json"}
-
-    # Increase timeout for long-running SAS jobs (5 minutes)
-    async with httpx.AsyncClient(headers=headers, verify=True, timeout=300.0) as client:
+    async with _make_client(token) as client:
         ctx_id = await get_context_id(client, CONTEXT_NAME)
         sid = await create_session(client, ctx_id, name="py-parallel")
         logger.info(f"Session created: {sid}")

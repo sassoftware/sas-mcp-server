@@ -13,9 +13,10 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import FastMCPError
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from fastmcp.tools.tool import ToolResult
 from starlette.responses import JSONResponse
-from .viya_utils import run_one_snippet, logger
+from .viya_utils import logger
+from .tools import register_tools
+from .prompts import register_prompts
 
 # Load environment variables before accessing them
 load_dotenv()
@@ -56,6 +57,8 @@ class AuthMiddleware(Middleware):
 
 
 # Initialize the FastMCP server
+from .config import VIYA_ENDPOINT
+logger.info(f"Connecting to SAS Viya at {VIYA_ENDPOINT}")
 mcp = FastMCP("SAS Viya Execution MCP Server", auth=viya_auth)
 mcp.add_middleware(AuthMiddleware())
 
@@ -66,31 +69,16 @@ async def health_check(request):
     return JSONResponse({"status": "healthy", "service": "sas-viya-execution-mcp"})
 
 
-@mcp.tool()
-async def execute_sas_code(sas_code: str, ctx: Context) -> ToolResult:
-    """
-    Executes the provided SAS code in the Viya environment and returns information about the completed Job.
-    This will create a job definition for the SAS code, execute it, and then retrieve the results.
-
-    Args:
-        sas_code (str): the SAS code snippet to be executed using the Viya Job Execution API Service
-
-    Returns:
-        Structured output data containing detailed information about the executed sas code.
-        This includes a listing field and a log field. The listing output represents the intended output
-        of the SAS code when executed, if the code ran successfully. The log output represents information
-        about the execution of the sas code, such as if it ran successfully or not and whether or not there are
-        errors or issues with the execution.
-
-    """
-    logger.info("--- TOOL USED: execute_sas_code ---")
+# Token getter for HTTP mode: reads from context state set by AuthMiddleware
+async def _http_get_token(ctx: Context) -> str:
     token = ctx.get_state("access_token")
     if not token:
         raise AuthenticationError("No auth header found. Cannot authenticate to Viya")
+    return token
 
-    # Run the async function directly
-    output = await run_one_snippet(sas_code, "1", token)
-    return output
 
+# Register all tools and prompts
+register_tools(mcp, _http_get_token)
+register_prompts(mcp)
 
 app = mcp.http_app()
