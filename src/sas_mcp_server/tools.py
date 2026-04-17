@@ -7,13 +7,13 @@ All tools are registered via ``register_tools(mcp, get_token)``.
 """
 
 from typing import Optional
+import httpx as _httpx
 from fastmcp import Context
 from fastmcp.tools.tool import ToolResult
 from .viya_utils import (
     _get_json,
     _get_paged_items,
     _post_json,
-    _put_data,
     _delete_resource,
     _make_client,
     run_one_snippet,
@@ -154,22 +154,62 @@ def register_tools(mcp, get_token):
     @mcp.tool()
     async def get_castable_data(server_id: str, caslib_name: str,
                                 table_name: str, ctx: Context,
-                                limit: int = 20, start: int = 0) -> dict:
-        """Fetch sample rows from a CAS table.
+                                limit: int = 100, start: int = 0) -> dict:
+        """Fetch rows from a CAS table with column names.
 
         Args:
             server_id: CAS server name or ID.
             caslib_name: Name of the caslib.
             table_name: Name of the table.
-            limit: Maximum rows to return (default 20).
+            limit: Maximum rows to return (default 100).
             start: Row offset (default 0).
         """
         logger.info("--- TOOL USED: get_castable_data ---")
         token = await get_token(ctx)
+        from .viya_utils import VIYA_ENDPOINT
+        data_source_id = f"cas~fs~{server_id}~fs~{caslib_name}"
+        table_id = f"cas~fs~{server_id}~fs~{caslib_name}~fs~{table_name}"
         async with _make_client(token) as client:
-            return await _get_json(
-                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}/rows",
-                client, params={"start": start, "limit": limit})
+            columns = []
+            col_start = 0
+            col_limit = 100
+            while True:
+                col_resp = await client.get(
+                    f"{VIYA_ENDPOINT}/dataTables/dataSources/{data_source_id}/tables/{table_name}/columns",
+                    params={"start": col_start, "limit": col_limit},
+                    follow_redirects=True,
+                )
+                col_resp.raise_for_status()
+                col_data = col_resp.json()
+                for item in col_data.get("items", []):
+                    columns.append({"name": item.get("name"), "type": item.get("type"),
+                                    "index": item.get("index")})
+                total = col_data.get("count", 0)
+                col_start += col_limit
+                if col_start >= total:
+                    break
+
+            row_resp = await client.get(
+                f"{VIYA_ENDPOINT}/rowSets/tables/{table_id}/rows",
+                params={"start": start, "limit": limit},
+                follow_redirects=True,
+            )
+            row_resp.raise_for_status()
+            row_data = row_resp.json()
+
+            col_names = [c["name"] for c in columns]
+            rows = []
+            for item in row_data.get("items", []):
+                cells = item.get("cells", [])
+                rows.append(dict(zip(col_names, cells)))
+
+            return {
+                "columns": col_names,
+                "rows": rows,
+                "count": row_data.get("count", len(rows)),
+                "start": start,
+                "limit": limit,
+            }
 
     # ------------------------------------------------------------------
     # Tier 2 — Data Operations & Files
@@ -188,10 +228,34 @@ def register_tools(mcp, get_token):
         """
         logger.info("--- TOOL USED: upload_data ---")
         token = await get_token(ctx)
+        from .viya_utils import VIYA_ENDPOINT
         async with _make_client(token) as client:
-            return await _put_data(
-                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
-                client, data=csv_data.encode("utf-8"))
+            resp = await client.post(
+                f"{VIYA_ENDPOINT}/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables",
+                data={
+                    "tableName": table_name,
+                    "format": "csv",
+                    "containsHeaderRow": "true",
+                },
+                files={"file": ("data.csv", csv_data.encode("utf-8"), "text/csv")},
+            )
+            if resp.status_code == 409:
+                return {
+                    "status": "table_already_exists",
+                    "table_name": table_name,
+                    "caslib": caslib_name,
+                    "message": f"Table '{table_name}' already exists in caslib '{caslib_name}'. Drop or rename before re-uploading.",
+                }
+            resp.raise_for_status()
+            body = resp.json()
+            return {
+                "status": "success",
+                "table_name": body.get("name"),
+                "rows_uploaded": body.get("rowCount", 0),
+                "column_count": body.get("columnCount", 0),
+                "caslib": body.get("caslibName"),
+                "scope": body.get("scope"),
+            }
 
     @mcp.tool()
     async def promote_table_to_memory(server_id: str, caslib_name: str,
@@ -206,9 +270,14 @@ def register_tools(mcp, get_token):
         logger.info("--- TOOL USED: promote_table_to_memory ---")
         token = await get_token(ctx)
         async with _make_client(token) as client:
-            return await _post_json(
-                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
-                client, params={"scope": "global"})
+            try:
+                return await _post_json(
+                    f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
+                    client, body={"scope": "global"})
+            except _httpx.HTTPStatusError as e:
+                if e.response.status_code == 409:
+                    return {"status": "already_promoted", "table": f"{caslib_name}.{table_name}"}
+                raise
 
     @mcp.tool()
     async def list_files(ctx: Context, limit: int = 50,
@@ -315,6 +384,8 @@ def register_tools(mcp, get_token):
         """
         logger.info("--- TOOL USED: get_report_image ---")
         token = await get_token(ctx)
+        import json as _json
+        from .viya_utils import VIYA_ENDPOINT
         async with _make_client(token) as client:
             body = {
                 "reportUri": f"/reports/reports/{report_id}",
@@ -324,8 +395,16 @@ def register_tools(mcp, get_token):
                 "size": "800x600",
                 "renderLimit": 1,
             }
-            return await _post_json("/reportImages/jobs", client, body=body,
-                                    accept=f"application/vnd.sas.report.images.job+json")
+            resp = await client.post(
+                f"{VIYA_ENDPOINT}/reportImages/jobs",
+                content=_json.dumps(body).encode(),
+                headers={
+                    "Content-Type": "application/vnd.sas.report.images.job.request+json",
+                    "Accept": "application/vnd.sas.report.images.job+json",
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
 
     # ------------------------------------------------------------------
     # Tier 4 — Batch Jobs & Async Execution
@@ -342,11 +421,15 @@ def register_tools(mcp, get_token):
         """
         logger.info("--- TOOL USED: submit_batch_job ---")
         token = await get_token(ctx)
+        from .viya_utils import CONTEXT_NAME
         body = {
             "name": job_name or "mcp-batch-job",
             "jobDefinition": {
                 "type": "Compute",
                 "code": sas_code,
+            },
+            "arguments": {
+                "_contextName": CONTEXT_NAME,
             },
         }
         async with _make_client(token) as client:
@@ -402,12 +485,32 @@ def register_tools(mcp, get_token):
         """
         logger.info("--- TOOL USED: get_job_log ---")
         token = await get_token(ctx)
+        from .viya_utils import VIYA_ENDPOINT
         async with _make_client(token) as client:
-            data = await _get_json(f"/jobExecution/jobs/{job_id}/log", client,
-                                   accept="application/vnd.sas.collection+json")
-            items = data.get("items", [])
-            lines = [it.get("line", "") for it in items]
-            return "\n".join(lines)
+            data = await _get_json(f"/jobExecution/jobs/{job_id}", client)
+            results = data.get("results", {})
+
+            log_uri = None
+            for key, value in results.items():
+                if key.endswith(".log.txt"):
+                    log_uri = value
+                    break
+            if not log_uri:
+                for key, value in results.items():
+                    if key.endswith(".log"):
+                        log_uri = value
+                        break
+
+            if not log_uri:
+                state = data.get("state", "unknown")
+                error = data.get("error", {})
+                if error:
+                    return f"Job {state}: {error.get('message', 'No error details')}"
+                return f"No log available. Job state: {state}"
+
+            resp = await client.get(f"{VIYA_ENDPOINT}{log_uri}/content")
+            resp.raise_for_status()
+            return resp.text
 
     # ------------------------------------------------------------------
     # Tier 5 — Model Management & Scoring
@@ -482,10 +585,32 @@ def register_tools(mcp, get_token):
         """
         logger.info("--- TOOL USED: run_ml_project ---")
         token = await get_token(ctx)
+        import json as _json
+        from .viya_utils import VIYA_ENDPOINT
+        mlpa_type = "application/vnd.sas.analytics.ml.pipeline.automation.project+json"
         async with _make_client(token) as client:
-            return await _post_json(
-                f"/mlPipelineAutomation/projects/{project_id}", client,
-                params={"action": "start"})
+            get_resp = await client.get(
+                f"{VIYA_ENDPOINT}/mlPipelineAutomation/projects/{project_id}",
+                headers={"Accept": mlpa_type},
+            )
+            get_resp.raise_for_status()
+            project_body = get_resp.json()
+            etag = get_resp.headers.get("etag", "")
+            resp = await client.put(
+                f"{VIYA_ENDPOINT}/mlPipelineAutomation/projects/{project_id}",
+                params={"action": "retrainProject"},
+                content=_json.dumps(project_body).encode(),
+                headers={
+                    "Content-Type": mlpa_type,
+                    "Accept": mlpa_type,
+                    "If-Match": etag,
+                    "Accept-Language": "en",
+                },
+            )
+            resp.raise_for_status()
+            if resp.status_code == 204 or not resp.content:
+                return {"status": "running", "projectId": project_id}
+            return resp.json()
 
     @mcp.tool()
     async def list_registered_models(ctx: Context, limit: int = 50) -> list:

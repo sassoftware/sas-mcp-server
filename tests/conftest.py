@@ -196,10 +196,11 @@ def viya_credentials():
 @pytest.fixture(scope="session")
 def viya_token(viya_credentials):
     """Get a real Viya access token via password grant."""
-    from sas_mcp_server.config import CLIENT_ID, SSL_VERIFY
+    from sas_mcp_server.config import SSL_VERIFY
+    client_id = os.getenv("TEST_CLIENT_ID", "sas.cli")
     resp = httpx.post(
         f"{viya_credentials['endpoint']}/SASLogon/oauth/token",
-        auth=(CLIENT_ID, ""),
+        auth=(client_id, ""),
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         data={
             "grant_type": "password",
