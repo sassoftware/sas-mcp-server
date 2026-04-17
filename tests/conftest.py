@@ -8,6 +8,7 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
+from fastmcp import FastMCP, Client
 
 
 @pytest.fixture
@@ -116,3 +117,111 @@ def mock_viya_access_info():
     mock_info = MagicMock()
     mock_info.token = "mock-viya-access-token"
     return mock_info
+
+
+# ---------------------------------------------------------------------------
+# Payload test fixtures
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_response(json_data=None, status_code=200, text=None):
+    """Create a mock httpx response."""
+    resp = AsyncMock()
+    resp.status_code = status_code
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value=json_data or {})
+    resp.content = b'{}' if json_data is not None or status_code != 204 else b''
+    resp.text = text or ""
+    resp.headers = {"Content-Type": "application/json"}
+    return resp
+
+
+@pytest.fixture
+def mock_json_response():
+    """Factory fixture to create mock HTTP responses."""
+    return _make_mock_response
+
+
+@pytest.fixture
+def mcp_server_with_mock_client():
+    """Create an MCP server with a mock HTTP client for payload testing.
+
+    Returns (mcp, mock_client) — the mock_client captures all HTTP calls
+    made by tools so tests can inspect URLs, bodies, params, and headers.
+    """
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    paged_resp = _make_mock_response({"items": [], "count": 0})
+    json_resp = _make_mock_response({"id": "test-id"})
+    post_resp = _make_mock_response({"id": "test-id"}, status_code=201)
+    post_resp.content = b'{"id": "test-id"}'
+    put_resp = _make_mock_response({"tableName": "test"}, status_code=201)
+    put_resp.content = b'{"tableName": "test"}'
+    delete_resp = _make_mock_response(status_code=204)
+
+    mock_client.get.return_value = paged_resp
+    mock_client.post.return_value = post_resp
+    mock_client.put.return_value = put_resp
+    mock_client.delete.return_value = delete_resp
+
+    with patch("sas_mcp_server.tools._make_client", return_value=mock_client):
+        mcp = FastMCP("Payload Test Server")
+
+        async def mock_get_token(ctx):
+            return "test-token"
+
+        from sas_mcp_server.tools import register_tools
+        register_tools(mcp, mock_get_token)
+        yield mcp, mock_client
+
+
+# ---------------------------------------------------------------------------
+# Integration test fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def viya_credentials():
+    """Load Viya credentials from environment. Skip if not available."""
+    endpoint = os.getenv("VIYA_ENDPOINT", "")
+    username = os.getenv("VIYA_USERNAME", "")
+    password = os.getenv("VIYA_PASSWORD", "")
+    if not all([endpoint, username, password]):
+        pytest.skip("VIYA_ENDPOINT, VIYA_USERNAME, and VIYA_PASSWORD required")
+    return {"endpoint": endpoint, "username": username, "password": password}
+
+
+@pytest.fixture(scope="session")
+def viya_token(viya_credentials):
+    """Get a real Viya access token via password grant."""
+    from sas_mcp_server.config import CLIENT_ID, SSL_VERIFY
+    resp = httpx.post(
+        f"{viya_credentials['endpoint']}/SASLogon/oauth/token",
+        auth=(CLIENT_ID, ""),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={
+            "grant_type": "password",
+            "username": viya_credentials["username"],
+            "password": viya_credentials["password"],
+        },
+        verify=SSL_VERIFY,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+@pytest.fixture(scope="session")
+def integration_mcp_server(viya_token):
+    """Create an MCP server with real Viya auth for integration tests."""
+    mcp = FastMCP("Integration Test Server")
+
+    _token = viya_token
+
+    async def real_get_token(ctx):
+        return _token
+
+    from sas_mcp_server.tools import register_tools
+    register_tools(mcp, real_get_token)
+    return mcp

@@ -198,5 +198,49 @@ When a user first invokes a tool, their browser opens for Viya login. After auth
 
 ---
 
+### Gemini CLI
+
+Gemini CLI connects to MCP servers via stdio only — it does not support HTTP mode. Because it cannot participate in browser-based OAuth redirects, stdio mode with password grant credentials is required.
+
+#### Configuration
+
+Add to `~/.gemini/settings.json` or your project's `.gemini/settings.json`:
+```json
+{
+    "mcpServers": {
+        "sas-viya-mcp": {
+            "command": "uv",
+            "args": ["run", "app-stdio"],
+            "cwd": "/path/to/sas-mcp-server",
+            "timeout": 60000
+        }
+    }
+}
+```
+
+Set `cwd` to the absolute path where `sas-mcp-server` is cloned.
+
+A pre-built example is available at [`examples/gemini-settings.json`](gemini-settings.json).
+
+#### Timeout
+
+The `timeout` field (in milliseconds) controls how long Gemini CLI waits for a tool call to complete. The default is 10 seconds, which is too short for most SAS Viya API calls. **Set this to at least `60000` (60 seconds).**
+
+Without this setting, tool calls will appear to fail with a timeout error even though the server and authentication are working correctly.
+
+#### Required `.env` variables
+
+Stdio mode authenticates via password grant, so you must set these in your `.env` file:
+```
+VIYA_ENDPOINT=https://your-viya-server.com
+VIYA_USERNAME=your-username
+VIYA_PASSWORD=your-password
+SSL_VERIFY=false  # if using self-signed certificates
+```
+
+The `CLIENT_ID` can remain at the default (`sas-mcp`) or be changed to match an existing OAuth client registered on your Viya instance (e.g., `sas.cli`).
+
+---
+
 ### Further MCP setup options
 For examples on how to run with docker, refer to the **docker** folder.

@@ -1,0 +1,10 @@
+{
+    "mcpServers": {
+        "sas-viya-mcp": {
+            "command": "uv",
+            "args": ["run", "app-stdio"],
+            "cwd": "/path/to/sas-mcp-server",
+            "timeout": 60000
+        }
+    }
+}

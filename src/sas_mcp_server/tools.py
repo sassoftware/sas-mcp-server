@@ -433,7 +433,9 @@ def register_tools(mcp, get_token):
     async def create_ml_project(project_name: str, data_table_uri: str,
                                 target_variable: str, ctx: Context,
                                 description: str = "",
-                                prediction_type: str = "classification") -> dict:
+                                prediction_type: str = "binary",
+                                target_event_level: str = "1",
+                                auto_run: bool = True) -> dict:
         """Create a new AutoML pipeline automation project.
 
         Args:
@@ -441,18 +443,32 @@ def register_tools(mcp, get_token):
             data_table_uri: URI of the training data table (e.g. '/dataTables/dataSources/cas~fs~cas-shared-default~fs~Public/tables/HMEQ').
             target_variable: Name of the target/response variable.
             description: Optional project description.
-            prediction_type: 'classification' or 'prediction' (default 'classification').
+            prediction_type: 'binary', 'interval', or 'nominal' (default 'binary').
+            target_event_level: Target event level for binary/nominal classification (default '1').
+            auto_run: Whether to automatically run pipelines after creation (default True).
         """
         logger.info("--- TOOL USED: create_ml_project ---")
         token = await get_token(ctx)
+        analytics_attrs = {
+            "targetVariable": target_variable,
+            "targetLevel": prediction_type,
+            "partitionEnabled": True,
+            "classSelectionStatistic": "ks" if prediction_type in ("binary", "nominal") else "ase",
+        }
+        if prediction_type in ("binary", "nominal"):
+            analytics_attrs["targetEventLevel"] = target_event_level
         body = {
             "name": project_name,
             "description": description,
+            "type": "predictive",
             "dataTableUri": data_table_uri,
-            "targetVariable": target_variable,
-            "analyticsProjectAttributes": {
-                "predictionType": prediction_type,
+            "pipelineBuildMethod": "automatic",
+            "settings": {
+                "applyGlobalMetadata": True,
+                "autoRun": auto_run,
+                "numberOfModels": 5,
             },
+            "analyticsProjectAttributes": analytics_attrs,
         }
         async with _make_client(token) as client:
             return await _post_json("/mlPipelineAutomation/projects", client, body=body)

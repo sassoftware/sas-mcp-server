@@ -82,6 +82,7 @@ docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 sas-mcp-se
 - **Starting out or exploring?** Use **stdio** — zero setup beyond `.env`, and your MCP client manages the server lifecycle.
 - **Need secure, interactive auth?** Use **HTTP** — no stored passwords, each user authenticates via browser.
 - **Deploying for a team or on a server?** Use **Docker** — portable, no Python dependency on the host, easy to integrate with orchestrators.
+- **Using Gemini CLI?** Use **stdio** — Gemini CLI does not support HTTP mode or browser-based OAuth. See [Gemini CLI configuration](examples/configuration.md#gemini-cli).
 
 ### Available Tools
 
@@ -136,7 +137,9 @@ docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 sas-mcp-se
 
 ## MCP Client Configuration
 
-Add to your MCP client configuration (e.g., `.vscode/mcp.json`):
+Example configurations are provided in the `examples/` folder. Below are quick-start snippets for common clients.
+
+### VS Code / Cursor / Claude Code (`.vscode/mcp.json`)
 
 **HTTP mode** (requires `uv run app` running separately):
 ```json
@@ -163,6 +166,25 @@ Add to your MCP client configuration (e.g., `.vscode/mcp.json`):
 }
 ```
 
+### Gemini CLI (`.gemini/settings.json`)
+
+Gemini CLI only supports stdio mode. Add to your `~/.gemini/settings.json` or project-level `.gemini/settings.json`:
+
+```json
+{
+    "mcpServers": {
+        "sas-viya-mcp": {
+            "command": "uv",
+            "args": ["run", "app-stdio"],
+            "cwd": "/path/to/sas-mcp-server",
+            "timeout": 60000
+        }
+    }
+}
+```
+
+> **Note:** The `timeout` field (in milliseconds) is important — SAS Viya API calls can take longer than the Gemini CLI default of 10 seconds. A value of `60000` (60s) is recommended. Set `cwd` to the absolute path of your `sas-mcp-server` checkout.
+
 ## Example
 
 Execute SAS code through the MCP tool:
@@ -181,6 +203,58 @@ run;
 ---
 
 **For more details, configuration options, and deployment options, please refer to the **examples** folder and follow the instructions listed there.**
+
+## Testing
+
+The project includes two layers of tests: **unit tests** (fast, no credentials required) and **integration tests** (run against a real SAS Viya instance).
+
+### Running Unit Tests
+
+Unit tests verify tool schemas, request payloads, and internal logic without making any network calls:
+
+```sh
+./run_tests.sh
+```
+
+Or directly via pytest:
+
+```sh
+uv run python -m pytest -m "not integration" -v
+```
+
+### Running Integration Tests
+
+Integration tests call every tool against a live Viya environment. They require credentials, which can be provided via CLI arguments or `.env`:
+
+**Using `.env`** (set `VIYA_ENDPOINT`, `VIYA_USERNAME`, `VIYA_PASSWORD`):
+```sh
+./run_tests.sh --integration
+```
+
+**Using CLI arguments:**
+```sh
+./run_tests.sh --integration \
+    --endpoint https://your-viya-server.com \
+    --username youruser \
+    --password yourpassword
+```
+
+**Integration tests only** (skip unit tests):
+```sh
+./run_tests.sh --integration-only
+```
+
+### Test Structure
+
+| File | Description |
+|---|---|
+| `tests/test_tool_payloads.py` | Payload assertions for all 26 tools — verifies URL paths, JSON body structure, query params, and headers |
+| `tests/test_integration.py` | End-to-end workflow tests against a real Viya instance |
+| `tests/test_tools.py` | Unit tests for HTTP helper functions (`_get_json`, `_post_json`, etc.) |
+| `tests/test_viya_utils.py` | Unit tests for Viya compute session and job utilities |
+| `tests/test_mcp_server.py` | Unit tests for MCP server and auth middleware |
+| `tests/test_prompts.py` | Unit tests for prompt template rendering |
+| `tests/test_config.py` | Unit tests for configuration loading |
 
 ## Contributing
 Maintainers are accepting patches and contributions to this project. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details about submitting contributions to this project.
