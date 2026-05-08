@@ -63,5 +63,5 @@ viya_auth = OAuthProxy(
     base_url=MCP_BASE_URL,
     forward_pkce=True,
     token_verifier=token_verifier,
-    valid_scopes=[],
+    valid_scopes=["openid"],
 )
