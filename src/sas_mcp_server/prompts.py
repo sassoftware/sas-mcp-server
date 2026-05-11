@@ -7,7 +7,7 @@ Registered via ``register_prompts(mcp)`` on the FastMCP instance.
 """
 
 from typing import Optional
-from fastmcp.prompts.prompt import Message
+from fastmcp.prompts import Message
 
 
 def register_prompts(mcp):

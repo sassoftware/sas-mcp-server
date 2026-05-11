@@ -9,7 +9,7 @@ All tools are registered via ``register_tools(mcp, get_token)``.
 from typing import Optional
 import httpx as _httpx
 from fastmcp import Context
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 from .viya_utils import (
     _get_json,
     _get_paged_items,

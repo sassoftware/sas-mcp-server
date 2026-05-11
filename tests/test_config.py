@@ -3,93 +3,79 @@
 
 """
 Tests for the config module.
+
+These tests use ``importlib.reload`` (which preserves the module object's
+identity and just re-runs its top-level code) rather than
+``del sys.modules[...]`` + import, which would create a NEW module instance
+and leave the old one orphaned. Orphaned config modules carry their own
+``viya_auth = OAuthProxy(...)`` instance — each holding internal httpx
+state. Accumulating orphans across multiple tests in the same pytest session
+corrupts the event-loop-bound httpx state used by later integration tests,
+producing empty-message ``httpcore.ConnectError``s on real Viya calls.
 """
-import pytest
-import os
 import importlib
 import sys
+import pytest
 from unittest.mock import patch
+
+
+def _reload_config():
+    """Reload sas_mcp_server.config in place. Imports first if not yet loaded."""
+    if 'sas_mcp_server.config' in sys.modules:
+        return importlib.reload(sys.modules['sas_mcp_server.config'])
+    import sas_mcp_server.config as cfg
+    return cfg
+
 
 def test_config_loading_with_env_vars(mock_env_vars):
     """Test that configuration values are loaded from environment variables."""
-    # Remove config module from cache if it exists
-    if 'sas_mcp_server.config' in sys.modules:
-        del sys.modules['sas_mcp_server.config']
-    
-    # Import after setting env vars
-    from sas_mcp_server.config import (
-        VIYA_ENDPOINT,
-        CLIENT_ID,
-        HOST_PORT,
-        MCP_SIGNING_KEY,
-        CONTEXT_NAME,
-        AUTHORIZATION_ENDPOINT,
-        TOKEN_ENDPOINT,
-        JWKS_URI
-    )
-    
-    assert VIYA_ENDPOINT == "https://test.viya.com"
-    assert CLIENT_ID == "test-client"
-    assert HOST_PORT == 8134
-    assert MCP_SIGNING_KEY == "test-key"
-    assert CONTEXT_NAME == "Test Context"
-    
-    # Test derived endpoints
-    assert AUTHORIZATION_ENDPOINT == "https://test.viya.com/SASLogon/oauth/authorize"
-    assert TOKEN_ENDPOINT == "https://test.viya.com/SASLogon/oauth/token"
-    assert JWKS_URI == "https://test.viya.com/SASLogon/token_keys"
+    cfg = _reload_config()
+    assert cfg.VIYA_ENDPOINT == "https://test.viya.com"
+    assert cfg.CLIENT_ID == "test-client"
+    assert cfg.HOST_PORT == 8134
+    assert cfg.MCP_SIGNING_KEY == "test-key"
+    assert cfg.CONTEXT_NAME == "Test Context"
+
+    # Derived endpoints
+    assert cfg.AUTHORIZATION_ENDPOINT == "https://test.viya.com/SASLogon/oauth/authorize"
+    assert cfg.TOKEN_ENDPOINT == "https://test.viya.com/SASLogon/oauth/token"
+    assert cfg.JWKS_URI == "https://test.viya.com/SASLogon/token_keys"
+
 
 def test_config_viya_endpoint_trailing_slash(monkeypatch):
     """Test that trailing slashes are removed from VIYA_ENDPOINT."""
-    # Remove config module from cache if it exists
-    if 'sas_mcp_server.config' in sys.modules:
-        del sys.modules['sas_mcp_server.config']
-    
     monkeypatch.setenv("VIYA_ENDPOINT", "https://test.viya.com/")
     monkeypatch.setenv("CLIENT_ID", "test-client")
     monkeypatch.setenv("HOST_PORT", "8134")
     monkeypatch.setenv("MCP_SIGNING_KEY", "test-key")
-    
-    # Import fresh config
-    from sas_mcp_server import config as config_module
-    
-    assert config_module.VIYA_ENDPOINT == "https://test.viya.com"
+    cfg = _reload_config()
+    assert cfg.VIYA_ENDPOINT == "https://test.viya.com"
+
 
 def test_config_missing_viya_endpoint(monkeypatch):
     """Test that missing VIYA_ENDPOINT raises an exception."""
-    # Remove config module from cache if it exists
-    if 'sas_mcp_server.config' in sys.modules:
-        del sys.modules['sas_mcp_server.config']
-    
-    # Also remove dependent modules that might have cached the config
-    for mod in list(sys.modules.keys()):
-        if mod.startswith('sas_mcp_server'):
-            del sys.modules[mod]
-    
-    # Must unset VIYA_ENDPOINT before importing
     monkeypatch.delenv("VIYA_ENDPOINT", raising=False)
     monkeypatch.setenv("CLIENT_ID", "test-client")
-    
-    # Patch load_dotenv in dotenv module BEFORE importing config
+    # Block module-level load_dotenv from reloading VIYA_ENDPOINT from .env.
     with patch('dotenv.load_dotenv'):
         with pytest.raises(Exception, match="VIYA_ENDPOINT is not set"):
-            import sas_mcp_server.config as config_module
+            _reload_config()
+    # Restore a valid module state for subsequent tests in the session, since
+    # the failed reload leaves the module in a partially-initialised state.
+    _reload_config()
+
 
 def test_config_default_values(monkeypatch):
     """Test default values when optional env vars are not set."""
-    # Remove config module from cache if it exists
-    if 'sas_mcp_server.config' in sys.modules:
-        del sys.modules['sas_mcp_server.config']
-    
     monkeypatch.setenv("VIYA_ENDPOINT", "https://test.viya.com")
     monkeypatch.delenv("CLIENT_ID", raising=False)
     monkeypatch.delenv("HOST_PORT", raising=False)
     monkeypatch.delenv("MCP_SIGNING_KEY", raising=False)
     monkeypatch.delenv("COMPUTE_CONTEXT_NAME", raising=False)
-    
-    import sas_mcp_server.config as config_module
-    
-    assert config_module.CLIENT_ID == "sas-mcp"
-    assert config_module.HOST_PORT == 8134
-    assert config_module.MCP_SIGNING_KEY == "default"
-    assert config_module.CONTEXT_NAME == "SAS Job Execution compute context"
+    # Block module-level load_dotenv from repopulating from .env.
+    with patch('dotenv.load_dotenv'):
+        cfg = _reload_config()
+    assert cfg.CLIENT_ID == "sas-mcp"
+    assert cfg.HOST_PORT == 8134
+    assert cfg.MCP_SIGNING_KEY == "default"
+    assert cfg.CONTEXT_NAME == "SAS Job Execution compute context"

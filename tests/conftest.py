@@ -8,6 +8,13 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
+from dotenv import load_dotenv
+
+# Load .env once, before any sas_mcp_server module is imported, so that
+# SSL_VERIFY and other config values captured at import time reflect the
+# developer's local environment rather than the bare OS env.
+load_dotenv()
+
 from fastmcp import FastMCP, Client
 
 
@@ -208,6 +215,7 @@ def viya_token(viya_credentials):
             "password": viya_credentials["password"],
         },
         verify=SSL_VERIFY,
+        timeout=60.0,
     )
     resp.raise_for_status()
     return resp.json()["access_token"]
@@ -215,7 +223,12 @@ def viya_token(viya_credentials):
 
 @pytest.fixture(scope="session")
 def integration_mcp_server(viya_token):
-    """Create an MCP server with real Viya auth for integration tests."""
+    """Create an MCP server with real Viya auth for integration tests.
+
+    Must be created within the same event loop the integration tests run in.
+    test_integration.py pins itself to a session-scoped loop so this fixture
+    and the per-test Client both share the same loop.
+    """
     mcp = FastMCP("Integration Test Server")
 
     _token = viya_token
