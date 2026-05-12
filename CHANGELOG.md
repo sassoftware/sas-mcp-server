@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0] - 2026-05-12
 
 ### Added
 - **GitHub Container Registry publishing** — `.github/workflows/publish-ghcr.yml` builds and pushes multi-arch (`linux/amd64`, `linux/arm64`) images to `ghcr.io/sassoftware/sas-mcp-server` on push to `main` (`:edge`, `:sha-<short>`), on `v*` tags (`:latest`, semver tags), and on `workflow_dispatch`. Images carry build provenance and SBOM attestations.

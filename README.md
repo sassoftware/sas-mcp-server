@@ -89,8 +89,8 @@ docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 sas-mcp-se
 
 Available image tags:
 - `latest` — most recent tagged release
-- `<major>.<minor>.<patch>` (e.g. `0.1.0`) — specific release
-- `<major>.<minor>` (e.g. `0.1`) — latest patch of a minor release
+- `<major>.<minor>.<patch>` (e.g. `1.0.0`) — specific release
+- `<major>.<minor>` (e.g. `1.0`) — latest patch of a minor release
 - `edge` — tip of `main` (unreleased, for testing)
 - `sha-<short>` — pinned to a specific commit
 
