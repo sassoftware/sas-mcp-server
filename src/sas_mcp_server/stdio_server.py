@@ -4,16 +4,20 @@
 """
 Stdio MCP Server for SAS Viya.
 
-Authenticates via OAuth 2.0 Device Authorization Grant (RFC 8628). Two paths
-are supported, tried in order:
+Authenticates via OAuth 2.0. Three paths are tried in order; the first one
+that yields a token wins:
 
   1. Token cached by the SAS Viya CLI's ``sas-viya auth loginCode`` command.
      Default location: ``~/.sas/credentials.json`` (override the parent dir
-     with the ``SAS_CLI_CONFIG`` env var). This path is the recommended one
-     because SAS Logon Manager typically CSRF-protects the device endpoint,
-     so the CLI's browser-driven flow is the path of least resistance.
+     with the ``SAS_CLI_CONFIG`` env var).
 
-  2. Native device-code flow against ``/SASLogon/oauth/device_authorization``.
+  2. Token cached by this project's own zero-prereq login helper
+     (``uv run sas-mcp-login``). Default location:
+     ``~/.sas-mcp-server/credentials.json``. The helper runs Authorization
+     Code + PKCE against the built-in ``vscode`` OAuth client and writes
+     the token in the same shape as the SAS Viya CLI cache.
+
+  3. Native device-code flow against ``/SASLogon/oauth/device_authorization``.
      Used only when no cached credentials exist. Works on Viya instances
      whose admins have not enabled CSRF protection on the device endpoint
      and whose OAuth client is registered with the device-code grant type.
@@ -57,22 +61,26 @@ class AuthenticationError(FastMCPError):
         return f"AuthenticationError: {self.message}"
 
 
-def _credentials_path() -> Path:
+def _sas_cli_credentials_path() -> Path:
     """Location of the access token cached by ``sas-viya auth loginCode``."""
     base = Path(SAS_CLI_CONFIG) if SAS_CLI_CONFIG else Path.home()
     return base / ".sas" / "credentials.json"
 
 
-def _read_sas_cli_token() -> str | None:
-    """Return the access token cached by the SAS Viya CLI, or ``None``."""
-    path = _credentials_path()
+def _helper_credentials_path() -> Path:
+    """Location of the access token cached by ``sas-mcp-login``."""
+    return Path.home() / ".sas-mcp-server" / "credentials.json"
+
+
+def _read_cached_token(path: Path) -> str | None:
+    """Return the ``Default.access-token`` value from *path*, or ``None``."""
     if not path.exists():
         return None
     try:
         creds = json.loads(path.read_text())
         token = creds["Default"]["access-token"]
     except (KeyError, json.JSONDecodeError, OSError) as exc:
-        logger.warning(f"Could not read sas-viya credentials at {path}: {exc}")
+        logger.warning(f"Could not read credentials at {path}: {exc}")
         return None
     logger.info(f"Loaded access token from {path}")
     return token
@@ -94,9 +102,10 @@ def _native_device_code_token() -> str:
     if init.status_code == 403 and "CSRF" in init.text:
         raise AuthenticationError(
             "Viya rejected the device-authorization request (CSRF protection "
-            "on /SASLogon/oauth/device_authorization). Install the sas-viya "
-            "CLI, run `sas-viya auth loginCode`, and re-launch this server; "
-            f"the cached token at {_credentials_path()} will be used."
+            "on /SASLogon/oauth/device_authorization). Run either "
+            "`sas-viya auth loginCode` (writes ~/.sas/credentials.json) or "
+            "`uv run sas-mcp-login` (writes ~/.sas-mcp-server/credentials.json) "
+            "and re-launch this server."
         )
     init.raise_for_status()
     flow = init.json()
@@ -150,11 +159,13 @@ def _native_device_code_token() -> str:
 
 
 def _get_viya_token() -> str:
-    token = _read_sas_cli_token()
-    if token:
-        return token
+    for path in (_sas_cli_credentials_path(), _helper_credentials_path()):
+        token = _read_cached_token(path)
+        if token:
+            return token
     logger.info(
-        "No cached sas-viya CLI credentials; attempting native device-code flow"
+        "No cached credentials found at ~/.sas or ~/.sas-mcp-server; "
+        "attempting native device-code flow"
     )
     return _native_device_code_token()
 

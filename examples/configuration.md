@@ -229,25 +229,37 @@ The `timeout` field (in milliseconds) controls how long Gemini CLI waits for a t
 
 Without this setting, tool calls will appear to fail with a timeout error even though the server and authentication are working correctly.
 
-#### Authenticating with the SAS Viya CLI
+#### Authenticating for stdio mode
 
-Stdio mode uses the OAuth 2.0 device-code flow via the SAS Viya CLI. Before the first MCP tool call:
+Stdio mode reads a cached OAuth access token. Two equivalent ways to obtain one — pick whichever fits your environment.
+
+**Option 1 — SAS Viya CLI** (preferred if it's already installed):
 
 ```sh
-# One-time per Viya host
 sas-viya --profile Default profile init --sas-endpoint https://your-viya-server.com
 sas-viya auth loginCode
 ```
 
-Follow the URL the CLI prints, sign in, and approve the code. The CLI writes an access token to `~/.sas/credentials.json`, which the MCP server reads on each tool call. When the token expires, re-run `sas-viya auth loginCode`.
-
-If you keep the SAS profile somewhere other than `$HOME`, set `SAS_CLI_CONFIG` to its parent directory in your `.env`:
+This writes `~/.sas/credentials.json`. If you keep the SAS profile somewhere other than `$HOME`, set `SAS_CLI_CONFIG` to its parent directory in your `.env`:
 
 ```
-VIYA_ENDPOINT=https://your-viya-server.com
 SAS_CLI_CONFIG=/path/whose/.sas/credentials.json/lives/here
-SSL_VERIFY=false  # if using self-signed certificates
 ```
+
+**Option 2 — built-in `sas-mcp-login` helper** (no external CLI, no admin client registration; requires Viya 2022.11+):
+
+```sh
+uv run sas-mcp-login
+```
+
+The helper runs OAuth 2.0 Authorization Code + PKCE against the built-in `vscode` Viya OAuth client, opens your browser, and writes the token to `~/.sas-mcp-server/credentials.json`. After signing in, SAS Logon displays the authorization code on a results page; copy it and paste it back into the terminal.
+
+The stdio server reads whichever cache file exists, in this order:
+
+1. `~/.sas/credentials.json` (or `$SAS_CLI_CONFIG/.sas/credentials.json`)
+2. `~/.sas-mcp-server/credentials.json`
+
+When the token expires, re-run the same command you used originally.
 
 ---
 
