@@ -298,16 +298,25 @@ Maintainers are accepting patches and contributions to this project. Please read
 
 ## License & Attribution
 
-Except for the the contents of the /static folder, this project is licensed under the [Apache 2.0 License](LICENSE). Elements in the /static folder are owned by SAS and are not released under an open source license. SAS and all other SAS Institute Inc. product or service names are registered trademarks or trademarks of SAS Institute Inc. in the USA and other countries. ® indicates USA registration.
+Except for the the contents of the `/static` folder, this project is licensed under the [Apache 2.0 License](LICENSE). 
+Elements in the `/static` folder are owned by SAS and are not released under an open source license. 
+SAS and all other SAS Institute Inc. product or service names are registered trademarks or trademarks of SAS Institute Inc. in the USA and other countries. ® indicates USA registration.
 
 Separate commercial licenses for SAS software (e.g., SAS Viya) are not included and are required to use these capabilities with SAS software.
 
+As with any container image, direct and indirect dependencies are governed by their own licenses.
+Users of the published container image are responsible for ensuring that their use complies with all applicable licenses.
+
 All third-party trademarks referenced belong to their respective owners and are only used here for identification and reference purposes, and not to imply any affiliation or endorsement by the trademark owners.
 
-This project requires the usage of the following:
+## Third-Party Dependencies
 
-- Python, see the Python license [here](https://docs.python.org/3/license.html)
-- FastMCP, under the Apache 2.0 License
-- uvicorn, under the BSD 3-Clause
-- starlette, under the BSD 3-Clause
-- httpx, under the MIT license
+This project requires the following dependencies.
+
+| Dependency | License |
+| ---------- | ------- |
+| Python | [Python Software License](https://docs.python.org/3/license.html) |
+| FastMCP | [Apache License 2.0](https://github.com/PrefectHQ/fastmcp/blob/main/LICENSE) |
+| uvicorn | [BSD 3-Clause License](https://github.com/Kludex/uvicorn/blob/main/LICENSE.md) |
+| starlette | [BSD 3-Clause License](https://github.com/Kludex/starlette/blob/main/LICENSE.md)
+| httpx | [MIT License](https://github.com/projectdiscovery/httpx/blob/dev/LICENSE.md) | 
