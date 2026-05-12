@@ -3,71 +3,184 @@
 # SPDX-License-Identifier: Apache-2.0
 """
 Stdio MCP Server for SAS Viya.
-Authenticates directly to Viya using password grant, allowing MCP clients
-to start the server on demand without a pre-running HTTP server.
+
+Authenticates via OAuth 2.0. Three paths are tried in order; the first one
+that yields a token wins:
+
+  1. Token cached by the SAS Viya CLI's ``sas-viya auth loginCode`` command.
+     Default location: ``~/.sas/credentials.json`` (override the parent dir
+     with the ``SAS_CLI_CONFIG`` env var).
+
+  2. Token cached by this project's own zero-prereq login helper
+     (``uv run sas-mcp-login``). Default location:
+     ``~/.sas-mcp-server/credentials.json``. The helper runs Authorization
+     Code + PKCE against the built-in ``vscode`` OAuth client and writes
+     the token in the same shape as the SAS Viya CLI cache.
+
+  3. Native device-code flow against ``/SASLogon/oauth/device_authorization``.
+     Used only when no cached credentials exist. Works on Viya instances
+     whose admins have not enabled CSRF protection on the device endpoint
+     and whose OAuth client is registered with the device-code grant type.
+
+Password grant has been removed: it requires a password in plaintext on disk,
+OAuth 2.1 deprecates it, and it does not work for confidential OAuth clients
+(SAS Logon rejects empty client secrets with ``invalid_client``).
 """
 
+import json
 import os
+import sys
+import time
+import webbrowser
+from pathlib import Path
+
 import httpx
 from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import FastMCPError
-from .config import VIYA_ENDPOINT, CLIENT_ID, SSL_VERIFY
-from .viya_utils import logger
-from .tools import register_tools
+
+from .config import CLIENT_ID, SSL_VERIFY, VIYA_ENDPOINT
 from .prompts import register_prompts
+from .tools import register_tools
+from .viya_utils import logger
 
 load_dotenv()
 
-VIYA_USERNAME = os.getenv("VIYA_USERNAME", "")
-VIYA_PASSWORD = os.getenv("VIYA_PASSWORD", "")
+SAS_CLI_CONFIG = os.getenv("SAS_CLI_CONFIG", "")
+DEVICE_AUTH_URL = f"{VIYA_ENDPOINT}/SASLogon/oauth/device_authorization"
+TOKEN_URL = f"{VIYA_ENDPOINT}/SASLogon/oauth/token"
+DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
 
 class AuthenticationError(FastMCPError):
-    def __init__(self, message):
+    def __init__(self, message: str):
         super().__init__(message)
         self.message = message
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"AuthenticationError: {self.message}"
 
 
-def _get_viya_token() -> str:
-    """Authenticate to Viya using password grant and return an access token."""
-    if not VIYA_USERNAME or not VIYA_PASSWORD:
-        raise AuthenticationError(
-            "VIYA_USERNAME and VIYA_PASSWORD must be set in .env for stdio mode"
-        )
-    resp = httpx.post(
-        f"{VIYA_ENDPOINT}/SASLogon/oauth/token",
+def _sas_cli_credentials_path() -> Path:
+    """Location of the access token cached by ``sas-viya auth loginCode``."""
+    base = Path(SAS_CLI_CONFIG) if SAS_CLI_CONFIG else Path.home()
+    return base / ".sas" / "credentials.json"
+
+
+def _helper_credentials_path() -> Path:
+    """Location of the access token cached by ``sas-mcp-login``."""
+    return Path.home() / ".sas-mcp-server" / "credentials.json"
+
+
+def _read_cached_token(path: Path) -> str | None:
+    """Return the ``Default.access-token`` value from *path*, or ``None``."""
+    if not path.exists():
+        return None
+    try:
+        creds = json.loads(path.read_text())
+        token = creds["Default"]["access-token"]
+    except (KeyError, json.JSONDecodeError, OSError) as exc:
+        logger.warning(f"Could not read credentials at {path}: {exc}")
+        return None
+    logger.info(f"Loaded access token from {path}")
+    return token
+
+
+def _native_device_code_token() -> str:
+    """Run RFC 8628 device flow directly against SAS Logon."""
+    init = httpx.post(
+        DEVICE_AUTH_URL,
         auth=(CLIENT_ID, ""),
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        data={
-            "grant_type": "password",
-            "username": VIYA_USERNAME,
-            "password": VIYA_PASSWORD,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
         },
+        data={"client_id": CLIENT_ID, "scope": "openid"},
         verify=SSL_VERIFY,
+        timeout=15.0,
     )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
+    if init.status_code == 403 and "CSRF" in init.text:
+        raise AuthenticationError(
+            "Viya rejected the device-authorization request (CSRF protection "
+            "on /SASLogon/oauth/device_authorization). Run either "
+            "`sas-viya auth loginCode` (writes ~/.sas/credentials.json) or "
+            "`uv run sas-mcp-login` (writes ~/.sas-mcp-server/credentials.json) "
+            "and re-launch this server."
+        )
+    init.raise_for_status()
+    flow = init.json()
+
+    verification_uri = flow.get("verification_uri_complete") or flow["verification_uri"]
+    user_code = flow["user_code"]
+    expires_in = int(flow.get("expires_in", 1800))
+    interval = max(int(flow.get("interval", 5)), 5)
+
+    msg = (
+        f"\n[sas-mcp-server] To authenticate, open:\n  {verification_uri}\n"
+        f"and enter code: {user_code}\n"
+    )
+    logger.info(msg)
+    print(msg, file=sys.stderr, flush=True)
+    try:
+        webbrowser.open(verification_uri, new=2)
+    except Exception:
+        pass
+
+    deadline = time.time() + expires_in
+    while time.time() < deadline:
+        time.sleep(interval)
+        poll = httpx.post(
+            TOKEN_URL,
+            auth=(CLIENT_ID, ""),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": DEVICE_GRANT,
+                "device_code": flow["device_code"],
+                "client_id": CLIENT_ID,
+            },
+            verify=SSL_VERIFY,
+            timeout=15.0,
+        )
+        if poll.status_code == 200:
+            return poll.json()["access_token"]
+        try:
+            err = poll.json().get("error")
+        except Exception:
+            err = None
+        if err == "authorization_pending":
+            continue
+        if err == "slow_down":
+            interval += 5
+            continue
+        raise AuthenticationError(
+            f"Device-code authentication failed: {err or poll.text[:200]}"
+        )
+    raise AuthenticationError("Device-code authentication timed out")
 
 
-# Token getter for stdio mode: acquires token via password grant
+def _get_viya_token() -> str:
+    for path in (_sas_cli_credentials_path(), _helper_credentials_path()):
+        token = _read_cached_token(path)
+        if token:
+            return token
+    logger.info(
+        "No cached credentials found at ~/.sas or ~/.sas-mcp-server; "
+        "attempting native device-code flow"
+    )
+    return _native_device_code_token()
+
+
 async def _stdio_get_token(ctx: Context) -> str:
     return _get_viya_token()
 
 
-# Initialize the FastMCP server (no auth — stdio clients handle auth differently)
 logger.info(f"Connecting to SAS Viya at {VIYA_ENDPOINT}")
 mcp = FastMCP("SAS Viya Execution MCP Server")
-
-# Register all tools and prompts
 register_tools(mcp, _stdio_get_token)
 register_prompts(mcp)
 
 
-def main():
+def main() -> None:
     """Run the MCP server in stdio mode."""
     mcp.run(transport="stdio")
 

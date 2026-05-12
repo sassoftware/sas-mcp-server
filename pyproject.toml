@@ -1,6 +1,6 @@
 [project]
 name = "sas-mcp-server"
-version = "0.1.0"
+version = "1.0.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [{name = "SAS Institute Inc."}]
@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 app = "sas_mcp_server.main:main"
 app-stdio = "sas_mcp_server.stdio_server:main"
+sas-mcp-login = "sas_mcp_server.auth_login:main"
 
 [build-system]
 requires = ["uv_build>=0.8.22,<0.9.0"]

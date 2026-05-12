@@ -1,5 +1,28 @@
 ## Configuration details for the SAS MCP Server
 
+### Authentication modes — at a glance
+
+The server supports five authentication paths across HTTP and stdio modes. Pick one per deployment; HTTP mode lets PKCE and raw-bearer clients share the same endpoint.
+
+| Mode | Transport | What the client does | What the server does | Admin client registration? | External CLI? | Best for |
+|---|---|---|---|---|---|---|
+| **OAuth2 PKCE** | HTTP | Browser-driven login on first tool call | Issues an MCP-signed JWT after the upstream PKCE flow; swaps it for the upstream Viya token on each request | ✅ Required (`sas-mcp` client, see [Step 2](#step-2-register-an-oauth-client-for-the-mcp-server)) | No | Interactive end-users, k8s/multi-user deployments |
+| **Raw bearer passthrough** | HTTP | Sends `Authorization: Bearer <viya-jwt>` on every request | Validates the JWT against Viya's JWKS and uses it upstream as-is | ✅ Required (or token issued elsewhere) | No | Automation/CI that already holds a Viya token; co-exists with PKCE on the same `/mcp` endpoint when `ALLOW_RAW_BEARER=true` |
+| **`sas-viya` CLI cache** | stdio | Runs `sas-viya auth loginCode` once | Reads access token from `~/.sas/credentials.json` on each tool call | ❌ Not needed (uses built-in `sas.cli` client) | ✅ `sas-viya` CLI | Operators who already use the SAS Viya CLI |
+| **`sas-mcp-login` cache** | stdio | Runs `uv run sas-mcp-login` once | Reads access token from `~/.sas-mcp-server/credentials.json` on each tool call | ❌ Not needed (uses built-in `vscode` client) | ❌ None | Zero-prereq bootstrap; lowest friction on Viya 2022.11+ |
+| **Native device-code (fallback)** | stdio | None — server prints a URL and code on first tool call | RFC 8628 device-authorization flow against SAS Logon | ⚠️ Only if your registered client has the device-code grant type | ❌ None | Viya deployments that don't CSRF-protect `/SASLogon/oauth/device_authorization` |
+
+**Defaults and ordering**
+
+- **HTTP mode** always runs PKCE. The raw-bearer path is additive and opt-in via `ALLOW_RAW_BEARER=true`; when off, only PKCE clients can authenticate.
+- **stdio mode** tries the cache files in order: `sas-viya` CLI cache → `sas-mcp-login` cache → native device-code. The first hit wins.
+
+**Removed**
+
+- Password-grant stdio authentication (was: `VIYA_USERNAME` + `VIYA_PASSWORD`). Deprecated by OAuth 2.1 and incompatible with confidential OAuth clients. See [`stdio_server.py`](../src/sas_mcp_server/stdio_server.py) for details.
+
+---
+
 ### Viya Setup
 The SAS MCP Server runs locally and expects to communicate with a Viya instance.
 
@@ -80,8 +103,10 @@ The .env file used by the MCP Server allows for customizable options that the us
 | `MCP_BASE_URL`         | No   | `http://localhost:{HOST_PORT}`             | External URL of the MCP server (set for k8s/reverse proxy deployments) |
 | `COMPUTE_CONTEXT_NAME` | No   | `SAS Job Execution compute context`       | Viya compute context to use for code execution                |
 | `SSL_VERIFY`        | No      | `true`       | Set to `false` to disable SSL certificate verification (e.g. for self-signed Viya certificates)  |
-| `VIYA_USERNAME`     | Stdio only | —         | Viya username for stdio mode (password grant authentication)  |
-| `VIYA_PASSWORD`     | Stdio only | —         | Viya password for stdio mode (password grant authentication)  |
+| `ALLOW_RAW_BEARER`  | No      | `false`      | When `true`, the HTTP-mode server also accepts a raw Viya access token in the `Authorization` header alongside the default OAuth2 PKCE flow. Useful for automation that already holds a Viya token. |
+| `SAS_CLI_CONFIG`    | Stdio (optional) | `$HOME` | Parent directory for the SAS Viya CLI credential cache. The token is read from `$SAS_CLI_CONFIG/.sas/credentials.json`. |
+| `VIYA_USERNAME`     | Tests only | —         | Used by the integration test suite to acquire a token via the legacy `sas.cli` password grant. Not used by the MCP server itself. |
+| `VIYA_PASSWORD`     | Tests only | —         | See `VIYA_USERNAME`.                                          |
 
 The defaults listed here are the variable values used in the Viya setup step. If your SAS Administrator has used a different `CLIENT_ID`, `HOST_PORT` during the OAuth Client registration. Please use those values instead.
 
@@ -200,7 +225,7 @@ When a user first invokes a tool, their browser opens for Viya login. After auth
 
 ### Gemini CLI
 
-Gemini CLI connects to MCP servers via stdio only — it does not support HTTP mode. Because it cannot participate in browser-based OAuth redirects, stdio mode with password grant credentials is required.
+Gemini CLI connects to MCP servers via stdio only — it does not support HTTP mode. Stdio mode reads an access token cached by the SAS Viya CLI's device-code flow, so no MCP-client browser redirect is involved.
 
 #### Configuration
 
@@ -228,17 +253,37 @@ The `timeout` field (in milliseconds) controls how long Gemini CLI waits for a t
 
 Without this setting, tool calls will appear to fail with a timeout error even though the server and authentication are working correctly.
 
-#### Required `.env` variables
+#### Authenticating for stdio mode
 
-Stdio mode authenticates via password grant, so you must set these in your `.env` file:
-```
-VIYA_ENDPOINT=https://your-viya-server.com
-VIYA_USERNAME=your-username
-VIYA_PASSWORD=your-password
-SSL_VERIFY=false  # if using self-signed certificates
+Stdio mode reads a cached OAuth access token. Two equivalent ways to obtain one — pick whichever fits your environment.
+
+**Option 1 — SAS Viya CLI** (preferred if it's already installed):
+
+```sh
+sas-viya --profile Default profile init --sas-endpoint https://your-viya-server.com
+sas-viya auth loginCode
 ```
 
-The `CLIENT_ID` can remain at the default (`sas-mcp`) or be changed to match an existing OAuth client registered on your Viya instance (e.g., `sas.cli`).
+This writes `~/.sas/credentials.json`. If you keep the SAS profile somewhere other than `$HOME`, set `SAS_CLI_CONFIG` to its parent directory in your `.env`:
+
+```
+SAS_CLI_CONFIG=/path/whose/.sas/credentials.json/lives/here
+```
+
+**Option 2 — built-in `sas-mcp-login` helper** (no external CLI, no admin client registration; requires Viya 2022.11+):
+
+```sh
+uv run sas-mcp-login
+```
+
+The helper runs OAuth 2.0 Authorization Code + PKCE against the built-in `vscode` Viya OAuth client, opens your browser, and writes the token to `~/.sas-mcp-server/credentials.json`. After signing in, SAS Logon displays the authorization code on a results page; copy it and paste it back into the terminal.
+
+The stdio server reads whichever cache file exists, in this order:
+
+1. `~/.sas/credentials.json` (or `$SAS_CLI_CONFIG/.sas/credentials.json`)
+2. `~/.sas-mcp-server/credentials.json`
+
+When the token expires, re-run the same command you used originally.
 
 ---
 

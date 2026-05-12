@@ -1,8 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0] - 2026-05-12
 
 ### Added
+- **GitHub Container Registry publishing** — `.github/workflows/publish-ghcr.yml` builds and pushes multi-arch (`linux/amd64`, `linux/arm64`) images to `ghcr.io/sassoftware/sas-mcp-server` on push to `main` (`:edge`, `:sha-<short>`), on `v*` tags (`:latest`, semver tags), and on `workflow_dispatch`. Images carry build provenance and SBOM attestations.
+- **PR-time Dockerfile build check** — `.github/workflows/docker-build.yml` builds the image (no push, single arch) on every PR that touches Dockerfile-relevant paths.
+- **OCI image labels** on the `Dockerfile` runner stage per SAS OSPO publishing guidelines: `maintainer`, `org.opencontainers.image.source`, `org.opencontainers.image.description`, `org.opencontainers.image.licenses`. Closes upstream issue #1.
+- **`sas-mcp-login`** — Built-in OAuth 2.0 Authorization Code + PKCE login helper for stdio mode, exposed as a `uv run sas-mcp-login` console-script. Uses the built-in `vscode` Viya OAuth client (available on Viya 2022.11+) so no admin client registration and no external CLI install are needed; writes a cached access token to `~/.sas-mcp-server/credentials.json`. Supports a two-step `--code <CODE>` variant for non-TTY shells.
+- **`ALLOW_RAW_BEARER`** env var — Additive HTTP auth mode. When `true`, the server accepts raw upstream Viya JWTs in the `Authorization: Bearer` header alongside the default OAuth2 PKCE flow. PKCE clients are unaffected; the new path only fires when the standard MCP JWT swap returns `None`. Useful for automation/CI clients that already hold a Viya token.
+- **`SAS_CLI_CONFIG`** env var — Override the parent directory for the `sas-viya` CLI credential cache used by stdio mode (default: `$HOME`).
+- Native OAuth 2.0 Device Authorization Grant (RFC 8628) as the last-resort fallback in stdio mode for Viyas whose admin has not enabled CSRF protection on `/SASLogon/oauth/device_authorization`.
 - **26 new MCP tools** across five tiers:
   - **Tier 1 — Data Discovery**: `list_cas_servers`, `list_caslibs`, `list_castables`, `get_castable_info`, `get_castable_columns`, `get_castable_data`
   - **Tier 2 — Data Operations & Files**: `upload_data`, `promote_table_to_memory`, `list_files`, `upload_file`, `download_file`
@@ -27,6 +34,12 @@
 - **Gemini CLI configuration** — `examples/gemini-settings.json` with recommended `timeout` setting, Gemini CLI section in `examples/configuration.md`, and Gemini CLI snippets in README
 
 ### Changed
+- **Stdio auth model overhauled.** Replaced password-grant authentication with a chain of OAuth 2.0 paths, tried in order: (1) token cached by `sas-viya auth loginCode` at `~/.sas/credentials.json` (or `$SAS_CLI_CONFIG/.sas/credentials.json`); (2) token cached by `sas-mcp-login` at `~/.sas-mcp-server/credentials.json`; (3) native device-code flow. The first hit wins. Password grant was deprecated by OAuth 2.1 and failed with `invalid_client` for OAuth clients registered as confidential.
+- `src/sas_mcp_server/config.py` — `viya_auth` is now a `PermissiveOAuthProxy` (subclass of `fastmcp.server.auth.OAuthProxy`) so that, when `ALLOW_RAW_BEARER=true`, raw upstream JWTs fall through to the configured `token_verifier` after the standard MCP JWT swap fails. Behaviour is unchanged when the flag is `false`.
+- `src/sas_mcp_server/stdio_server.py` — Rewritten around the new auth chain; removed `VIYA_USERNAME`/`VIYA_PASSWORD` reads.
+- `examples/configuration.md` — New "Authentication modes — at a glance" overview comparing all five paths; reworked "Authenticating for stdio mode" to cover both `sas-viya` CLI and `sas-mcp-login` paths; updated Gemini CLI section to drop password-grant references; added `ALLOW_RAW_BEARER` and `SAS_CLI_CONFIG` to the environment variables table.
+- `README.md` — Added a "Pull pre-built image" snippet with the published tag table; updated the deployment-mode comparison and "Option B: Stdio mode" instructions; new "Programmatic clients with a pre-existing Viya token" section documenting `ALLOW_RAW_BEARER`.
+- `examples/docker/setup.md` — Added a "Pulling the pre-built image" section with the tag-to-image-version mapping and a note about signed build provenance.
 - `src/sas_mcp_server/config.py` — Added SSL verification bypass via httpx monkey-patch when `SSL_VERIFY=false`
 - `src/sas_mcp_server/viya_utils.py` — Respects `SSL_VERIFY` setting for Viya API calls
 - `examples/configuration.md` — Added Python registration script instructions and `SSL_VERIFY` to environment variables table
@@ -38,6 +51,9 @@
   - `from fastmcp.tools import ToolResult` — module path flattened.
 - **`OAuthProxy(valid_scopes=["openid"])`** — required so containerized deployments accept tokens issued only with `openid` (carried from PR #9; fixes OAuth2 under Podman/Docker).
 - **SSL monkey-patch in `config.py` is now idempotent** — guarded by `_sas_mcp_ssl_patched` so reloading the module doesn't stack wrappers around `httpx.AsyncClient.__init__`.
+
+### Removed
+- **Password-grant stdio authentication.** `VIYA_USERNAME`/`VIYA_PASSWORD` are no longer read by the stdio server. They remain in `.env.sample` (with clearer wording) only because the integration test suite uses the legacy `sas.cli` password grant to acquire test tokens.
 
 ### Fixed
 - `upload_data` — Rewrote to use the CAS Management REST API (`POST /casManagement/servers/{server}/caslibs/{caslib}/tables` with `multipart/form-data`) instead of a SAS DATA step workaround; handles 409 (table already exists) gracefully

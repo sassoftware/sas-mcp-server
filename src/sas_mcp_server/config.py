@@ -1,16 +1,50 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 import os
 import ssl
 
 from dotenv import load_dotenv
 from fastmcp.server.auth import OAuthProxy
 from fastmcp.server.auth.providers.jwt import JWTVerifier
+from mcp.server.auth.provider import AccessToken
 
 load_dotenv()
 
 SSL_VERIFY = os.getenv("SSL_VERIFY", "true").lower() not in ("false", "0", "no")
+ALLOW_RAW_BEARER = os.getenv("ALLOW_RAW_BEARER", "false").lower() in ("true", "1", "yes")
+
+_logger = logging.getLogger(__name__)
+
+
+class PermissiveOAuthProxy(OAuthProxy):
+    """OAuthProxy that optionally accepts raw upstream JWTs.
+
+    When ``ALLOW_RAW_BEARER`` is set, a bearer token that fails the standard
+    MCP JWT swap (because it isn't a proxy-issued JWT) falls through to the
+    configured ``token_verifier``. If the verifier accepts it (i.e. the
+    token is a valid Viya JWT signed by the upstream JWKS), the request
+    proceeds with the raw token used directly as the upstream credential.
+
+    This lets PKCE clients and pre-authenticated programmatic clients hit
+    the same MCP endpoint without conflict — the additive path only kicks
+    in after the standard swap has already failed.
+    """
+
+    async def load_access_token(self, token: str) -> AccessToken | None:
+        validated = await super().load_access_token(token)
+        if validated is not None:
+            return validated
+        if not ALLOW_RAW_BEARER:
+            return None
+        raw = await self._token_validator.verify_token(token)
+        if raw is not None:
+            _logger.info(
+                "Accepted raw bearer token (ALLOW_RAW_BEARER=true); "
+                "bypassing MCP JWT swap"
+            )
+        return raw
 
 if not SSL_VERIFY:
     # Disable SSL verification for self-signed Viya certificates
@@ -61,7 +95,7 @@ JWKS_URI = f"{VIYA_ENDPOINT}/SASLogon/token_keys"
 
 token_verifier = JWTVerifier(jwks_uri=JWKS_URI, audience=[])
 
-viya_auth = OAuthProxy(
+viya_auth = PermissiveOAuthProxy(
     upstream_authorization_endpoint=AUTHORIZATION_ENDPOINT,
     upstream_token_endpoint=TOKEN_ENDPOINT,
     upstream_client_id=CLIENT_ID,

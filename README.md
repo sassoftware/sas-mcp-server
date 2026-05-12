@@ -59,27 +59,64 @@ The server will be available at `http://localhost:8134/mcp` by default. Authenti
 
 **Option B: Stdio mode** (MCP client starts the server on demand)
 
-Set `VIYA_USERNAME` and `VIYA_PASSWORD` in your `.env` file, then configure your MCP client to launch the server directly (see below).
+Authenticate once. Two equivalent options:
+
+```sh
+# Option B1 — if you have the SAS Viya CLI installed:
+sas-viya auth loginCode
+
+# Option B2 — built-in helper, no external CLI needed (Viya 2022.11+):
+uv run sas-mcp-login
+```
+
+Both flows write an access token to a local cache (`~/.sas/credentials.json` and `~/.sas-mcp-server/credentials.json` respectively); the stdio server reads whichever it finds. When the token expires, re-run the same command.
+
+Then configure your MCP client to launch the server directly (see below).
 
 **Option C: Docker / Podman** (containerized deployment)
+
+Pull the pre-built image from GitHub Container Registry:
+```sh
+docker pull ghcr.io/sassoftware/sas-mcp-server:latest
+docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 ghcr.io/sassoftware/sas-mcp-server:latest
+```
+
+Or build locally from source:
 ```sh
 docker build -t sas-mcp-server .
 docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 sas-mcp-server
 ```
+
+Available image tags:
+- `latest` — most recent tagged release
+- `<major>.<minor>.<patch>` (e.g. `1.0.0`) — specific release
+- `<major>.<minor>` (e.g. `1.0`) — latest patch of a minor release
+- `edge` — tip of `main` (unreleased, for testing)
+- `sha-<short>` — pinned to a specific commit
+
+**Programmatic clients with a pre-existing Viya token**
+
+If your caller already holds a Viya access token (e.g. an automation script that obtained one via the SAS Viya CLI), start the HTTP-mode server with `ALLOW_RAW_BEARER=true` and pass the token directly:
+
+```sh
+curl -H "Authorization: Bearer $VIYA_TOKEN" http://localhost:8134/mcp ...
+```
+
+The server validates the token against Viya's JWKS and uses it upstream as-is, bypassing the MCP JWT swap. The default OAuth2 PKCE flow keeps working alongside — both client types share the same `/mcp` endpoint.
 
 ### Choosing a deployment mode
 
 | | **HTTP** | **Stdio** | **Docker** |
 |---|---|---|---|
 | **How it runs** | Long-running server you start separately | MCP client spawns it on demand | Containerized HTTP server |
-| **Authentication** | OAuth2 PKCE flow (browser popup) | Password grant (credentials in `.env`) | OAuth2 PKCE flow (browser popup) |
+| **Authentication** | OAuth2 PKCE flow (browser popup) | Cached token via `sas-viya` CLI or `sas-mcp-login` | OAuth2 PKCE flow (browser popup) |
 | **Best for** | Multi-user or shared setups; production-like environments | Single-user local development; quick experimentation | Team deployments; CI/CD; environments without Python installed |
-| **Requires** | Python + uv | Python + uv | Docker or Podman only |
-| **Credentials stored?** | No — user authenticates interactively | Yes — username/password in `.env` | No — user authenticates interactively |
+| **Requires** | Python + uv | Python + uv (+ optional `sas-viya` CLI) | Docker or Podman only |
+| **Credentials stored?** | No — user authenticates interactively | No — only an access token (not a password) is cached | No — user authenticates interactively |
 | **MCP client config** | Point client to `http://localhost:8134/mcp` | Client runs `uv run app-stdio` | Point client to `http://host:8134/mcp` |
 
 **Quick guidance:**
-- **Starting out or exploring?** Use **stdio** — zero setup beyond `.env`, and your MCP client manages the server lifecycle.
+- **Starting out or exploring?** Use **stdio** — one `sas-viya auth loginCode` or `uv run sas-mcp-login`, then your MCP client manages the server lifecycle.
 - **Need secure, interactive auth?** Use **HTTP** — no stored passwords, each user authenticates via browser.
 - **Deploying for a team or on a server?** Use **Docker** — portable, no Python dependency on the host, easy to integrate with orchestrators.
 - **Using Gemini CLI?** Use **stdio** — Gemini CLI does not support HTTP mode or browser-based OAuth. See [Gemini CLI configuration](examples/configuration.md#gemini-cli).
@@ -261,16 +298,25 @@ Maintainers are accepting patches and contributions to this project. Please read
 
 ## License & Attribution
 
-Except for the the contents of the /static folder, this project is licensed under the [Apache 2.0 License](LICENSE). Elements in the /static folder are owned by SAS and are not released under an open source license. SAS and all other SAS Institute Inc. product or service names are registered trademarks or trademarks of SAS Institute Inc. in the USA and other countries. ® indicates USA registration.
+Except for the the contents of the `/static` folder, this project is licensed under the [Apache 2.0 License](LICENSE). 
+Elements in the `/static` folder are owned by SAS and are not released under an open source license. 
+SAS and all other SAS Institute Inc. product or service names are registered trademarks or trademarks of SAS Institute Inc. in the USA and other countries. ® indicates USA registration.
 
 Separate commercial licenses for SAS software (e.g., SAS Viya) are not included and are required to use these capabilities with SAS software.
 
+As with any container image, direct and indirect dependencies are governed by their own licenses.
+Users of the published container image are responsible for ensuring that their use complies with all applicable licenses.
+
 All third-party trademarks referenced belong to their respective owners and are only used here for identification and reference purposes, and not to imply any affiliation or endorsement by the trademark owners.
 
-This project requires the usage of the following:
+## Third-Party Dependencies
 
-- Python, see the Python license [here](https://docs.python.org/3/license.html)
-- FastMCP, under the Apache 2.0 License
-- uvicorn, under the BSD 3-Clause
-- starlette, under the BSD 3-Clause
-- httpx, under the MIT license
+This project requires the following dependencies.
+
+| Dependency | License |
+| ---------- | ------- |
+| Python | [Python Software License](https://docs.python.org/3/license.html) |
+| FastMCP | [Apache License 2.0](https://github.com/PrefectHQ/fastmcp/blob/main/LICENSE) |
+| uvicorn | [BSD 3-Clause License](https://github.com/Kludex/uvicorn/blob/main/LICENSE.md) |
+| starlette | [BSD 3-Clause License](https://github.com/Kludex/starlette/blob/main/LICENSE.md)
+| httpx | [MIT License](https://github.com/projectdiscovery/httpx/blob/dev/LICENSE.md) | 
