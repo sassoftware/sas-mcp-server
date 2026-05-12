@@ -62,10 +62,25 @@ The server will be available at `http://localhost:8134/mcp` by default. Authenti
 Set `VIYA_USERNAME` and `VIYA_PASSWORD` in your `.env` file, then configure your MCP client to launch the server directly (see below).
 
 **Option C: Docker / Podman** (containerized deployment)
+
+Pull the pre-built image from GitHub Container Registry:
+```sh
+docker pull ghcr.io/sassoftware/sas-mcp-server:latest
+docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 ghcr.io/sassoftware/sas-mcp-server:latest
+```
+
+Or build locally from source:
 ```sh
 docker build -t sas-mcp-server .
 docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 sas-mcp-server
 ```
+
+Available image tags:
+- `latest` — most recent tagged release
+- `<major>.<minor>.<patch>` (e.g. `0.1.0`) — specific release
+- `<major>.<minor>` (e.g. `0.1`) — latest patch of a minor release
+- `edge` — tip of `main` (unreleased, for testing)
+- `sha-<short>` — pinned to a specific commit
 
 ### Choosing a deployment mode
 
