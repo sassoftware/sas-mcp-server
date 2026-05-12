@@ -59,7 +59,12 @@ The server will be available at `http://localhost:8134/mcp` by default. Authenti
 
 **Option B: Stdio mode** (MCP client starts the server on demand)
 
-Set `VIYA_USERNAME` and `VIYA_PASSWORD` in your `.env` file, then configure your MCP client to launch the server directly (see below).
+Authenticate once with the [SAS Viya CLI](https://documentation.sas.com/?cdcId=sasadmincdc&docsetId=calcli&docsetTarget=titlepage.htm):
+```sh
+sas-viya auth loginCode
+```
+
+Then configure your MCP client to launch the server directly (see below). The MCP server reads the cached token from `~/.sas/credentials.json`. When the token expires, re-run `sas-viya auth loginCode`.
 
 **Option C: Docker / Podman** (containerized deployment)
 
@@ -87,14 +92,14 @@ Available image tags:
 | | **HTTP** | **Stdio** | **Docker** |
 |---|---|---|---|
 | **How it runs** | Long-running server you start separately | MCP client spawns it on demand | Containerized HTTP server |
-| **Authentication** | OAuth2 PKCE flow (browser popup) | Password grant (credentials in `.env`) | OAuth2 PKCE flow (browser popup) |
+| **Authentication** | OAuth2 PKCE flow (browser popup) | Device-code flow via `sas-viya` CLI | OAuth2 PKCE flow (browser popup) |
 | **Best for** | Multi-user or shared setups; production-like environments | Single-user local development; quick experimentation | Team deployments; CI/CD; environments without Python installed |
-| **Requires** | Python + uv | Python + uv | Docker or Podman only |
-| **Credentials stored?** | No — user authenticates interactively | Yes — username/password in `.env` | No — user authenticates interactively |
+| **Requires** | Python + uv | Python + uv + `sas-viya` CLI | Docker or Podman only |
+| **Credentials stored?** | No — user authenticates interactively | No — `sas-viya` CLI caches an access token | No — user authenticates interactively |
 | **MCP client config** | Point client to `http://localhost:8134/mcp` | Client runs `uv run app-stdio` | Point client to `http://host:8134/mcp` |
 
 **Quick guidance:**
-- **Starting out or exploring?** Use **stdio** — zero setup beyond `.env`, and your MCP client manages the server lifecycle.
+- **Starting out or exploring?** Use **stdio** — one `sas-viya auth loginCode` and your MCP client manages the server lifecycle.
 - **Need secure, interactive auth?** Use **HTTP** — no stored passwords, each user authenticates via browser.
 - **Deploying for a team or on a server?** Use **Docker** — portable, no Python dependency on the host, easy to integrate with orchestrators.
 - **Using Gemini CLI?** Use **stdio** — Gemini CLI does not support HTTP mode or browser-based OAuth. See [Gemini CLI configuration](examples/configuration.md#gemini-cli).

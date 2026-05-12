@@ -80,8 +80,9 @@ The .env file used by the MCP Server allows for customizable options that the us
 | `MCP_BASE_URL`         | No   | `http://localhost:{HOST_PORT}`             | External URL of the MCP server (set for k8s/reverse proxy deployments) |
 | `COMPUTE_CONTEXT_NAME` | No   | `SAS Job Execution compute context`       | Viya compute context to use for code execution                |
 | `SSL_VERIFY`        | No      | `true`       | Set to `false` to disable SSL certificate verification (e.g. for self-signed Viya certificates)  |
-| `VIYA_USERNAME`     | Stdio only | —         | Viya username for stdio mode (password grant authentication)  |
-| `VIYA_PASSWORD`     | Stdio only | —         | Viya password for stdio mode (password grant authentication)  |
+| `SAS_CLI_CONFIG`    | Stdio (optional) | `$HOME` | Parent directory for the SAS Viya CLI credential cache. The token is read from `$SAS_CLI_CONFIG/.sas/credentials.json`. |
+| `VIYA_USERNAME`     | Tests only | —         | Used by the integration test suite to acquire a token via the legacy `sas.cli` password grant. Not used by the MCP server itself. |
+| `VIYA_PASSWORD`     | Tests only | —         | See `VIYA_USERNAME`.                                          |
 
 The defaults listed here are the variable values used in the Viya setup step. If your SAS Administrator has used a different `CLIENT_ID`, `HOST_PORT` during the OAuth Client registration. Please use those values instead.
 
@@ -200,7 +201,7 @@ When a user first invokes a tool, their browser opens for Viya login. After auth
 
 ### Gemini CLI
 
-Gemini CLI connects to MCP servers via stdio only — it does not support HTTP mode. Because it cannot participate in browser-based OAuth redirects, stdio mode with password grant credentials is required.
+Gemini CLI connects to MCP servers via stdio only — it does not support HTTP mode. Stdio mode reads an access token cached by the SAS Viya CLI's device-code flow, so no MCP-client browser redirect is involved.
 
 #### Configuration
 
@@ -228,17 +229,25 @@ The `timeout` field (in milliseconds) controls how long Gemini CLI waits for a t
 
 Without this setting, tool calls will appear to fail with a timeout error even though the server and authentication are working correctly.
 
-#### Required `.env` variables
+#### Authenticating with the SAS Viya CLI
 
-Stdio mode authenticates via password grant, so you must set these in your `.env` file:
+Stdio mode uses the OAuth 2.0 device-code flow via the SAS Viya CLI. Before the first MCP tool call:
+
+```sh
+# One-time per Viya host
+sas-viya --profile Default profile init --sas-endpoint https://your-viya-server.com
+sas-viya auth loginCode
+```
+
+Follow the URL the CLI prints, sign in, and approve the code. The CLI writes an access token to `~/.sas/credentials.json`, which the MCP server reads on each tool call. When the token expires, re-run `sas-viya auth loginCode`.
+
+If you keep the SAS profile somewhere other than `$HOME`, set `SAS_CLI_CONFIG` to its parent directory in your `.env`:
+
 ```
 VIYA_ENDPOINT=https://your-viya-server.com
-VIYA_USERNAME=your-username
-VIYA_PASSWORD=your-password
+SAS_CLI_CONFIG=/path/whose/.sas/credentials.json/lives/here
 SSL_VERIFY=false  # if using self-signed certificates
 ```
-
-The `CLIENT_ID` can remain at the default (`sas-mcp`) or be changed to match an existing OAuth client registered on your Viya instance (e.g., `sas.cli`).
 
 ---
 

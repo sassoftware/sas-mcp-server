@@ -30,8 +30,9 @@ def register_tools(mcp, get_token):
         The server instance to register tools on.
     get_token : callable
         ``async def get_token(ctx: Context) -> str`` — returns a Viya access
-        token.  HTTP mode pulls it from context state; stdio mode acquires it
-        via password grant.
+        token.  HTTP mode pulls it from context state; stdio mode reads a
+        token cached by ``sas-viya auth loginCode`` or runs an RFC 8628
+        device-code flow.
     """
 
     # ------------------------------------------------------------------
