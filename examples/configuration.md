@@ -1,5 +1,28 @@
 ## Configuration details for the SAS MCP Server
 
+### Authentication modes — at a glance
+
+The server supports five authentication paths across HTTP and stdio modes. Pick one per deployment; HTTP mode lets PKCE and raw-bearer clients share the same endpoint.
+
+| Mode | Transport | What the client does | What the server does | Admin client registration? | External CLI? | Best for |
+|---|---|---|---|---|---|---|
+| **OAuth2 PKCE** | HTTP | Browser-driven login on first tool call | Issues an MCP-signed JWT after the upstream PKCE flow; swaps it for the upstream Viya token on each request | ✅ Required (`sas-mcp` client, see [Step 2](#step-2-register-an-oauth-client-for-the-mcp-server)) | No | Interactive end-users, k8s/multi-user deployments |
+| **Raw bearer passthrough** | HTTP | Sends `Authorization: Bearer <viya-jwt>` on every request | Validates the JWT against Viya's JWKS and uses it upstream as-is | ✅ Required (or token issued elsewhere) | No | Automation/CI that already holds a Viya token; co-exists with PKCE on the same `/mcp` endpoint when `ALLOW_RAW_BEARER=true` |
+| **`sas-viya` CLI cache** | stdio | Runs `sas-viya auth loginCode` once | Reads access token from `~/.sas/credentials.json` on each tool call | ❌ Not needed (uses built-in `sas.cli` client) | ✅ `sas-viya` CLI | Operators who already use the SAS Viya CLI |
+| **`sas-mcp-login` cache** | stdio | Runs `uv run sas-mcp-login` once | Reads access token from `~/.sas-mcp-server/credentials.json` on each tool call | ❌ Not needed (uses built-in `vscode` client) | ❌ None | Zero-prereq bootstrap; lowest friction on Viya 2022.11+ |
+| **Native device-code (fallback)** | stdio | None — server prints a URL and code on first tool call | RFC 8628 device-authorization flow against SAS Logon | ⚠️ Only if your registered client has the device-code grant type | ❌ None | Viya deployments that don't CSRF-protect `/SASLogon/oauth/device_authorization` |
+
+**Defaults and ordering**
+
+- **HTTP mode** always runs PKCE. The raw-bearer path is additive and opt-in via `ALLOW_RAW_BEARER=true`; when off, only PKCE clients can authenticate.
+- **stdio mode** tries the cache files in order: `sas-viya` CLI cache → `sas-mcp-login` cache → native device-code. The first hit wins.
+
+**Removed**
+
+- Password-grant stdio authentication (was: `VIYA_USERNAME` + `VIYA_PASSWORD`). Deprecated by OAuth 2.1 and incompatible with confidential OAuth clients. See [`stdio_server.py`](../src/sas_mcp_server/stdio_server.py) for details.
+
+---
+
 ### Viya Setup
 The SAS MCP Server runs locally and expects to communicate with a Viya instance.
 
