@@ -5,7 +5,7 @@
 Tests for the MCP server and tools.
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from fastmcp import Context
 from sas_mcp_server.mcp_server import AuthenticationError
 
@@ -19,7 +19,7 @@ async def test_execute_sas_code_success(sample_sas_code, mock_access_token):
     with patch('sas_mcp_server.tools.run_one_snippet') as mock_run:
         mock_run.return_value = ("1", "completed", "Log output", "Listing output")
 
-        token = mock_context.get_state("access_token")
+        token = await mock_context.get_state("access_token")
         output = await mock_run(sample_sas_code, "1", token)
 
         mock_run.assert_called_once_with(sample_sas_code, "1", mock_access_token)
@@ -32,7 +32,7 @@ async def test_execute_sas_code_no_token():
     mock_context = MagicMock(spec=Context)
     mock_context.get_state.return_value = None
 
-    token = mock_context.get_state("access_token")
+    token = await mock_context.get_state("access_token")
     assert token is None
 
 
@@ -45,7 +45,7 @@ async def test_execute_sas_code_propagates_errors(sample_sas_code, mock_access_t
     with patch('sas_mcp_server.tools.run_one_snippet') as mock_run:
         mock_run.side_effect = Exception("API Error")
 
-        token = mock_context.get_state("access_token")
+        token = await mock_context.get_state("access_token")
         with pytest.raises(Exception, match="API Error"):
             await mock_run(sample_sas_code, "1", token)
 
@@ -80,7 +80,7 @@ async def test_execute_sas_code_with_multiline_code(mock_access_token):
     with patch('sas_mcp_server.tools.run_one_snippet') as mock_run:
         mock_run.return_value = ("1", "completed", "PROC MEANS output", "Statistics")
 
-        token = mock_context.get_state("access_token")
+        token = await mock_context.get_state("access_token")
         result = await mock_run(multiline_code, "1", token)
 
         mock_run.assert_called_once()

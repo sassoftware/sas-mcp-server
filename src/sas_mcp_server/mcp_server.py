@@ -47,7 +47,7 @@ class AuthMiddleware(Middleware):
             if viya_access_info:
                 logger.info("Viya access info retrieved successfully!")
                 viya_access_token = viya_access_info.token
-                ctx.fastmcp_context.set_state("access_token", viya_access_token)
+                await ctx.fastmcp_context.set_state("access_token", viya_access_token)
             else:
                 logger.error("Could not retrieve upstream access token!")
         else:
@@ -71,7 +71,7 @@ async def health_check(request):
 
 # Token getter for HTTP mode: reads from context state set by AuthMiddleware
 async def _http_get_token(ctx: Context) -> str:
-    token = ctx.get_state("access_token")
+    token = await ctx.get_state("access_token")
     if not token:
         raise AuthenticationError("No auth header found. Cannot authenticate to Viya")
     return token

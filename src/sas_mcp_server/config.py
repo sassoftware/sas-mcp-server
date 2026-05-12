@@ -15,25 +15,32 @@ SSL_VERIFY = os.getenv("SSL_VERIFY", "true").lower() not in ("false", "0", "no")
 if not SSL_VERIFY:
     # Disable SSL verification for self-signed Viya certificates
     import httpx
-    _ssl_context = ssl.create_default_context()
-    _ssl_context.check_hostname = False
-    _ssl_context.verify_mode = ssl.CERT_NONE
-    # Monkey-patch httpx to use our permissive SSL context by default
-    _original_async_client_init = httpx.AsyncClient.__init__
+    # Guard against re-patching when this module is reloaded (e.g. by tests
+    # that del sys.modules['sas_mcp_server.config'] and re-import). Without
+    # this, each reload stacks another wrapper around the existing one,
+    # eventually breaking outbound httpx connections in the same process.
+    if not getattr(httpx.AsyncClient.__init__, "_sas_mcp_ssl_patched", False):
+        _ssl_context = ssl.create_default_context()
+        _ssl_context.check_hostname = False
+        _ssl_context.verify_mode = ssl.CERT_NONE
+        # Monkey-patch httpx to use our permissive SSL context by default
+        _original_async_client_init = httpx.AsyncClient.__init__
 
-    def _patched_async_client_init(self, *args, **kwargs):
-        kwargs.setdefault("verify", _ssl_context)
-        _original_async_client_init(self, *args, **kwargs)
+        def _patched_async_client_init(self, *args, **kwargs):
+            kwargs.setdefault("verify", _ssl_context)
+            _original_async_client_init(self, *args, **kwargs)
 
-    httpx.AsyncClient.__init__ = _patched_async_client_init
+        _patched_async_client_init._sas_mcp_ssl_patched = True
+        httpx.AsyncClient.__init__ = _patched_async_client_init
 
-    _original_client_init = httpx.Client.__init__
+        _original_client_init = httpx.Client.__init__
 
-    def _patched_client_init(self, *args, **kwargs):
-        kwargs.setdefault("verify", _ssl_context)
-        _original_client_init(self, *args, **kwargs)
+        def _patched_client_init(self, *args, **kwargs):
+            kwargs.setdefault("verify", _ssl_context)
+            _original_client_init(self, *args, **kwargs)
 
-    httpx.Client.__init__ = _patched_client_init
+        _patched_client_init._sas_mcp_ssl_patched = True
+        httpx.Client.__init__ = _patched_client_init
 
 VIYA_ENDPOINT = os.getenv("VIYA_ENDPOINT", "").rstrip("/")
 CLIENT_ID = os.getenv("CLIENT_ID", "sas-mcp")
@@ -58,10 +65,10 @@ viya_auth = OAuthProxy(
     upstream_authorization_endpoint=AUTHORIZATION_ENDPOINT,
     upstream_token_endpoint=TOKEN_ENDPOINT,
     upstream_client_id=CLIENT_ID,
-    upstream_client_secret="",
+    upstream_client_secret=None,
     jwt_signing_key=MCP_SIGNING_KEY,
     base_url=MCP_BASE_URL,
     forward_pkce=True,
     token_verifier=token_verifier,
-    valid_scopes=[],
+    valid_scopes=["openid"],
 )

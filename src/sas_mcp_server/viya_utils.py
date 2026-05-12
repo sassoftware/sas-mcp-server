@@ -3,10 +3,10 @@
 
 import asyncio
 import httpx
-from fastmcp import utilities
+from fastmcp.utilities.logging import get_logger
 from .config import VIYA_ENDPOINT, CONTEXT_NAME, SSL_VERIFY
 
-logger = utilities.logging.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

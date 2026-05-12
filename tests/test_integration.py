@@ -12,7 +12,12 @@ import time
 import pytest
 from fastmcp import Client
 
-pytestmark = pytest.mark.integration
+# Pin all integration tests to a single session-scoped event loop. The
+# session-scoped fixtures (viya_token, integration_mcp_server) and the
+# in-memory fastmcp transport must share the same loop they were created in;
+# otherwise the second test's tool call fails with ConnectError when it
+# touches httpx state bound to the prior, now-closed loop.
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 _SUFFIX = str(int(time.time()))[-6:]
 
@@ -23,7 +28,11 @@ _SUFFIX = str(int(time.time()))[-6:]
 
 
 async def test_cas_discovery_workflow(integration_mcp_server):
-    """list_cas_servers → list_caslibs → list_castables → table info/columns/data"""
+    """list_cas_servers → list_caslibs → list_castables → table info/columns/data
+
+    Targets a known, loaded sample table — ``HMEQ`` in caslib ``Public`` — so
+    the columns/data assertions don't fall over an unloaded source table.
+    """
     async with Client(integration_mcp_server) as client:
         servers = (await client.call_tool("list_cas_servers", {})).data
         assert isinstance(servers, list)
@@ -31,32 +40,36 @@ async def test_cas_discovery_workflow(integration_mcp_server):
         server_id = servers[0]["name"]
 
         caslibs = (await client.call_tool("list_caslibs", {
-            "server_id": server_id, "limit": 10
+            "server_id": server_id, "limit": 50
         })).data
         assert isinstance(caslibs, list)
-        assert len(caslibs) > 0, "No caslibs found"
+        if not any(c["name"] == "Public" for c in caslibs):
+            pytest.skip("Public caslib not present on this Viya")
 
-        caslib_name = None
-        table_name = None
-        for cl in caslibs:
-            tables = (await client.call_tool("list_castables", {
-                "server_id": server_id,
-                "caslib_name": cl["name"],
-                "limit": 5,
-            })).data
-            if tables:
-                caslib_name = cl["name"]
-                table_name = tables[0]["name"]
-                break
-
-        if not table_name:
-            pytest.skip("No tables found in any caslib")
-
-        info = (await client.call_tool("get_castable_info", {
+        # Also exercise list_castables so the workflow stays end-to-end, but
+        # don't depend on HMEQ appearing in the listing (Public can hold
+        # hundreds of tables and the listing is paginated).
+        tables = (await client.call_tool("list_castables", {
             "server_id": server_id,
-            "caslib_name": caslib_name,
-            "table_name": table_name,
+            "caslib_name": "Public",
+            "limit": 50,
         })).data
+        assert isinstance(tables, list)
+
+        caslib_name = "Public"
+        table_name = "HMEQ"
+        # Fetch HMEQ metadata. Skip if HMEQ isn't loaded on this Viya;
+        # otherwise the test proceeds to the columns/data assertions.
+        try:
+            info = (await client.call_tool("get_castable_info", {
+                "server_id": server_id,
+                "caslib_name": caslib_name,
+                "table_name": table_name,
+            })).data
+        except Exception as e:
+            if "404" in str(e):
+                pytest.skip("HMEQ not loaded in Public caslib on this Viya")
+            raise
         assert isinstance(info, dict)
 
         columns = (await client.call_tool("get_castable_columns", {
