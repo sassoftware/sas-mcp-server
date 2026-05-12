@@ -80,6 +80,7 @@ The .env file used by the MCP Server allows for customizable options that the us
 | `MCP_BASE_URL`         | No   | `http://localhost:{HOST_PORT}`             | External URL of the MCP server (set for k8s/reverse proxy deployments) |
 | `COMPUTE_CONTEXT_NAME` | No   | `SAS Job Execution compute context`       | Viya compute context to use for code execution                |
 | `SSL_VERIFY`        | No      | `true`       | Set to `false` to disable SSL certificate verification (e.g. for self-signed Viya certificates)  |
+| `ALLOW_RAW_BEARER`  | No      | `false`      | When `true`, the HTTP-mode server also accepts a raw Viya access token in the `Authorization` header alongside the default OAuth2 PKCE flow. Useful for automation that already holds a Viya token. |
 | `SAS_CLI_CONFIG`    | Stdio (optional) | `$HOME` | Parent directory for the SAS Viya CLI credential cache. The token is read from `$SAS_CLI_CONFIG/.sas/credentials.json`. |
 | `VIYA_USERNAME`     | Tests only | —         | Used by the integration test suite to acquire a token via the legacy `sas.cli` password grant. Not used by the MCP server itself. |
 | `VIYA_PASSWORD`     | Tests only | —         | See `VIYA_USERNAME`.                                          |

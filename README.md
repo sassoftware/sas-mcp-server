@@ -94,6 +94,16 @@ Available image tags:
 - `edge` — tip of `main` (unreleased, for testing)
 - `sha-<short>` — pinned to a specific commit
 
+**Programmatic clients with a pre-existing Viya token**
+
+If your caller already holds a Viya access token (e.g. an automation script that obtained one via the SAS Viya CLI), start the HTTP-mode server with `ALLOW_RAW_BEARER=true` and pass the token directly:
+
+```sh
+curl -H "Authorization: Bearer $VIYA_TOKEN" http://localhost:8134/mcp ...
+```
+
+The server validates the token against Viya's JWKS and uses it upstream as-is, bypassing the MCP JWT swap. The default OAuth2 PKCE flow keeps working alongside — both client types share the same `/mcp` endpoint.
+
 ### Choosing a deployment mode
 
 | | **HTTP** | **Stdio** | **Docker** |
