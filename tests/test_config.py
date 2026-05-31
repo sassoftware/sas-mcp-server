@@ -15,8 +15,9 @@ producing empty-message ``httpcore.ConnectError``s on real Viya calls.
 """
 import importlib
 import sys
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 
 def _reload_config():
@@ -57,11 +58,12 @@ def test_config_missing_viya_endpoint(monkeypatch):
     monkeypatch.delenv("VIYA_ENDPOINT", raising=False)
     monkeypatch.setenv("CLIENT_ID", "test-client")
     # Block module-level load_dotenv from reloading VIYA_ENDPOINT from .env.
-    with patch('dotenv.load_dotenv'):
-        with pytest.raises(Exception, match="VIYA_ENDPOINT is not set"):
-            _reload_config()
+    with patch('dotenv.load_dotenv'), pytest.raises(Exception, match="VIYA_ENDPOINT is not set"):
+        _reload_config()
     # Restore a valid module state for subsequent tests in the session, since
-    # the failed reload leaves the module in a partially-initialised state.
+    # the failed reload leaves the module in a partially-initialised state. Set
+    # the endpoint explicitly so the reload succeeds even in CI (no local .env).
+    monkeypatch.setenv("VIYA_ENDPOINT", "https://test.viya.com")
     _reload_config()
 
 

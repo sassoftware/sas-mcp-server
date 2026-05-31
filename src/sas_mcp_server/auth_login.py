@@ -33,6 +33,7 @@ Usage:
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -40,12 +41,14 @@ import secrets
 import string
 import sys
 import webbrowser
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 
 import httpx
 from dotenv import load_dotenv
+
+from .env import env_bool
 
 load_dotenv()
 
@@ -110,10 +113,8 @@ def _exchange(
 def _write_state(payload: dict) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(payload))
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(STATE_PATH, 0o600)
-    except OSError:
-        pass
 
 
 def _read_state() -> dict | None:
@@ -126,16 +127,14 @@ def _read_state() -> dict | None:
 
 
 def _clear_state() -> None:
-    try:
+    with contextlib.suppress(OSError):
         STATE_PATH.unlink()
-    except OSError:
-        pass
 
 
 def _write_cache(tokens: dict) -> Path:
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     expires_in = int(tokens.get("expires_in", 0))
-    expiry = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
+    expiry = (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
     payload = {
         "Default": {
             "access-token": tokens["access_token"],
@@ -144,10 +143,8 @@ def _write_cache(tokens: dict) -> Path:
         }
     }
     CACHE_PATH.write_text(json.dumps(payload, indent=2))
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(CACHE_PATH, 0o600)
-    except OSError:
-        pass
     return CACHE_PATH
 
 
@@ -203,8 +200,7 @@ def main() -> int:
             "VIYA_ENDPOINT is not set in the environment and --endpoint was not given"
         )
 
-    env_ssl = os.getenv("SSL_VERIFY", "true").lower() not in ("false", "0", "no")
-    verify_ssl = False if args.insecure else env_ssl
+    verify_ssl = False if args.insecure else env_bool("SSL_VERIFY", True)
 
     # Phase 2: --code was given. Load saved state, exchange, write cache.
     if args.code:

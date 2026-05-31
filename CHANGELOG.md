@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.1.0] - 2026-05-31
+
+### Changed — BREAKING
+- **`execute_sas_code` now returns a structured object instead of a 4-element array.** The tool returns a JSON object `{"snippet_id", "state", "log", "listing"}` (all strings) so MCP clients can address fields by name and the declared return type matches reality. Callers that parsed the previous positional `[snippet_id, state, log, listing]` array must switch to keyed access.
+- **`create_ml_project` arguments changed.** The single `data_table_uri` argument is replaced by `caslib_name` + `table_name` (plus optional `server_id`, default `cas-shared-default`); the tool now builds the data-table URI itself and pre-checks that the table is loaded in global scope, returning an actionable error when it isn't (instead of an opaque `mlPipelineAutomation` failure later).
+
+### Fixed
+- **`promote_table_to_memory` no longer always returns 404 (issue #10).** It previously wrapped a `casManagement` call that only acts on an already-in-memory table, so the common "load a table via `execute_sas_code`, then promote it in a later call" flow failed — the session-scoped table was already gone. It now loads the table from its caslib **source** and promotes it to global scope via the `updateTableState` API, and is idempotent (a no-op when the table is already loaded in global scope).
+
+### Added
+- **`list_source_tables` tool** — lists source tables not yet loaded into CAS memory (`state=unloaded`), so callers can discover what `promote_table_to_memory` can load. Brings the tool count to 27.
+- **Code-quality tooling and a CI gate.** `[tool.ruff]` and `[tool.pyright]` config in `pyproject.toml`; `pytest-cov` with a 90% coverage floor; a new `.github/workflows/ci.yml` runs ruff → pyright → unit tests on every PR and on `main` (previously CI only built Docker images — tests and lint were never gated). `run_tests.sh` now runs the ruff + pyright gates before pytest (skip with `--no-lint`).
+- **`src/sas_mcp_server/viya_client.py`** — generic Viya REST helpers (`get_json`, `get_paged_items`, `post_json`, `delete_resource`, `make_client`) plus the shared `logger`, extracted from `viya_utils.py` with public names.
+- **`src/sas_mcp_server/exceptions.py`** — shared `AuthenticationError` (previously defined identically in `mcp_server.py` and `stdio_server.py`) and a `ConfigError`.
+- **`src/sas_mcp_server/env.py`** — side-effect-free `env_bool` helper used by both `config.py` and `auth_login.py`, removing duplicated `SSL_VERIFY`/`ALLOW_RAW_BEARER` parsing.
+- **Tests for previously uncovered modules** — `tests/test_auth_login.py`, `tests/test_stdio_server.py`, `tests/test_env.py`, `tests/test_config_oauth.py`, real HTTP auth-middleware/health-route tests in `tests/test_mcp_server.py`, and tool error-path tests. Package coverage rose from ~58% to ~95%.
+- **Comprehensive live integration coverage** — every one of the 26 tools and 8 prompt templates is now exercised against a real SAS Viya, with `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage` guards that fail if a registered tool/prompt is ever added without an integration test. Added `cancel_job` and `run_ml_project` workflows and per-prompt rendering through the live-connected server.
+- **`.github/workflows/integration.yml`** — opt-in job (manual `workflow_dispatch` or the `run-integration` PR label) that runs the integration suite against Viya using repo secrets and publishes results onto the PR as a Check, a sticky comment, and a JUnit artifact — **without committing any result files** (`reports/` is git-ignored).
+- Full type annotations across the package, including parameterized return types on every tool.
+
+### Changed
+- All 26 tools now share a single `viya_session` async context manager for the log + token + client preamble that was previously copy-pasted into each tool.
+- `viya_utils.py` is now compute session/job orchestration only; `run_one_snippet` returns the structured dict described above.
+- `config.py` raises `ConfigError` (not a bare `Exception`) when `VIYA_ENDPOINT` is unset; logging is now lazy `%`-style throughout.
+
+### Removed
+- Dead helpers in `viya_utils.py` reachable only from tests: `_put_data`, `_get_text`, `_get_paged_lines`, `fetch_full_job_log`, `fetch_full_job_listing`, `fetch_full_session_log`.
+
 ## [1.0.0] - 2026-05-12
 
 ### Added

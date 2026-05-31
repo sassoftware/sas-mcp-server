@@ -6,65 +6,59 @@ Starter MCP Server for SAS Viya, utilizing the SAS Viya OAuth flow for authentic
 Handles session management, job submission, and result retrieval using httpx.
 """
 
-# Auth handling and API access with Viya
-from .config import viya_auth
+from typing import Any
+
 from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
-from fastmcp.exceptions import FastMCPError
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from starlette.requests import Request
 from starlette.responses import JSONResponse
-from .viya_utils import logger
-from .tools import register_tools
+
+from .config import VIYA_ENDPOINT, viya_auth
+from .exceptions import AuthenticationError
 from .prompts import register_prompts
+from .tools import register_tools
+from .viya_client import logger
 
 # Load environment variables before accessing them
 load_dotenv()
 
 
-class AuthenticationError(FastMCPError):
-    def __init__(self, message):
-        super().__init__(message)
-        self.message = message
-
-    def __str__(self):
-        return f"AuthenticationError: {self.message}"
-
-
 class AuthMiddleware(Middleware):
-    async def on_call_tool(self, ctx: MiddlewareContext, call_next):
+    async def on_call_tool(self, ctx: MiddlewareContext, call_next: Any) -> Any:
         request = get_http_request()
         bearer_token = request.headers.get("Authorization")
-        if bearer_token:
-            parts = bearer_token.split()
-            jwt = (
-                parts[1]
-                if len(parts) > 1 and parts[0].lower() == "bearer"
-                else bearer_token
-            )
-            logger.info("Client auth header found, Swapping for upstream token")
-            viya_access_info = await viya_auth.load_access_token(jwt)
-            if viya_access_info:
-                logger.info("Viya access info retrieved successfully!")
-                viya_access_token = viya_access_info.token
-                await ctx.fastmcp_context.set_state("access_token", viya_access_token)
-            else:
-                logger.error("Could not retrieve upstream access token!")
-        else:
+        if not bearer_token:
             logger.error("No auth header found. Cannot proceed")
             raise AuthenticationError("No auth header found. Cannot proceed")
+
+        parts = bearer_token.split()
+        jwt = (
+            parts[1]
+            if len(parts) > 1 and parts[0].lower() == "bearer"
+            else bearer_token
+        )
+        logger.info("Client auth header found, Swapping for upstream token")
+        viya_access_info = await viya_auth.load_access_token(jwt)
+        if viya_access_info:
+            logger.info("Viya access info retrieved successfully!")
+            fastmcp_ctx = ctx.fastmcp_context
+            if fastmcp_ctx is not None:
+                await fastmcp_ctx.set_state("access_token", viya_access_info.token)
+        else:
+            logger.error("Could not retrieve upstream access token!")
         return await call_next(ctx)
 
 
 # Initialize the FastMCP server
-from .config import VIYA_ENDPOINT
-logger.info(f"Connecting to SAS Viya at {VIYA_ENDPOINT}")
+logger.info("Connecting to SAS Viya at %s", VIYA_ENDPOINT)
 mcp = FastMCP("SAS Viya Execution MCP Server", auth=viya_auth)
 mcp.add_middleware(AuthMiddleware())
 
 
 @mcp.custom_route("/health", methods=["GET"])
-async def health_check(request):
+async def health_check(request: Request) -> JSONResponse:
     logger.info("Performing health check . . .")
     return JSONResponse({"status": "healthy", "service": "sas-viya-execution-mcp"})
 

@@ -2,10 +2,11 @@
 """Register (or re-register) the sas-mcp OAuth client on a SAS Viya instance."""
 
 import getpass
+import os
 import ssl
+
 import httpx
 from dotenv import load_dotenv
-import os
 
 load_dotenv()
 
@@ -75,8 +76,8 @@ def register_client(base_url: str, token: str, client_id: str, redirect_uri: str
     resp.raise_for_status()
     print(f"Client '{client_id}' registered successfully.")
     print(f"  Redirect URI: {redirect_uri}")
-    print(f"  Scopes: openid")
-    print(f"  Grant types: authorization_code, refresh_token")
+    print("  Scopes: openid")
+    print("  Grant types: authorization_code, refresh_token")
 
 
 def main():

@@ -130,13 +130,14 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **list_cas_servers**: List available CAS servers
 - **list_caslibs**: List CAS libraries on a server
 - **list_castables**: List tables in a CAS library
+- **list_source_tables**: List source tables not yet loaded into memory (candidates for promotion)
 - **get_castable_info**: Get table metadata (row count, columns, size)
 - **get_castable_columns**: Get column names, types, labels, formats
 - **get_castable_data**: Fetch sample rows from a CAS table
 
 #### Data Operations & Files
 - **upload_data**: Upload CSV data into a CAS table
-- **promote_table_to_memory**: Promote a table to global scope in CAS
+- **promote_table_to_memory**: Load a source table into memory at global scope (idempotent)
 - **list_files**: List files in the Viya Files Service
 - **upload_file**: Upload a file to Viya Files Service
 - **download_file**: Download file content
@@ -155,7 +156,7 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 
 #### Model Management & Scoring
 - **list_ml_projects**: List AutoML projects
-- **create_ml_project**: Create a new AutoML project
+- **create_ml_project**: Create a new AutoML project from a loaded, global-scope CAS table (caslib + table + optional CAS server)
 - **run_ml_project**: Run pipeline automation
 - **list_registered_models**: List models in repository
 - **list_models_and_decisions**: List published MAS modules
@@ -281,17 +282,50 @@ Integration tests call every tool against a live Viya environment. They require 
 ./run_tests.sh --integration-only
 ```
 
+Every one of the 27 tools and 8 prompt templates has an integration test, enforced by the
+`test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
+guards — adding a new tool or prompt without integration coverage fails the suite. The
+resource-dependent tests discover real targets on the instance: `score_data` scores the most
+recently modified MAS module (discovering a real step and its inputs), and `run_ml_project`
+re-runs the most recently modified `completed` ML project. They `skip` only if the instance
+has no such resource at all.
+
+**In CI:** the `.github/workflows/integration.yml` workflow runs this suite on demand
+(manual dispatch, or by adding the `run-integration` label to a PR) using repository
+secrets, and publishes the results back to the PR as a status check, a sticky comment, and
+a downloadable JUnit artifact. Result files are written to `reports/` (git-ignored) and are
+never committed.
+
+**Locally (attach results to a PR yourself):** run with `--report` to write the JUnit XML
+and a Markdown summary into `reports/` (git-ignored), then post them to a PR with the GitHub
+CLI — no commit, no CI required:
+
+```sh
+./run_tests.sh --integration-only --report
+gh pr comment <PR> --body-file reports/integration-summary.md   # summary table as a comment
+gh gist create reports/integration.xml                          # full XML as a linkable gist
+```
+
+> GitHub has no API/CLI to attach a binary file to a PR (drag-and-drop upload is browser-only),
+> so the summary is posted as a comment and the raw XML is shared via a gist link or pasted in a
+> collapsed `<details>` block. To produce the canonical Actions *artifact* from your machine
+> instead, trigger the workflow remotely: `gh workflow run integration.yml`.
+
 ### Test Structure
 
 | File | Description |
 |---|---|
-| `tests/test_tool_payloads.py` | Payload assertions for all 26 tools — verifies URL paths, JSON body structure, query params, and headers |
+| `tests/test_tool_payloads.py` | Payload assertions for all 27 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
 | `tests/test_integration.py` | End-to-end workflow tests against a real Viya instance |
-| `tests/test_tools.py` | Unit tests for HTTP helper functions (`_get_json`, `_post_json`, etc.) |
-| `tests/test_viya_utils.py` | Unit tests for Viya compute session and job utilities |
-| `tests/test_mcp_server.py` | Unit tests for MCP server and auth middleware |
-| `tests/test_prompts.py` | Unit tests for prompt template rendering |
+| `tests/test_tools.py` | Unit tests for the generic Viya REST helpers in `viya_client` (`get_json`, `post_json`, `make_client`, …) |
+| `tests/test_viya_utils.py` | Unit tests for Viya compute session and job orchestration |
+| `tests/test_mcp_server.py` | Unit tests for the HTTP auth middleware, health route, and token getter |
 | `tests/test_config.py` | Unit tests for configuration loading |
+| `tests/test_config_oauth.py` | Unit tests for `PermissiveOAuthProxy` raw-bearer handling |
+| `tests/test_auth_login.py` | Unit tests for the `sas-mcp-login` OAuth/PKCE helper |
+| `tests/test_stdio_server.py` | Unit tests for stdio token resolution and the device-code flow |
+| `tests/test_env.py` | Unit tests for the `env_bool` helper |
+| `tests/test_prompts.py` | Unit tests for prompt template rendering |
 
 ## Contributing
 Maintainers are accepting patches and contributions to this project. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details about submitting contributions to this project.

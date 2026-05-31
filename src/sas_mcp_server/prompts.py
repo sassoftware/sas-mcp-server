@@ -6,15 +6,15 @@ Prompt templates for the SAS MCP server.
 Registered via ``register_prompts(mcp)`` on the FastMCP instance.
 """
 
-from typing import Optional
+from fastmcp import FastMCP
 from fastmcp.prompts import Message
 
 
-def register_prompts(mcp):
+def register_prompts(mcp: FastMCP) -> None:
     """Register all prompt templates on *mcp*."""
 
     @mcp.prompt()
-    def debug_sas_log(log_text: str, severity_filter: Optional[str] = None) -> list[Message]:
+    def debug_sas_log(log_text: str, severity_filter: str | None = None) -> list[Message]:
         """Analyze a SAS log for errors, warnings, and notes with root-cause explanations and suggested fixes."""
         filter_instruction = ""
         if severity_filter:
@@ -27,7 +27,7 @@ def register_prompts(mcp):
 
     @mcp.prompt()
     def explore_dataset(library: str, dataset: str,
-                        focus_vars: Optional[str] = None) -> list[Message]:
+                        focus_vars: str | None = None) -> list[Message]:
         """Generate comprehensive SAS data-profiling code (CONTENTS, MEANS, FREQ, UNIVARIATE)."""
         vars_instruction = ""
         if focus_vars:
@@ -41,8 +41,8 @@ def register_prompts(mcp):
 
     @mcp.prompt()
     def data_quality_check(library: str, dataset: str,
-                           key_variables: Optional[str] = None,
-                           business_rules: Optional[str] = None) -> list[Message]:
+                           key_variables: str | None = None,
+                           business_rules: str | None = None) -> list[Message]:
         """Generate SAS code for a data quality assessment (completeness, uniqueness, validity)."""
         extras = ""
         if key_variables:
@@ -71,7 +71,7 @@ def register_prompts(mcp):
 
     @mcp.prompt()
     def optimize_sas_code(sas_code: str,
-                          optimization_focus: Optional[str] = None) -> list[Message]:
+                          optimization_focus: str | None = None) -> list[Message]:
         """Review and optimize SAS code for performance, readability, or both."""
         focus = optimization_focus or "performance and readability"
         return [Message(role="user", content=(
@@ -86,7 +86,7 @@ def register_prompts(mcp):
 
     @mcp.prompt()
     def explain_sas_code(sas_code: str,
-                         audience_level: Optional[str] = None) -> list[Message]:
+                         audience_level: str | None = None) -> list[Message]:
         """Provide a block-by-block explanation of SAS code, tailored to skill level."""
         level = audience_level or "intermediate"
         return [Message(role="user", content=(
@@ -101,7 +101,7 @@ def register_prompts(mcp):
 
     @mcp.prompt()
     def sas_macro_builder(macro_name: str, purpose: str,
-                          parameters: Optional[str] = None) -> list[Message]:
+                          parameters: str | None = None) -> list[Message]:
         """Build a production-quality reusable SAS macro."""
         params_instruction = ""
         if parameters:
@@ -119,8 +119,8 @@ def register_prompts(mcp):
 
     @mcp.prompt()
     def generate_report(dataset: str,
-                        report_type: Optional[str] = None,
-                        output_format: Optional[str] = None) -> list[Message]:
+                        report_type: str | None = None,
+                        output_format: str | None = None) -> list[Message]:
         """Generate SAS ODS/PROC REPORT code for formatted output."""
         rtype = report_type or "summary"
         fmt = output_format or "HTML"

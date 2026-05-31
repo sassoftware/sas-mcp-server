@@ -6,6 +6,7 @@ Tests for prompt template rendering.
 """
 import pytest
 from fastmcp import FastMCP
+
 from sas_mcp_server.prompts import register_prompts
 
 

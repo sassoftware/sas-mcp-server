@@ -6,22 +6,29 @@ Shared tool registration for both HTTP and stdio MCP servers.
 All tools are registered via ``register_tools(mcp, get_token)``.
 """
 
-from typing import Optional
-import httpx as _httpx
-from fastmcp import Context
-from fastmcp.tools import ToolResult
-from .viya_utils import (
-    _get_json,
-    _get_paged_items,
-    _post_json,
-    _delete_resource,
-    _make_client,
-    run_one_snippet,
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from typing import Any
+
+import httpx
+from fastmcp import Context, FastMCP
+
+from .config import CONTEXT_NAME, VIYA_ENDPOINT
+from .viya_client import (
+    delete_resource,
+    get_json,
+    get_paged_items,
     logger,
+    make_client,
+    post_json,
 )
+from .viya_utils import run_one_snippet
 
 
-def register_tools(mcp, get_token):
+def register_tools(
+    mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]
+) -> None:
     """Register all tools on *mcp*.
 
     Parameters
@@ -35,12 +42,24 @@ def register_tools(mcp, get_token):
         device-code flow.
     """
 
+    @asynccontextmanager
+    async def viya_session(name: str, ctx: Context) -> AsyncIterator[httpx.AsyncClient]:
+        """Log tool usage, resolve a Viya token, and yield an authed client.
+
+        Collapses the per-tool preamble (log line + token fetch + client
+        construction) into one context manager shared by every tool.
+        """
+        logger.info("--- TOOL USED: %s ---", name)
+        token = await get_token(ctx)
+        async with make_client(token) as client:
+            yield client
+
     # ------------------------------------------------------------------
     # Original tool
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def execute_sas_code(sas_code: str, ctx: Context) -> ToolResult:
+    async def execute_sas_code(sas_code: str, ctx: Context) -> dict[str, str]:
         """
         Executes the provided SAS code in the Viya environment and returns information about the completed Job.
         This will create a job definition for the SAS code, execute it, and then retrieve the results.
@@ -49,52 +68,47 @@ def register_tools(mcp, get_token):
             sas_code (str): the SAS code snippet to be executed using the Viya Job Execution API Service
 
         Returns:
-            Structured output data containing detailed information about the executed sas code.
-            This includes a listing field and a log field. The listing output represents the intended output
-            of the SAS code when executed, if the code ran successfully. The log output represents information
-            about the execution of the sas code, such as if it ran successfully or not and whether or not there are
-            errors or issues with the execution.
-
+            A dictionary with four string fields describing the executed job:
+            ``snippet_id`` (the job's snippet identifier), ``state`` (the final
+            job state, e.g. ``completed``/``error``/``warning``), ``log`` (the
+            full SAS log — execution details, notes, and any errors/warnings),
+            and ``listing`` (the SAS listing output, i.e. the intended results
+            when the code ran successfully).
         """
         logger.info("--- TOOL USED: execute_sas_code ---")
         token = await get_token(ctx)
-        output = await run_one_snippet(sas_code, "1", token)
-        return output
+        return await run_one_snippet(sas_code, "1", token)
 
     # ------------------------------------------------------------------
     # Tier 1 — Data Discovery (CAS Management)
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def list_cas_servers(ctx: Context) -> list:
+    async def list_cas_servers(ctx: Context) -> list[dict[str, Any]]:
         """List available CAS servers on the Viya environment."""
-        logger.info("--- TOOL USED: list_cas_servers ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items("/casManagement/servers", client)
+        async with viya_session("list_cas_servers", ctx) as client:
+            items, _ = await get_paged_items("/casManagement/servers", client)
             return [{"name": s.get("name"), "id": s.get("id"),
                      "description": s.get("description", "")} for s in items]
 
     @mcp.tool()
     async def list_caslibs(server_id: str, ctx: Context,
-                           limit: int = 50) -> list:
+                           limit: int = 50) -> list[dict[str, Any]]:
         """List CAS libraries (caslibs) available on a CAS server.
 
         Args:
             server_id: CAS server name or ID (e.g. 'cas-shared-default').
             limit: Maximum number of caslibs to return (default 50).
         """
-        logger.info("--- TOOL USED: list_caslibs ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items(
+        async with viya_session("list_caslibs", ctx) as client:
+            items, _ = await get_paged_items(
                 f"/casManagement/servers/{server_id}/caslibs", client, limit=limit)
             return [{"name": c.get("name"), "type": c.get("type", ""),
                      "description": c.get("description", "")} for c in items]
 
     @mcp.tool()
     async def list_castables(server_id: str, caslib_name: str, ctx: Context,
-                             limit: int = 50) -> list:
+                             limit: int = 50) -> list[dict[str, Any]]:
         """List tables in a CAS library.
 
         Args:
@@ -102,10 +116,8 @@ def register_tools(mcp, get_token):
             caslib_name: Name of the caslib.
             limit: Maximum number of tables to return (default 50).
         """
-        logger.info("--- TOOL USED: list_castables ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items(
+        async with viya_session("list_castables", ctx) as client:
+            items, _ = await get_paged_items(
                 f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables",
                 client, limit=limit)
             return [{"name": t.get("name"),
@@ -113,8 +125,30 @@ def register_tools(mcp, get_token):
                      "columnCount": t.get("columnCount")} for t in items]
 
     @mcp.tool()
+    async def list_source_tables(server_id: str, caslib_name: str, ctx: Context,
+                                 limit: int = 50) -> list[dict[str, Any]]:
+        """List source tables that are NOT yet loaded into memory in a CAS library.
+
+        These are the candidates for ``promote_table_to_memory`` — tables that
+        exist on the caslib's data source but are not in CAS memory yet.
+
+        Args:
+            server_id: CAS server name or ID.
+            caslib_name: Name of the caslib.
+            limit: Maximum number of tables to return (default 50).
+        """
+        async with viya_session("list_source_tables", ctx) as client:
+            items, _ = await get_paged_items(
+                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables",
+                client, limit=limit, extra_params={"state": "unloaded"})
+            return [{"name": t.get("name"),
+                     "sourceTableName": t.get("sourceTableName"),
+                     "scope": t.get("scope"),
+                     "state": t.get("state", "unloaded")} for t in items]
+
+    @mcp.tool()
     async def get_castable_info(server_id: str, caslib_name: str,
-                                table_name: str, ctx: Context) -> dict:
+                                table_name: str, ctx: Context) -> dict[str, Any]:
         """Get metadata for a CAS table (row count, column count, size, etc.).
 
         Args:
@@ -122,17 +156,15 @@ def register_tools(mcp, get_token):
             caslib_name: Name of the caslib.
             table_name: Name of the table.
         """
-        logger.info("--- TOOL USED: get_castable_info ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            return await _get_json(
+        async with viya_session("get_castable_info", ctx) as client:
+            return await get_json(
                 f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
                 client)
 
     @mcp.tool()
     async def get_castable_columns(server_id: str, caslib_name: str,
                                    table_name: str, ctx: Context,
-                                   limit: int = 200) -> list:
+                                   limit: int = 200) -> list[dict[str, Any]]:
         """Get column metadata for a CAS table (names, types, labels, formats).
 
         Args:
@@ -141,10 +173,8 @@ def register_tools(mcp, get_token):
             table_name: Name of the table.
             limit: Maximum columns to return (default 200).
         """
-        logger.info("--- TOOL USED: get_castable_columns ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items(
+        async with viya_session("get_castable_columns", ctx) as client:
+            items, _ = await get_paged_items(
                 f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}/columns",
                 client, limit=limit)
             return [{"name": c.get("name"), "type": c.get("type"),
@@ -155,7 +185,7 @@ def register_tools(mcp, get_token):
     @mcp.tool()
     async def get_castable_data(server_id: str, caslib_name: str,
                                 table_name: str, ctx: Context,
-                                limit: int = 100, start: int = 0) -> dict:
+                                limit: int = 100, start: int = 0) -> dict[str, Any]:
         """Fetch rows from a CAS table with column names.
 
         Args:
@@ -165,13 +195,10 @@ def register_tools(mcp, get_token):
             limit: Maximum rows to return (default 100).
             start: Row offset (default 0).
         """
-        logger.info("--- TOOL USED: get_castable_data ---")
-        token = await get_token(ctx)
-        from .viya_utils import VIYA_ENDPOINT
         data_source_id = f"cas~fs~{server_id}~fs~{caslib_name}"
         table_id = f"cas~fs~{server_id}~fs~{caslib_name}~fs~{table_name}"
-        async with _make_client(token) as client:
-            columns = []
+        async with viya_session("get_castable_data", ctx) as client:
+            columns: list[dict[str, Any]] = []
             col_start = 0
             col_limit = 100
             while True:
@@ -202,7 +229,7 @@ def register_tools(mcp, get_token):
             rows = []
             for item in row_data.get("items", []):
                 cells = item.get("cells", [])
-                rows.append(dict(zip(col_names, cells)))
+                rows.append(dict(zip(col_names, cells, strict=False)))
 
             return {
                 "columns": col_names,
@@ -218,7 +245,7 @@ def register_tools(mcp, get_token):
 
     @mcp.tool()
     async def upload_data(server_id: str, caslib_name: str, table_name: str,
-                          csv_data: str, ctx: Context) -> dict:
+                          csv_data: str, ctx: Context) -> dict[str, Any]:
         """Upload CSV data into a CAS table.
 
         Args:
@@ -227,10 +254,7 @@ def register_tools(mcp, get_token):
             table_name: Name for the new table.
             csv_data: CSV-formatted data string (including header row).
         """
-        logger.info("--- TOOL USED: upload_data ---")
-        token = await get_token(ctx)
-        from .viya_utils import VIYA_ENDPOINT
-        async with _make_client(token) as client:
+        async with viya_session("upload_data", ctx) as client:
             resp = await client.post(
                 f"{VIYA_ENDPOINT}/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables",
                 data={
@@ -245,7 +269,10 @@ def register_tools(mcp, get_token):
                     "status": "table_already_exists",
                     "table_name": table_name,
                     "caslib": caslib_name,
-                    "message": f"Table '{table_name}' already exists in caslib '{caslib_name}'. Drop or rename before re-uploading.",
+                    "message": (
+                        f"Table '{table_name}' already exists in caslib "
+                        f"'{caslib_name}'. Drop or rename before re-uploading."
+                    ),
                 }
             resp.raise_for_status()
             body = resp.json()
@@ -260,48 +287,80 @@ def register_tools(mcp, get_token):
 
     @mcp.tool()
     async def promote_table_to_memory(server_id: str, caslib_name: str,
-                                      table_name: str, ctx: Context) -> dict:
-        """Promote a CAS table to global scope (makes it visible to all sessions).
+                                      table_name: str, ctx: Context) -> dict[str, Any]:
+        """Load a source table into CAS memory at global scope (visible to all sessions).
+
+        Loads the table from its caslib data source and promotes it to global
+        scope via the casManagement ``updateTableState`` API. Idempotent: if the
+        table is already loaded in global scope it is left untouched. Use
+        ``list_source_tables`` to discover unloaded tables that can be promoted.
 
         Args:
             server_id: CAS server name or ID.
             caslib_name: Caslib containing the table.
-            table_name: Table to promote.
+            table_name: Table to load and promote.
         """
-        logger.info("--- TOOL USED: promote_table_to_memory ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
+        table_path = (
+            f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}"
+        )
+        async with viya_session("promote_table_to_memory", ctx) as client:
+            # Idempotency: skip if the table is already loaded in global scope.
             try:
-                return await _post_json(
-                    f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
-                    client, body={"scope": "global"})
-            except _httpx.HTTPStatusError as e:
-                if e.response.status_code == 409:
-                    return {"status": "already_promoted", "table": f"{caslib_name}.{table_name}"}
+                info = await get_json(table_path, client)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    return {
+                        "status": "not_found",
+                        "table": f"{caslib_name}.{table_name}",
+                        "message": (
+                            f"No table '{table_name}' in caslib '{caslib_name}'. "
+                            "Use list_source_tables to find loadable source tables."
+                        ),
+                    }
                 raise
+            if info.get("state") == "loaded" and info.get("scope") == "global":
+                return {
+                    "status": "already_global",
+                    "table": f"{caslib_name}.{table_name}",
+                    "state": "loaded",
+                    "scope": "global",
+                }
+
+            # Load from source and promote to global scope. The updateTableState
+            # endpoint responds with text/plain (the new state), not JSON.
+            resp = await client.put(
+                f"{VIYA_ENDPOINT}{table_path}/state",
+                params={"value": "loaded", "scope": "global"},
+                headers={"Accept": "*/*"},
+            )
+            resp.raise_for_status()
+            return {
+                "status": "promoted",
+                "table": f"{caslib_name}.{table_name}",
+                "state": resp.text.strip() or "loaded",
+                "scope": "global",
+            }
 
     @mcp.tool()
     async def list_files(ctx: Context, limit: int = 50,
-                         filter_name: Optional[str] = None) -> list:
+                         filter_name: str | None = None) -> list[dict[str, Any]]:
         """List files in the Viya Files Service.
 
         Args:
             limit: Maximum files to return (default 50).
             filter_name: Optional name filter (substring match).
         """
-        logger.info("--- TOOL USED: list_files ---")
-        token = await get_token(ctx)
         filters = f"contains(name,'{filter_name}')" if filter_name else None
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items("/files/files", client,
-                                              limit=limit, filters=filters)
+        async with viya_session("list_files", ctx) as client:
+            items, _ = await get_paged_items("/files/files", client,
+                                             limit=limit, filters=filters)
             return [{"id": f.get("id"), "name": f.get("name"),
                      "contentType": f.get("contentType", ""),
                      "size": f.get("size")} for f in items]
 
     @mcp.tool()
     async def upload_file(file_name: str, content: str, ctx: Context,
-                          content_type: str = "text/plain") -> dict:
+                          content_type: str = "text/plain") -> dict[str, Any]:
         """Upload a file to the Viya Files Service.
 
         Args:
@@ -309,10 +368,7 @@ def register_tools(mcp, get_token):
             content: File content as a string.
             content_type: MIME type (default 'text/plain').
         """
-        logger.info("--- TOOL USED: upload_file ---")
-        token = await get_token(ctx)
-        from .viya_utils import VIYA_ENDPOINT
-        async with _make_client(token) as client:
+        async with viya_session("upload_file", ctx) as client:
             resp = await client.post(
                 f"{VIYA_ENDPOINT}/files/files",
                 content=content.encode("utf-8"),
@@ -329,10 +385,7 @@ def register_tools(mcp, get_token):
         Args:
             file_id: ID of the file to download.
         """
-        logger.info("--- TOOL USED: download_file ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            from .viya_utils import VIYA_ENDPOINT
+        async with viya_session("download_file", ctx) as client:
             resp = await client.get(f"{VIYA_ENDPOINT}/files/files/{file_id}/content")
             resp.raise_for_status()
             return resp.text
@@ -343,39 +396,35 @@ def register_tools(mcp, get_token):
 
     @mcp.tool()
     async def list_reports(ctx: Context, limit: int = 50,
-                           filter_name: Optional[str] = None) -> list:
+                           filter_name: str | None = None) -> list[dict[str, Any]]:
         """List Visual Analytics reports.
 
         Args:
             limit: Maximum reports to return (default 50).
             filter_name: Optional name filter (substring match).
         """
-        logger.info("--- TOOL USED: list_reports ---")
-        token = await get_token(ctx)
         filters = f"contains(name,'{filter_name}')" if filter_name else None
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items("/reports/reports", client,
-                                              limit=limit, filters=filters)
+        async with viya_session("list_reports", ctx) as client:
+            items, _ = await get_paged_items("/reports/reports", client,
+                                             limit=limit, filters=filters)
             return [{"id": r.get("id"), "name": r.get("name"),
                      "description": r.get("description", ""),
                      "createdBy": r.get("createdBy", "")} for r in items]
 
     @mcp.tool()
-    async def get_report(report_id: str, ctx: Context) -> dict:
+    async def get_report(report_id: str, ctx: Context) -> dict[str, Any]:
         """Get a Visual Analytics report's metadata and definition.
 
         Args:
             report_id: ID of the report.
         """
-        logger.info("--- TOOL USED: get_report ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            return await _get_json(f"/reports/reports/{report_id}", client)
+        async with viya_session("get_report", ctx) as client:
+            return await get_json(f"/reports/reports/{report_id}", client)
 
     @mcp.tool()
     async def get_report_image(report_id: str, ctx: Context,
                                image_type: str = "png",
-                               section_index: int = 0) -> dict:
+                               section_index: int = 0) -> dict[str, Any]:
         """Render a Visual Analytics report section as an image.
 
         Args:
@@ -383,11 +432,7 @@ def register_tools(mcp, get_token):
             image_type: Image format — 'png' or 'svg' (default 'png').
             section_index: Report section/page index (default 0).
         """
-        logger.info("--- TOOL USED: get_report_image ---")
-        token = await get_token(ctx)
-        import json as _json
-        from .viya_utils import VIYA_ENDPOINT
-        async with _make_client(token) as client:
+        async with viya_session("get_report_image", ctx) as client:
             body = {
                 "reportUri": f"/reports/reports/{report_id}",
                 "layoutType": "thumbnail",
@@ -398,7 +443,7 @@ def register_tools(mcp, get_token):
             }
             resp = await client.post(
                 f"{VIYA_ENDPOINT}/reportImages/jobs",
-                content=_json.dumps(body).encode(),
+                content=json.dumps(body).encode(),
                 headers={
                     "Content-Type": "application/vnd.sas.report.images.job.request+json",
                     "Accept": "application/vnd.sas.report.images.job+json",
@@ -413,16 +458,13 @@ def register_tools(mcp, get_token):
 
     @mcp.tool()
     async def submit_batch_job(sas_code: str, ctx: Context,
-                               job_name: Optional[str] = None) -> dict:
+                               job_name: str | None = None) -> dict[str, Any]:
         """Submit a SAS job for asynchronous execution via the Job Execution service.
 
         Args:
             sas_code: SAS code to execute.
             job_name: Optional descriptive name for the job.
         """
-        logger.info("--- TOOL USED: submit_batch_job ---")
-        token = await get_token(ctx)
-        from .viya_utils import CONTEXT_NAME
         body = {
             "name": job_name or "mcp-batch-job",
             "jobDefinition": {
@@ -433,33 +475,29 @@ def register_tools(mcp, get_token):
                 "_contextName": CONTEXT_NAME,
             },
         }
-        async with _make_client(token) as client:
-            return await _post_json("/jobExecution/jobs", client, body=body)
+        async with viya_session("submit_batch_job", ctx) as client:
+            return await post_json("/jobExecution/jobs", client, body=body)
 
     @mcp.tool()
-    async def get_job_status(job_id: str, ctx: Context) -> dict:
+    async def get_job_status(job_id: str, ctx: Context) -> dict[str, Any]:
         """Check the status of a submitted job.
 
         Args:
             job_id: ID of the job.
         """
-        logger.info("--- TOOL USED: get_job_status ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            return await _get_json(f"/jobExecution/jobs/{job_id}", client)
+        async with viya_session("get_job_status", ctx) as client:
+            return await get_json(f"/jobExecution/jobs/{job_id}", client)
 
     @mcp.tool()
-    async def list_jobs(ctx: Context, limit: int = 20) -> list:
+    async def list_jobs(ctx: Context, limit: int = 20) -> list[dict[str, Any]]:
         """List recent jobs from the Job Execution service.
 
         Args:
             limit: Maximum jobs to return (default 20).
         """
-        logger.info("--- TOOL USED: list_jobs ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items("/jobExecution/jobs", client,
-                                              limit=limit)
+        async with viya_session("list_jobs", ctx) as client:
+            items, _ = await get_paged_items("/jobExecution/jobs", client,
+                                             limit=limit)
             return [{"id": j.get("id"), "name": j.get("name", ""),
                      "state": j.get("state", ""),
                      "creationTimeStamp": j.get("creationTimeStamp", "")} for j in items]
@@ -471,10 +509,8 @@ def register_tools(mcp, get_token):
         Args:
             job_id: ID of the job to cancel.
         """
-        logger.info("--- TOOL USED: cancel_job ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            await _delete_resource(f"/jobExecution/jobs/{job_id}", client)
+        async with viya_session("cancel_job", ctx) as client:
+            await delete_resource(f"/jobExecution/jobs/{job_id}", client)
             return f"Job {job_id} cancelled."
 
     @mcp.tool()
@@ -484,11 +520,8 @@ def register_tools(mcp, get_token):
         Args:
             job_id: ID of the job.
         """
-        logger.info("--- TOOL USED: get_job_log ---")
-        token = await get_token(ctx)
-        from .viya_utils import VIYA_ENDPOINT
-        async with _make_client(token) as client:
-            data = await _get_json(f"/jobExecution/jobs/{job_id}", client)
+        async with viya_session("get_job_log", ctx) as client:
+            data = await get_json(f"/jobExecution/jobs/{job_id}", client)
             results = data.get("results", {})
 
             log_uri = None
@@ -518,42 +551,53 @@ def register_tools(mcp, get_token):
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def list_ml_projects(ctx: Context, limit: int = 50) -> list:
+    async def list_ml_projects(ctx: Context, limit: int = 50) -> list[dict[str, Any]]:
         """List AutoML pipeline automation projects.
 
         Args:
             limit: Maximum projects to return (default 50).
         """
-        logger.info("--- TOOL USED: list_ml_projects ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items(
+        async with viya_session("list_ml_projects", ctx) as client:
+            items, _ = await get_paged_items(
                 "/mlPipelineAutomation/projects", client, limit=limit)
             return [{"id": p.get("id"), "name": p.get("name", ""),
                      "state": p.get("state", ""),
                      "description": p.get("description", "")} for p in items]
 
     @mcp.tool()
-    async def create_ml_project(project_name: str, data_table_uri: str,
+    async def create_ml_project(project_name: str, caslib_name: str, table_name: str,
                                 target_variable: str, ctx: Context,
+                                server_id: str = "cas-shared-default",
                                 description: str = "",
                                 prediction_type: str = "binary",
                                 target_event_level: str = "1",
-                                auto_run: bool = True) -> dict:
-        """Create a new AutoML pipeline automation project.
+                                auto_run: bool = True) -> dict[str, Any]:
+        """Create a new AutoML pipeline automation project from a CAS table.
+
+        The training table must already be loaded into CAS memory at **global**
+        scope. This tool verifies that first and returns an actionable error
+        otherwise (use ``promote_table_to_memory`` to load + promote a source
+        table, and ``list_source_tables`` to find one). The data-table URI is
+        built from ``server_id``/``caslib_name``/``table_name``.
 
         Args:
             project_name: Name for the project.
-            data_table_uri: URI of the training data table (e.g. '/dataTables/dataSources/cas~fs~cas-shared-default~fs~Public/tables/HMEQ').
+            caslib_name: Caslib containing the training table.
+            table_name: Name of the (loaded, global) training table.
             target_variable: Name of the target/response variable.
+            server_id: CAS server name or ID (default 'cas-shared-default').
             description: Optional project description.
             prediction_type: 'binary', 'interval', or 'nominal' (default 'binary').
             target_event_level: Target event level for binary/nominal classification (default '1').
             auto_run: Whether to automatically run pipelines after creation (default True).
         """
-        logger.info("--- TOOL USED: create_ml_project ---")
-        token = await get_token(ctx)
-        analytics_attrs = {
+        table_path = (
+            f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}"
+        )
+        data_table_uri = (
+            f"/dataTables/dataSources/cas~fs~{server_id}~fs~{caslib_name}/tables/{table_name}"
+        )
+        analytics_attrs: dict[str, Any] = {
             "targetVariable": target_variable,
             "targetLevel": prediction_type,
             "partitionEnabled": True,
@@ -574,22 +618,46 @@ def register_tools(mcp, get_token):
             },
             "analyticsProjectAttributes": analytics_attrs,
         }
-        async with _make_client(token) as client:
-            return await _post_json("/mlPipelineAutomation/projects", client, body=body)
+        async with viya_session("create_ml_project", ctx) as client:
+            # Pre-flight: the training table must be loaded in global scope, or
+            # mlPipelineAutomation fails opaquely later.
+            try:
+                info = await get_json(table_path, client)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    return {
+                        "status": "table_not_found",
+                        "table": f"{caslib_name}.{table_name}",
+                        "message": (
+                            f"Table '{table_name}' not found in caslib '{caslib_name}' on "
+                            f"server '{server_id}'. Load and promote it with "
+                            "promote_table_to_memory (see list_source_tables)."
+                        ),
+                    }
+                raise
+            if not (info.get("state") == "loaded" and info.get("scope") == "global"):
+                return {
+                    "status": "table_not_global",
+                    "table": f"{caslib_name}.{table_name}",
+                    "state": info.get("state"),
+                    "scope": info.get("scope"),
+                    "message": (
+                        "The training table must be loaded in global scope before "
+                        "creating an ML project. Use promote_table_to_memory to load "
+                        "and promote it."
+                    ),
+                }
+            return await post_json("/mlPipelineAutomation/projects", client, body=body)
 
     @mcp.tool()
-    async def run_ml_project(project_id: str, ctx: Context) -> dict:
+    async def run_ml_project(project_id: str, ctx: Context) -> dict[str, Any]:
         """Run an AutoML pipeline automation project.
 
         Args:
             project_id: ID of the project to run.
         """
-        logger.info("--- TOOL USED: run_ml_project ---")
-        token = await get_token(ctx)
-        import json as _json
-        from .viya_utils import VIYA_ENDPOINT
         mlpa_type = "application/vnd.sas.analytics.ml.pipeline.automation.project+json"
-        async with _make_client(token) as client:
+        async with viya_session("run_ml_project", ctx) as client:
             get_resp = await client.get(
                 f"{VIYA_ENDPOINT}/mlPipelineAutomation/projects/{project_id}",
                 headers={"Accept": mlpa_type},
@@ -600,7 +668,7 @@ def register_tools(mcp, get_token):
             resp = await client.put(
                 f"{VIYA_ENDPOINT}/mlPipelineAutomation/projects/{project_id}",
                 params={"action": "retrainProject"},
-                content=_json.dumps(project_body).encode(),
+                content=json.dumps(project_body).encode(),
                 headers={
                     "Content-Type": mlpa_type,
                     "Accept": mlpa_type,
@@ -614,39 +682,35 @@ def register_tools(mcp, get_token):
             return resp.json()
 
     @mcp.tool()
-    async def list_registered_models(ctx: Context, limit: int = 50) -> list:
+    async def list_registered_models(ctx: Context, limit: int = 50) -> list[dict[str, Any]]:
         """List models in the Model Repository.
 
         Args:
             limit: Maximum models to return (default 50).
         """
-        logger.info("--- TOOL USED: list_registered_models ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items("/modelRepository/models", client,
-                                              limit=limit)
+        async with viya_session("list_registered_models", ctx) as client:
+            items, _ = await get_paged_items("/modelRepository/models", client,
+                                             limit=limit)
             return [{"id": m.get("id"), "name": m.get("name", ""),
                      "description": m.get("description", ""),
                      "modelVersionName": m.get("modelVersionName", "")} for m in items]
 
     @mcp.tool()
-    async def list_models_and_decisions(ctx: Context, limit: int = 50) -> list:
+    async def list_models_and_decisions(ctx: Context, limit: int = 50) -> list[dict[str, Any]]:
         """List published scoring models and decisions (MAS modules).
 
         Args:
             limit: Maximum modules to return (default 50).
         """
-        logger.info("--- TOOL USED: list_models_and_decisions ---")
-        token = await get_token(ctx)
-        async with _make_client(token) as client:
-            items, _ = await _get_paged_items("/microanalyticScore/modules", client,
-                                              limit=limit)
+        async with viya_session("list_models_and_decisions", ctx) as client:
+            items, _ = await get_paged_items("/microanalyticScore/modules", client,
+                                             limit=limit)
             return [{"id": m.get("id"), "name": m.get("name", ""),
                      "description": m.get("description", "")} for m in items]
 
     @mcp.tool()
     async def score_data(module_id: str, step_id: str, input_data: dict,
-                         ctx: Context) -> dict:
+                         ctx: Context) -> dict[str, Any]:
         """Score data against a published model or decision (MAS module).
 
         Args:
@@ -654,10 +718,8 @@ def register_tools(mcp, get_token):
             step_id: Step ID within the module (usually 'score' or 'execute').
             input_data: Dictionary of input variable name-value pairs.
         """
-        logger.info("--- TOOL USED: score_data ---")
-        token = await get_token(ctx)
         body = {"inputs": [{"name": k, "value": v} for k, v in input_data.items()]}
-        async with _make_client(token) as client:
-            return await _post_json(
+        async with viya_session("score_data", ctx) as client:
+            return await post_json(
                 f"/microanalyticScore/modules/{module_id}/steps/{step_id}", client,
                 body=body)
