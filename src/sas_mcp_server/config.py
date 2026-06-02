@@ -10,10 +10,13 @@ from fastmcp.server.auth import OAuthProxy
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from mcp.server.auth.provider import AccessToken
 
+from .env import env_bool
+from .exceptions import ConfigError
+
 load_dotenv()
 
-SSL_VERIFY = os.getenv("SSL_VERIFY", "true").lower() not in ("false", "0", "no")
-ALLOW_RAW_BEARER = os.getenv("ALLOW_RAW_BEARER", "false").lower() in ("true", "1", "yes")
+SSL_VERIFY = env_bool("SSL_VERIFY", True)
+ALLOW_RAW_BEARER = env_bool("ALLOW_RAW_BEARER", False)
 
 _logger = logging.getLogger(__name__)
 
@@ -84,7 +87,7 @@ CONTEXT_NAME = os.getenv("COMPUTE_CONTEXT_NAME", "SAS Job Execution compute cont
 MCP_BASE_URL = os.getenv("MCP_BASE_URL", f"http://localhost:{HOST_PORT}")
 
 if not VIYA_ENDPOINT:
-    raise Exception(
+    raise ConfigError(
         "VIYA_ENDPOINT is not set. Please set it in the environment variables."
     )
 

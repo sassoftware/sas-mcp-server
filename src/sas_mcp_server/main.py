@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import uvicorn
+
 from .config import HOST_PORT
 
 
-def main():
+def main() -> None:
     uvicorn.run(
         "sas_mcp_server.mcp_server:app", host="0.0.0.0", port=HOST_PORT, reload=True
     )

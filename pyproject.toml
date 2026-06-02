@@ -1,7 +1,7 @@
 [project]
 name = "sas-mcp-server"
-version = "1.0.0"
-description = "Add your description here"
+version = "1.1.0"
+description = "An MCP server for executing SAS code and querying Compute, CAS, and model APIs on SAS Viya via OAuth 2.0."
 readme = "README.md"
 authors = [{name = "SAS Institute Inc."}]
 requires-python = ">=3.12"
@@ -24,7 +24,33 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "pyright>=1.1.409",
     "pytest>=9.0.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.14.4",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E/F: pyflakes + pycodestyle, I: isort, B: bugbear, UP: pyupgrade,
+# G: logging-format, TRY: tryceratops, SIM: flake8-simplify.
+select = ["E", "F", "I", "B", "UP", "G", "TRY", "SIM"]
+ignore = [
+    "TRY003",  # long messages in exceptions are fine for this CLI/server
+    "TRY300",  # "move to else block" — noisy, low value here
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use broad excepts and don't need logging-format hygiene.
+"tests/**" = ["G004", "B017", "TRY003"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false

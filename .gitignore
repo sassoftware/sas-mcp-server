@@ -16,8 +16,16 @@ build/
 venv/
 ENV/
 
-# Linter
+# Linter / type checker / coverage
 .ruff_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Test result reports (published to PRs as CI artifacts, never committed)
+reports/
 
 # Security - tokens and credentials
 .token

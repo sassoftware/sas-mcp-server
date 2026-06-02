@@ -27,6 +27,7 @@ OAuth 2.1 deprecates it, and it does not work for confidential OAuth clients
 (SAS Logon rejects empty client secrets with ``invalid_client``).
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -37,12 +38,12 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
-from fastmcp.exceptions import FastMCPError
 
 from .config import CLIENT_ID, SSL_VERIFY, VIYA_ENDPOINT
+from .exceptions import AuthenticationError
 from .prompts import register_prompts
 from .tools import register_tools
-from .viya_utils import logger
+from .viya_client import logger
 
 load_dotenv()
 
@@ -50,15 +51,6 @@ SAS_CLI_CONFIG = os.getenv("SAS_CLI_CONFIG", "")
 DEVICE_AUTH_URL = f"{VIYA_ENDPOINT}/SASLogon/oauth/device_authorization"
 TOKEN_URL = f"{VIYA_ENDPOINT}/SASLogon/oauth/token"
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
-
-
-class AuthenticationError(FastMCPError):
-    def __init__(self, message: str):
-        super().__init__(message)
-        self.message = message
-
-    def __str__(self) -> str:
-        return f"AuthenticationError: {self.message}"
 
 
 def _sas_cli_credentials_path() -> Path:
@@ -80,9 +72,9 @@ def _read_cached_token(path: Path) -> str | None:
         creds = json.loads(path.read_text())
         token = creds["Default"]["access-token"]
     except (KeyError, json.JSONDecodeError, OSError) as exc:
-        logger.warning(f"Could not read credentials at {path}: {exc}")
+        logger.warning("Could not read credentials at %s: %s", path, exc)
         return None
-    logger.info(f"Loaded access token from {path}")
+    logger.info("Loaded access token from %s", path)
     return token
 
 
@@ -121,10 +113,8 @@ def _native_device_code_token() -> str:
     )
     logger.info(msg)
     print(msg, file=sys.stderr, flush=True)
-    try:
+    with contextlib.suppress(Exception):
         webbrowser.open(verification_uri, new=2)
-    except Exception:
-        pass
 
     deadline = time.time() + expires_in
     while time.time() < deadline:
@@ -174,7 +164,7 @@ async def _stdio_get_token(ctx: Context) -> str:
     return _get_viya_token()
 
 
-logger.info(f"Connecting to SAS Viya at {VIYA_ENDPOINT}")
+logger.info("Connecting to SAS Viya at %s", VIYA_ENDPOINT)
 mcp = FastMCP("SAS Viya Execution MCP Server")
 register_tools(mcp, _stdio_get_token)
 register_prompts(mcp)
