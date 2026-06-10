@@ -4,13 +4,13 @@
 
 The server supports five authentication paths across HTTP and stdio modes. Pick one per deployment; HTTP mode lets PKCE and raw-bearer clients share the same endpoint.
 
-| Mode | Transport | What the client does | What the server does | Admin client registration? | External CLI? | Best for |
-|---|---|---|---|---|---|---|
-| **OAuth2 PKCE** | HTTP | Browser-driven login on first tool call | Issues an MCP-signed JWT after the upstream PKCE flow; swaps it for the upstream Viya token on each request | ✅ Required (`sas-mcp` client, see [Step 2](#step-2-register-an-oauth-client-for-the-mcp-server)) | No | Interactive end-users, k8s/multi-user deployments |
-| **Raw bearer passthrough** | HTTP | Sends `Authorization: Bearer <viya-jwt>` on every request | Validates the JWT against Viya's JWKS and uses it upstream as-is | ✅ Required (or token issued elsewhere) | No | Automation/CI that already holds a Viya token; co-exists with PKCE on the same `/mcp` endpoint when `ALLOW_RAW_BEARER=true` |
-| **`sas-viya` CLI cache** | stdio | Runs `sas-viya auth loginCode` once | Reads access token from `~/.sas/credentials.json` on each tool call | ❌ Not needed (uses built-in `sas.cli` client) | ✅ `sas-viya` CLI | Operators who already use the SAS Viya CLI |
-| **`sas-mcp-login` cache** | stdio | Runs `uv run sas-mcp-login` once | Reads access token from `~/.sas-mcp-server/credentials.json` on each tool call | ❌ Not needed (uses built-in `vscode` client) | ❌ None | Zero-prereq bootstrap; lowest friction on Viya 2022.11+ |
-| **Native device-code (fallback)** | stdio | None — server prints a URL and code on first tool call | RFC 8628 device-authorization flow against SAS Logon | ⚠️ Only if your registered client has the device-code grant type | ❌ None | Viya deployments that don't CSRF-protect `/SASLogon/oauth/device_authorization` |
+| Mode                              | Transport | What the client does                                      | What the server does                                                                                        | Admin client registration?                                                                        | External CLI?     | Best for                                                                                                                    |
+| --------------------------------- | --------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **OAuth2 PKCE**                   | HTTP      | Browser-driven login on first tool call                   | Issues an MCP-signed JWT after the upstream PKCE flow; swaps it for the upstream Viya token on each request | ✅ Required (`sas-mcp` client, see [Step 2](#step-2-register-an-oauth-client-for-the-mcp-server)) | No                | Interactive end-users, k8s/multi-user deployments                                                                           |
+| **Raw bearer passthrough**        | HTTP      | Sends `Authorization: Bearer <viya-jwt>` on every request | Validates the JWT against Viya's JWKS and uses it upstream as-is                                            | ✅ Required (or token issued elsewhere)                                                           | No                | Automation/CI that already holds a Viya token; co-exists with PKCE on the same `/mcp` endpoint when `ALLOW_RAW_BEARER=true` |
+| **`sas-viya` CLI cache**          | stdio     | Runs `sas-viya auth loginCode` once                       | Reads access token from `~/.sas/credentials.json` on each tool call                                         | ❌ Not needed (uses built-in `sas.cli` client)                                                    | ✅ `sas-viya` CLI | Operators who already use the SAS Viya CLI                                                                                  |
+| **`sas-mcp-login` cache**         | stdio     | Runs `uv run sas-mcp-login` once                          | Reads access token from `~/.sas-mcp-server/credentials.json` on each tool call                              | ❌ Not needed (uses built-in `vscode` client)                                                     | ❌ None           | Zero-prereq bootstrap; lowest friction on Viya 2022.11+                                                                     |
+| **Native device-code (fallback)** | stdio     | None — server prints a URL and code on first tool call    | RFC 8628 device-authorization flow against SAS Logon                                                        | ⚠️ Only if your registered client has the device-code grant type                                  | ❌ None           | Viya deployments that don't CSRF-protect `/SASLogon/oauth/device_authorization`                                             |
 
 **Defaults and ordering**
 
@@ -24,9 +24,11 @@ The server supports five authentication paths across HTTP and stdio modes. Pick 
 ---
 
 ### Viya Setup
+
 The SAS MCP Server runs locally and expects to communicate with a Viya instance.
 
 The Viya instance serves two important roles:
+
 1. Acts as an authorization server for the MCP Server
 2. It provides the SAS execution API for the MCP Server
 
@@ -35,7 +37,8 @@ In order for the local MCP server to function properly, there are a few tweaks t
 NOTE: These steps require Administrative access over the Viya instance. If you do not have access, please ask your SAS Administrator for assistance.
 
 #### Step 1: Disable form-action Content Security Policy on SAS Logon Manager
-Since the MCP Server is an external client to Viya, after successful authentication, the redirect will fail to trigger due to the form-action directive CSP. For local development and testing, it is most straightforward to **disable the directive**.  
+
+Since the MCP Server is an external client to Viya, after successful authentication, the redirect will fail to trigger due to the form-action directive CSP. For local development and testing, it is most straightforward to **disable the directive**.
 
 1. Log into Viya, assume the Administrator role
 2. Go to SAS Environment Manager (left hand screen, Manage Environment)
@@ -43,19 +46,21 @@ Since the MCP Server is an external client to Viya, after successful authenticat
 4. View Definitions (Right next to the View:)
 5. Filter by 'sas.commons.web.security', select it
 6. Search for 'SAS Logon Manager', edit it
-7. Go to 'content-security-policy', delete the 'form-action' component entirely. 
+7. Go to 'content-security-policy', delete the 'form-action' component entirely.
 8. Save the configuration
 
 IMPORTANT: This approach does not follow security best practices. While it is feasible for local development and testing, for production scenarios, we strongly recommend hosting the MCP Server with proper TLS termination and adding its domain to the form-action directive as an allowed domain.
 
 #### Step 2. Register an OAuth Client for the MCP Server
+
 Since Viya does not support Dynamic Client Registration (DCR) pattern. It is required to register the OAuth client ahead of time. The [MCP Authorization spec](https://modelcontextprotocol.io/specification/draft/basic/authorization) states that this must be Authorization Code Flow with PKCE.
 
-Following best practies defined in this [SAS blog post](https://blogs.sas.com/content/sgf/2023/02/07/authentication-to-sas-viya)
+Following best practices defined in this [SAS blog post](https://blogs.sas.com/content/sgf/2023/02/07/authentication-to-sas-viya)
 
 If you are not comfortable with curl and the command line. Feel free to use any API client.
 
 1\. Retrieve a Viya access token (user is assumed to be a SAS Administrator)
+
 ```sh
 export BEARER_TOKEN=`curl -sk -X POST \
     "https://YOUR_VIYA_ENDPOINT/SASLogon/oauth/token" \
@@ -63,9 +68,11 @@ export BEARER_TOKEN=`curl -sk -X POST \
     -H "Content-Type: application/x-www-form-urlencoded" \
     -d 'grant_type=password&username=user&password=password' | awk -F: '{print $2}'|awk -F\" '{print $2}'`
 ```
+
 Replace the endpoint, username and password with your own values.
 
 2\. Register the OAuth Client
+
 ```sh
 curl -k -X POST "https://YOUR_VIYA_ENDPOINT/SASLogon/oauth/clients" \
    -H "Content-Type: application/json" \
@@ -75,6 +82,7 @@ curl -k -X POST "https://YOUR_VIYA_ENDPOINT/SASLogon/oauth/clients" \
       "authorized_grant_types": ["authorization_code","refresh_token"],
       "redirect_uri": "http://localhost:8134/auth/callback", "autoapprove":true, "allowpublic":true}'
 ```
+
 Replace the endpoint with your own value.
 Note the client_id and the redirect_uri -- these are important for the environment file
 
@@ -93,20 +101,21 @@ Congratulations! Your Viya is now configured and ready to connect with the MCP s
 ---
 
 ### Environment file options
+
 The .env file used by the MCP Server allows for customizable options that the user can set themselves.
-| Variable            | Required | Default       | Description                                                 |
+| Variable | Required | Default | Description |
 |---------------------|---------|--------------|---------------------------------------------------------------|
-| `VIYA_ENDPOINT`     | Yes     | —            | Viya instance to use                                          |
-| `CLIENT_ID`         | No      | `sas-mcp`    | OAuth2 Client ID registered in Viya                           |
-| `HOST_PORT`         | No      |  `8134`      | Host Port the local MCP Server listens on                    |
-| `MCP_SIGNING_KEY`   | No      | `default`    | Secret key used to sign [FastMCP Proxy JWTs](https://gofastmcp.com/servers/auth/oauth-proxy#param-jwt-signing-key)                                                           |
-| `MCP_BASE_URL`         | No   | `http://localhost:{HOST_PORT}`             | External URL of the MCP server (set for k8s/reverse proxy deployments) |
-| `COMPUTE_CONTEXT_NAME` | No   | `SAS Job Execution compute context`       | Viya compute context to use for code execution                |
-| `SSL_VERIFY`        | No      | `true`       | Set to `false` to disable SSL certificate verification (e.g. for self-signed Viya certificates)  |
-| `ALLOW_RAW_BEARER`  | No      | `false`      | When `true`, the HTTP-mode server also accepts a raw Viya access token in the `Authorization` header alongside the default OAuth2 PKCE flow. Useful for automation that already holds a Viya token. |
-| `SAS_CLI_CONFIG`    | Stdio (optional) | `$HOME` | Parent directory for the SAS Viya CLI credential cache. The token is read from `$SAS_CLI_CONFIG/.sas/credentials.json`. |
-| `VIYA_USERNAME`     | Tests only | —         | Used by the integration test suite to acquire a token via the legacy `sas.cli` password grant. Not used by the MCP server itself. |
-| `VIYA_PASSWORD`     | Tests only | —         | See `VIYA_USERNAME`.                                          |
+| `VIYA_ENDPOINT` | Yes | — | Viya instance to use |
+| `CLIENT_ID` | No | `sas-mcp` | OAuth2 Client ID registered in Viya |
+| `HOST_PORT` | No | `8134` | Host Port the local MCP Server listens on |
+| `MCP_SIGNING_KEY` | No | `default` | Secret key used to sign [FastMCP Proxy JWTs](https://gofastmcp.com/servers/auth/oauth-proxy#param-jwt-signing-key) |
+| `MCP_BASE_URL` | No | `http://localhost:{HOST_PORT}` | External URL of the MCP server (set for k8s/reverse proxy deployments) |
+| `COMPUTE_CONTEXT_NAME` | No | `SAS Job Execution compute context` | Viya compute context to use for code execution |
+| `SSL_VERIFY` | No | `true` | Set to `false` to disable SSL certificate verification (e.g. for self-signed Viya certificates) |
+| `ALLOW_RAW_BEARER` | No | `false` | When `true`, the HTTP-mode server also accepts a raw Viya access token in the `Authorization` header alongside the default OAuth2 PKCE flow. Useful for automation that already holds a Viya token. |
+| `SAS_CLI_CONFIG` | Stdio (optional) | `$HOME` | Parent directory for the SAS Viya CLI credential cache. The token is read from `$SAS_CLI_CONFIG/.sas/credentials.json`. |
+| `VIYA_USERNAME` | Tests only | — | Used by the integration test suite to acquire a token via the legacy `sas.cli` password grant. Not used by the MCP server itself. |
+| `VIYA_PASSWORD` | Tests only | — | See `VIYA_USERNAME`. |
 
 The defaults listed here are the variable values used in the Viya setup step. If your SAS Administrator has used a different `CLIENT_ID`, `HOST_PORT` during the OAuth Client registration. Please use those values instead.
 
@@ -117,12 +126,14 @@ The defaults listed here are the variable values used in the Viya setup step. If
 If your Viya instance uses custom or internal CA certificates, Python needs to know where to find them. Rather than disabling verification entirely with `SSL_VERIFY=false`, you can point Python to your Viya certificate chain.
 
 **Linux / macOS:**
+
 ```sh
 export REQUESTS_CA_BUNDLE="/path/to/sas-viya-ca-certificate.pem"
 export SSL_CERT_FILE="/path/to/sas-viya-ca-certificate.pem"
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 $env:REQUESTS_CA_BUNDLE = "C:\path\to\sas-viya-ca-certificate.pem"
 $env:SSL_CERT_FILE = "C:\path\to\sas-viya-ca-certificate.pem"
@@ -131,12 +142,14 @@ $env:SSL_CERT_FILE = "C:\path\to\sas-viya-ca-certificate.pem"
 Set these environment variables before starting the MCP server. The `.pem` file should contain the full certificate chain for your Viya instance (including any intermediate CA certificates).
 
 To obtain the certificate, ask your SAS Administrator or extract it from the Viya ingress:
+
 ```sh
 openssl s_client -connect your-viya-server.com:443 -showcerts </dev/null 2>/dev/null \
   | openssl x509 -outform PEM > sas-viya-ca-certificate.pem
 ```
 
 You can also add these variables to your `.env` file so they are loaded automatically:
+
 ```
 REQUESTS_CA_BUNDLE=/path/to/sas-viya-ca-certificate.pem
 SSL_CERT_FILE=/path/to/sas-viya-ca-certificate.pem
@@ -154,12 +167,12 @@ When deploying the MCP server in Kubernetes for multi-user access, each user aut
 
 Set these environment variables on the container (via ConfigMap, Secret, or Helm values):
 
-| Variable | Value | Why |
-|----------|-------|-----|
-| `VIYA_ENDPOINT` | `https://your-viya-server.com` | The Viya instance to connect to |
-| `MCP_BASE_URL` | `https://sas-mcp.company.com` | The external URL users reach the MCP server at (must match the OAuth redirect URI registered in Viya) |
-| `MCP_SIGNING_KEY` | A strong random string (24+ chars) | Signs proxy JWTs — use a Kubernetes Secret |
-| `SSL_CERT_FILE` | `/etc/ssl/certs/viya-ca.pem` | Path to Viya CA certificate (mount via Secret or ConfigMap) |
+| Variable          | Value                              | Why                                                                                                   |
+| ----------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `VIYA_ENDPOINT`   | `https://your-viya-server.com`     | The Viya instance to connect to                                                                       |
+| `MCP_BASE_URL`    | `https://sas-mcp.company.com`      | The external URL users reach the MCP server at (must match the OAuth redirect URI registered in Viya) |
+| `MCP_SIGNING_KEY` | A strong random string (24+ chars) | Signs proxy JWTs — use a Kubernetes Secret                                                            |
+| `SSL_CERT_FILE`   | `/etc/ssl/certs/viya-ca.pem`       | Path to Viya CA certificate (mount via Secret or ConfigMap)                                           |
 
 #### OAuth client registration
 
@@ -184,30 +197,31 @@ Expose the server via an Ingress with TLS termination:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: sas-mcp-server
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    name: sas-mcp-server
+    annotations:
+        nginx.ingress.kubernetes.io/proxy-read-timeout: '300'
 spec:
-  tls:
-    - hosts:
-        - sas-mcp.company.com
-      secretName: sas-mcp-tls
-  rules:
-    - host: sas-mcp.company.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: sas-mcp-server
-                port:
-                  number: 8134
+    tls:
+        - hosts:
+              - sas-mcp.company.com
+          secretName: sas-mcp-tls
+    rules:
+        - host: sas-mcp.company.com
+          http:
+              paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                        service:
+                            name: sas-mcp-server
+                            port:
+                                number: 8134
 ```
 
 #### MCP client configuration
 
 Each user points their MCP client at the ingress URL:
+
 ```json
 {
     "servers": {
@@ -230,6 +244,7 @@ Gemini CLI connects to MCP servers via stdio only — it does not support HTTP m
 #### Configuration
 
 Add to `~/.gemini/settings.json` or your project's `.gemini/settings.json`:
+
 ```json
 {
     "mcpServers": {
@@ -288,4 +303,5 @@ When the token expires, re-run the same command you used originally.
 ---
 
 ### Further MCP setup options
+
 For examples on how to run with docker, refer to the **docker** folder.
