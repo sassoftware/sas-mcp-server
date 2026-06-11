@@ -38,6 +38,16 @@ async def create_session(
     return resp.json()["id"]
 
 
+async def delete_session(client: httpx.AsyncClient, sid: str) -> None:
+    try:
+        delete_url = f"{VIYA_ENDPOINT}/compute/sessions/{sid}"
+        await client.delete(delete_url)
+        logger.info("Session %s deleted successfully", sid)
+    except Exception:
+        logger.exception("Failed to delete session %s", sid)
+        raise
+
+
 async def submit_job(client: httpx.AsyncClient, session_id: str, code: str) -> str:
     """Submit *code* as a job in *session_id* and return the job id."""
     body = {"code": code.splitlines()}
@@ -109,10 +119,4 @@ async def run_one_snippet(
             logger.exception("Error executing SAS job")
             raise
         finally:
-            try:
-                delete_url = f"{VIYA_ENDPOINT}/compute/sessions/{sid}"
-                await client.delete(delete_url)
-                logger.info("Session %s deleted successfully", sid)
-            except Exception:
-                logger.exception("Failed to delete session %s", sid)
-                raise
+            await delete_session(client, sid)

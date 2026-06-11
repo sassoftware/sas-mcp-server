@@ -94,4 +94,26 @@ def make_client(token: str) -> httpx.AsyncClient:
     if not token.startswith("Bearer "):
         token = f"Bearer {token}"
     headers = {"Authorization": token}
-    return httpx.AsyncClient(headers=headers, verify=SSL_VERIFY, timeout=_CLIENT_TIMEOUT)
+    return httpx.AsyncClient(
+        headers=headers, verify=SSL_VERIFY, timeout=_CLIENT_TIMEOUT
+    )
+
+
+def return_items(
+    items: list[JSONDict], prop_selection: list[str]
+) -> list[dict[str, Any]]:
+    """Return a list of items matching the selection criteria.
+
+    Args:
+        items: A list of JSON dictionaries representing the items.
+        prop_selection: A list of property names to include in the result.
+    """
+    results = []
+    for item in items:
+        if not any(prop in item for prop in prop_selection):
+            raise ValueError(
+                "None of the specified properties are present in the item."
+            )
+        result = {prop: item.get(prop, "") for prop in prop_selection}
+        results.append(result)
+    return results

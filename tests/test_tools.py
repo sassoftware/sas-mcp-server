@@ -4,6 +4,7 @@
 """
 Tests for the generic Viya REST helper functions in viya_client.
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -15,6 +16,7 @@ from sas_mcp_server.viya_client import (
     get_paged_items,
     make_client,
     post_json,
+    return_items,
 )
 
 # ---------------------------------------------------------------------------
@@ -55,7 +57,9 @@ async def test_get_json_raises_on_error(mock_httpx_client, mock_env_vars):
     """Test get_json propagates HTTP errors."""
     mock_response = AsyncMock()
     mock_response.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock())
+        side_effect=httpx.HTTPStatusError(
+            "404", request=MagicMock(), response=MagicMock()
+        )
     )
     mock_httpx_client.get.return_value = mock_response
 
@@ -73,14 +77,17 @@ async def test_get_paged_items_success(mock_httpx_client, mock_env_vars):
     """Test get_paged_items returns items and count."""
     mock_response = AsyncMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={
-        "items": [{"name": "Public"}, {"name": "Formats"}],
-        "count": 2,
-    })
+    mock_response.json = MagicMock(
+        return_value={
+            "items": [{"name": "Public"}, {"name": "Formats"}],
+            "count": 2,
+        }
+    )
     mock_httpx_client.get.return_value = mock_response
 
-    items, count = await get_paged_items("/casManagement/servers/cas1/caslibs",
-                                         mock_httpx_client, limit=50)
+    items, count = await get_paged_items(
+        "/casManagement/servers/cas1/caslibs", mock_httpx_client, limit=50
+    )
 
     assert len(items) == 2
     assert count == 2
@@ -95,8 +102,9 @@ async def test_get_paged_items_with_filter(mock_httpx_client, mock_env_vars):
     mock_response.json = MagicMock(return_value={"items": [], "count": 0})
     mock_httpx_client.get.return_value = mock_response
 
-    await get_paged_items("/files/files", mock_httpx_client,
-                          filters="contains(name,'test')")
+    await get_paged_items(
+        "/files/files", mock_httpx_client, filters="contains(name,'test')"
+    )
 
     call_kwargs = mock_httpx_client.get.call_args[1]
     assert call_kwargs["params"]["filter"] == "contains(name,'test')"
@@ -117,8 +125,9 @@ async def test_post_json_success(mock_httpx_client, mock_env_vars):
     mock_response.json = MagicMock(return_value={"id": "new-project"})
     mock_httpx_client.post.return_value = mock_response
 
-    result = await post_json("/mlPipelineAutomation/projects",
-                             mock_httpx_client, body={"name": "test"})
+    result = await post_json(
+        "/mlPipelineAutomation/projects", mock_httpx_client, body={"name": "test"}
+    )
 
     assert result == {"id": "new-project"}
     mock_httpx_client.post.assert_called_once()
@@ -162,7 +171,7 @@ async def test_delete_resource_success(mock_httpx_client, mock_env_vars):
 
 def test_make_client_adds_bearer_prefix(mock_env_vars):
     """Test make_client adds Bearer prefix when missing."""
-    with patch('sas_mcp_server.viya_client.httpx.AsyncClient') as mock_cls:
+    with patch("sas_mcp_server.viya_client.httpx.AsyncClient") as mock_cls:
         mock_cls.return_value = MagicMock()
         make_client("my-token")
         call_kwargs = mock_cls.call_args[1]
@@ -171,8 +180,55 @@ def test_make_client_adds_bearer_prefix(mock_env_vars):
 
 def test_make_client_preserves_bearer_prefix(mock_env_vars):
     """Test make_client does not double-prefix Bearer."""
-    with patch('sas_mcp_server.viya_client.httpx.AsyncClient') as mock_cls:
+    with patch("sas_mcp_server.viya_client.httpx.AsyncClient") as mock_cls:
         mock_cls.return_value = MagicMock()
         make_client("Bearer my-token")
         call_kwargs = mock_cls.call_args[1]
         assert call_kwargs["headers"]["Authorization"] == "Bearer my-token"
+
+
+# ---------------------------------------------------------------------------
+# return_items
+# ---------------------------------------------------------------------------
+
+
+def test_return_items_existing_props():
+    """Test return_items extracts specified fields."""
+    items = [
+        {"name": "item1", "description": "desc1", "extra": "x"},
+        {"name": "item2", "description": "desc2", "extra": "y"},
+    ]
+    result = return_items(items, ["name", "description"])
+    assert result == [
+        {"name": "item1", "description": "desc1"},
+        {"name": "item2", "description": "desc2"},
+    ]
+
+
+def test_return_items_missing_props():
+    """Test return_items handles missing fields gracefully."""
+    items = [
+        {"name": "item1", "extra": "x"},
+        {"description": "desc2", "extra": "y"},
+    ]
+    result = return_items(items, ["name", "description"])
+    assert result == [
+        {"name": "item1", "description": ""},
+        {"name": "", "description": "desc2"},
+    ]
+
+
+def test_return_items_empty_list():
+    """Test return_items handles empty input list."""
+    result = return_items([], ["name", "description"])
+    assert result == []
+
+
+def test_return_items_no_matching_props():
+    """Test return_items raises if no specified fields are present."""
+    items = [
+        {"extra": "x"},
+        {"extra": "y"},
+    ]
+    with pytest.raises(ValueError):
+        return_items(items, ["name", "description"])
