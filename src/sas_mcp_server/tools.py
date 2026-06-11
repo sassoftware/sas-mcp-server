@@ -845,15 +845,7 @@ def register_tools(
     async def list_compute_contexts(
         ctx: Context, limit: int = 50, start: int = 0, filter_name: str | None = None
     ) -> list[dict[str, Any]]:
-        """List available compute contexts on the Viya environment.
-
-        Args:
-            ctx: Tool execution context.
-            limit: Maximum number of contexts to return (default 50).
-            start: Context offset for pagination (default 0).
-            filter_name: Optional substring filter for context names.
-
-        """
+        """List available compute contexts on the Viya environment."""
         async with viya_session("list_compute_contexts", ctx) as client:
             filters = f"contains(name,'{filter_name}')" if filter_name else None
             items, _ = await get_paged_items(
@@ -869,16 +861,7 @@ def register_tools(
         start: int = 0,
         filter_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List available compute libraries on the Viya environment.
-
-        Args:
-            compute_context_name: Name of the compute context.
-            ctx: Tool execution context.
-            limit: Maximum number of libraries to return (default 50).
-            start: Library offset for pagination (default 0).
-            filter_name: Optional substring filter for library names.
-
-        """
+        """List available compute libraries on the Viya environment."""
         async with viya_session("list_compute_libraries", ctx) as client:
             compute_context = await get_context_id(client, compute_context_name)
             session_id = await create_session(
@@ -907,17 +890,7 @@ def register_tools(
         start: int = 0,
         filter_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List available compute tables on the Viya environment.
-
-        Args:
-            compute_context_name: Name of the compute context.
-            library_name: Name of the library.
-            ctx: Tool execution context.
-            limit: Maximum number of tables to return (default 50).
-            start: Table offset for pagination (default 0).
-            filter_name: Optional substring filter for table names.
-
-        """
+        """List available compute tables on the Viya environment."""
         async with viya_session("list_compute_tables", ctx) as client:
             compute_context = await get_context_id(client, compute_context_name)
             session_id = await create_session(
@@ -947,18 +920,7 @@ def register_tools(
         start: int = 0,
         filter_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List available columns in a table inside the compute context on the Viya environment.
-
-        Args:
-            compute_context_name: Name of the compute context.
-            library_name: Name of the library.
-            table_name: Name of the table.
-            ctx: Tool execution context.
-            limit: Maximum number of columns to return (default 50).
-            start: Column offset for pagination (default 0).
-            filter_name: Optional substring filter for column names.
-
-        """
+        """List available columns in a table inside the compute context on the Viya environment."""
         async with viya_session("list_compute_columns", ctx) as client:
             compute_context = await get_context_id(client, compute_context_name)
             session_id = await create_session(
