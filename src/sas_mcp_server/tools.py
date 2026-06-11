@@ -89,7 +89,6 @@ def register_tools(
         """List available CAS servers on the Viya environment."""
         async with viya_session("list_cas_servers", ctx) as client:
             items, _ = await get_paged_items("/casManagement/servers", client)
-            # return return_items(items, ["id", "name", "description"])
             return [
                 {
                     "name": s.get("name"),
