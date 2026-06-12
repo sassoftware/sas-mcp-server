@@ -61,7 +61,15 @@ The server will be available at `http://localhost:8134/mcp` by default. Authenti
 
 Set `VIYA_USERNAME` and `VIYA_PASSWORD` in your `.env` file, then configure your MCP client to launch the server directly (see below).
 
-**Option C: Docker / Podman** (containerized deployment)
+**Option C: Direct HTTP mode** (long-running server, no browser OAuth — for server-to-server MCP clients such as SAS Retrieval Agent Manager)
+
+Set `VIYA_USERNAME` and `VIYA_PASSWORD` (and optionally `MCP_API_KEY`) in your `.env` file, then:
+```sh
+uv run app-http-direct
+```
+The server authenticates to Viya itself with the `.env` credentials and serves streamable HTTP at `http://host:8134/mcp`. If `MCP_API_KEY` is set, clients must send it as an `X-API-Key` header or `Authorization: Bearer` token.
+
+**Option D: Docker / Podman** (containerized deployment)
 ```sh
 docker build -t sas-mcp-server .
 docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 sas-mcp-server
@@ -69,20 +77,21 @@ docker run -e VIYA_ENDPOINT=https://your-viya-server.com -p 8134:8134 sas-mcp-se
 
 ### Choosing a deployment mode
 
-| | **HTTP** | **Stdio** | **Docker** |
-|---|---|---|---|
-| **How it runs** | Long-running server you start separately | MCP client spawns it on demand | Containerized HTTP server |
-| **Authentication** | OAuth2 PKCE flow (browser popup) | Password grant (credentials in `.env`) | OAuth2 PKCE flow (browser popup) |
-| **Best for** | Multi-user or shared setups; production-like environments | Single-user local development; quick experimentation | Team deployments; CI/CD; environments without Python installed |
-| **Requires** | Python + uv | Python + uv | Docker or Podman only |
-| **Credentials stored?** | No — user authenticates interactively | Yes — username/password in `.env` | No — user authenticates interactively |
-| **MCP client config** | Point client to `http://localhost:8134/mcp` | Client runs `uv run app-stdio` | Point client to `http://host:8134/mcp` |
+| | **HTTP** | **Stdio** | **Direct HTTP** | **Docker** |
+|---|---|---|---|---|
+| **How it runs** | Long-running server you start separately | MCP client spawns it on demand | Long-running server you start separately | Containerized HTTP server |
+| **Authentication** | OAuth2 PKCE flow (browser popup) | Password grant (credentials in `.env`) | Password grant (credentials in `.env`); optional API key on the endpoint | OAuth2 PKCE flow (browser popup) |
+| **Best for** | Multi-user or shared setups; production-like environments | Single-user local development; quick experimentation | Server-to-server MCP clients that cannot do browser OAuth (e.g. SAS Retrieval Agent Manager) | Team deployments; CI/CD; environments without Python installed |
+| **Requires** | Python + uv | Python + uv | Python + uv | Docker or Podman only |
+| **Credentials stored?** | No — user authenticates interactively | Yes — username/password in `.env` | Yes — username/password in `.env` | No — user authenticates interactively |
+| **MCP client config** | Point client to `http://localhost:8134/mcp` | Client runs `uv run app-stdio` | Point client to `http://host:8134/mcp` (+ API key if set) | Point client to `http://host:8134/mcp` |
 
 **Quick guidance:**
 - **Starting out or exploring?** Use **stdio** — zero setup beyond `.env`, and your MCP client manages the server lifecycle.
 - **Need secure, interactive auth?** Use **HTTP** — no stored passwords, each user authenticates via browser.
 - **Deploying for a team or on a server?** Use **Docker** — portable, no Python dependency on the host, easy to integrate with orchestrators.
 - **Using Gemini CLI?** Use **stdio** — Gemini CLI does not support HTTP mode or browser-based OAuth. See [Gemini CLI configuration](examples/configuration.md#gemini-cli).
+- **Connecting from SAS Retrieval Agent Manager (RAM)?** Use **direct HTTP** — in RAM, add a *Remote MCP server* with transport *Streamable HTTP*, URL `http://<host>:8134/mcp`, and authentication *API Key* (matching `MCP_API_KEY`) or *None*.
 
 ### Available Tools
 

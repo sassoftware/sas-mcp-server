@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- **Direct HTTP mode** (`uv run app-http-direct`) — serves the MCP protocol over streamable HTTP while authenticating to Viya with the `.env` credentials (password grant, cached token), for server-to-server MCP clients that cannot perform browser OAuth, such as SAS Retrieval Agent Manager. Optional `MCP_API_KEY` environment variable protects the endpoint with a static key (sent as `X-API-Key` or `Authorization: Bearer`); `/health` remains open for probes.
 - **Tier 6 — Report Building (Visual Analytics authoring)**: 9 new MCP tools for creating and editing Visual Analytics reports:
   - `get_report_content` / `update_report_content` / `validate_report_content` — read, save (with ETag concurrency handling), and schema-validate report content (BIRD model, `application/vnd.sas.report.content+json`) via the Reports service
   - `create_report` / `delete_report` — create a report in a folder (defaults to My Folder) and delete reports

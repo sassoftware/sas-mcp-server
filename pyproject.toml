@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 app = "sas_mcp_server.main:main"
 app-stdio = "sas_mcp_server.stdio_server:main"
+app-http-direct = "sas_mcp_server.http_direct_server:main"
 
 [build-system]
 requires = ["uv_build>=0.8.22,<0.9.0"]
