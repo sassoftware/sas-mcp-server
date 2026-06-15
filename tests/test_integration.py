@@ -204,6 +204,109 @@ run;
 
 
 # -----------------------------------------------------------------------
+# Compute Discovery Workflow
+# -----------------------------------------------------------------------
+
+
+async def test_compute_discovery_workflow(integration_mcp_server):
+    """list_compute_contexts → list_compute_libraries → list_compute_tables → list_compute_columns.
+
+    Drives the Compute discovery tools against the configured execution context,
+    targeting SASHELP.CLASS when present and degrading to the first available
+    library/table otherwise so the test stays portable across Viya instances.
+    """
+    from sas_mcp_server.config import CONTEXT_NAME
+
+    async with Client(integration_mcp_server) as client:
+        contexts = (await client.call_tool("list_compute_contexts", {"limit": 50})).data
+        assert isinstance(contexts, list)
+        assert len(contexts) > 0, "No compute contexts found"
+
+        libraries = (await client.call_tool("list_compute_libraries", {
+            "compute_context_name": CONTEXT_NAME,
+            "limit": 200,
+        })).data
+        assert isinstance(libraries, list)
+        assert len(libraries) > 0, "No libraries assigned in the compute session"
+
+        lib_names = {str(lib.get("name", "")).upper() for lib in libraries}
+        library = "SASHELP" if "SASHELP" in lib_names else libraries[0]["name"]
+
+        tables = (await client.call_tool("list_compute_tables", {
+            "compute_context_name": CONTEXT_NAME,
+            "library_name": library,
+            "limit": 200,
+        })).data
+        assert isinstance(tables, list)
+        if not tables:
+            pytest.skip(f"No tables in library {library} on this Viya")
+
+        table_names = {str(t.get("name", "")).upper() for t in tables}
+        table = (
+            "CLASS"
+            if library == "SASHELP" and "CLASS" in table_names
+            else tables[0]["name"]
+        )
+
+        columns = (await client.call_tool("list_compute_columns", {
+            "compute_context_name": CONTEXT_NAME,
+            "library_name": library,
+            "table_name": table,
+            "limit": 100,
+        })).data
+        assert isinstance(columns, list)
+        assert len(columns) > 0, f"No columns returned for {library}.{table}"
+
+
+# -----------------------------------------------------------------------
+# Compute Session Reuse + Reset Workflow
+# -----------------------------------------------------------------------
+
+
+async def test_compute_session_reuse_and_reset(integration_mcp_server):
+    """Prove session reuse, deletion, and recreation end to end.
+
+    1. Create a WORK table in the compute session.
+    2. A second execute_sas_code call still sees it — proving the warm session
+       was reused (the old behaviour created a fresh session per call).
+    3. reset_compute_session deletes the cached session.
+    4. The next call runs in a brand-new, empty session, so the WORK table is
+       gone — proving the reset tore down the session and a new one started.
+    """
+    async with Client(integration_mcp_server) as client:
+        # 1. Seed a WORK table with a recognisable sentinel value.
+        create = (await client.call_tool("execute_sas_code", {
+            "sas_code": "data work.reuse_probe; sentinel = 4242; output; run;",
+        })).data
+        assert create["state"] in ("completed", "warning"), create["log"]
+
+        # 2. Reuse: the WORK table survives into a second call.
+        reuse = (await client.call_tool("execute_sas_code", {
+            "sas_code": "proc print data=work.reuse_probe; run;",
+        })).data
+        assert reuse["state"] in ("completed", "warning"), (
+            "WORK table did not survive a second call — session was not reused.\n"
+            + reuse["log"]
+        )
+        assert "4242" in reuse["listing"], reuse["listing"]
+
+        # 3. Reset deletes the cached compute session.
+        reset = (await client.call_tool("reset_compute_session", {})).data
+        assert reset["status"] == "reset", reset
+        assert reset.get("deleted_session"), reset
+
+        # 4. Recreate: the next call gets a fresh, empty session.
+        after = (await client.call_tool("execute_sas_code", {
+            "sas_code": "proc print data=work.reuse_probe; run;",
+        })).data
+        assert after["state"] == "error", (
+            "WORK table unexpectedly survived a reset — a new session was not "
+            "started.\n" + after["log"]
+        )
+        assert "does not exist" in after["log"].lower(), after["log"]
+
+
+# -----------------------------------------------------------------------
 # Batch Job Workflow
 # -----------------------------------------------------------------------
 
@@ -560,6 +663,11 @@ TOOL_COVERAGE = {
     "list_registered_models": "test_scoring_workflow",
     "list_models_and_decisions": "test_scoring_workflow",
     "score_data": "test_scoring_workflow",
+    "list_compute_contexts": "test_compute_discovery_workflow",
+    "list_compute_libraries": "test_compute_discovery_workflow",
+    "list_compute_tables": "test_compute_discovery_workflow",
+    "list_compute_columns": "test_compute_discovery_workflow",
+    "reset_compute_session": "test_compute_session_reuse_and_reset",
 }
 
 

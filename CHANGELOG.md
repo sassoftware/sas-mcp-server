@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0] - 2026-06-15
+
+### Added
+- **Compute service discovery tools** — `list_compute_contexts`, `list_compute_libraries`, `list_compute_tables`, `list_compute_columns` — browse compute contexts and the SAS libraries/tables/columns visible inside a compute session. Brings the tool count to 32.
+- **`reset_compute_session` tool** — deletes the cached compute session for the caller and compute context, discarding its SAS state (WORK tables, macro variables, assigned librefs) so the next call starts from a fresh session. Defaults to the configured execution context.
+- **Reusable, per-user compute session cache** (`_ComputeSessionCache` in `viya_utils.py`) — one warm compute session is kept per authenticated user and compute context, so repeat calls skip the slow session spin-up. Keyed by the JWT `sub` claim (falling back to other identity claims, then a token hash) so multi-user HTTP deployments never share a session. Cached sessions are validated before reuse and transparently recreated if Viya has reaped them for inactivity.
+- **Compute session shutdown cleanup** — both server entry points register a FastMCP `lifespan` that deletes all cached compute sessions on shutdown (best effort), so warm sessions don't linger until Viya's idle reaper collects them.
+- **Integration coverage for every new tool** — `test_compute_discovery_workflow` and `test_compute_session_reuse_and_reset` (which proves reuse, deletion, and recreation end to end against a live Viya), wired into the `test_every_tool_has_integration_coverage` guard.
+- **`return_items` helper** (`viya_client.py`) — shared field-projection used by the compute discovery tools.
+
+### Changed — BREAKING
+- **`execute_sas_code` is now stateful across calls.** It runs in the reusable per-user compute session, so SAS WORK tables, macro variables, and assigned librefs persist between successive calls instead of being discarded with a per-call session. Call `reset_compute_session` to start from a clean session. (Previously every call created and tore down its own session.)
+
+### Changed
+- `get_context_id` and `create_session` now call `raise_for_status()`, so an auth/permission failure surfaces as a real `HTTPStatusError` instead of a misleading "compute context not found" or a `KeyError`.
+- `get_context_id` builds its query with httpx `params=` instead of string interpolation, so compute context names containing reserved characters (`&`, `+`, `#`) are encoded correctly.
+- The compute session lifecycle (resolve context → create → reuse/reset/teardown) is centralised in `_ComputeSessionCache`; `run_one_snippet` and the compute tools now share it, and `delete_session` was extracted as a reusable helper.
+
 ## [1.1.0] - 2026-05-31
 
 ### Changed — BREAKING

@@ -6,12 +6,23 @@ Unit tests for stdio-mode token resolution and the native device-code flow.
 """
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from sas_mcp_server import stdio_server
 from sas_mcp_server.exceptions import AuthenticationError
+
+
+@pytest.mark.asyncio
+async def test_lifespan_cleans_up_sessions_on_shutdown():
+    """The stdio server lifespan tears down warm compute sessions on exit."""
+    with patch(
+        "sas_mcp_server.stdio_server.shutdown_session_cache", new=AsyncMock()
+    ) as mock_shutdown:
+        async with stdio_server._lifespan(stdio_server.mcp):
+            mock_shutdown.assert_not_awaited()
+        mock_shutdown.assert_awaited_once()
 
 # ---------------------------------------------------------------------------
 # credentials-path resolution

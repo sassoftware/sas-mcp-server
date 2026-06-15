@@ -6,6 +6,8 @@ Starter MCP Server for SAS Viya, utilizing the SAS Viya OAuth flow for authentic
 Handles session management, job submission, and result retrieval using httpx.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from dotenv import load_dotenv
@@ -20,6 +22,7 @@ from .exceptions import AuthenticationError
 from .prompts import register_prompts
 from .tools import register_tools
 from .viya_client import logger
+from .viya_utils import shutdown_session_cache
 
 # Load environment variables before accessing them
 load_dotenv()
@@ -51,9 +54,18 @@ class AuthMiddleware(Middleware):
         return await call_next(ctx)
 
 
+@asynccontextmanager
+async def _lifespan(server: FastMCP) -> AsyncIterator[dict]:
+    """Tear down warm compute sessions when the server stops."""
+    try:
+        yield {}
+    finally:
+        await shutdown_session_cache()
+
+
 # Initialize the FastMCP server
 logger.info("Connecting to SAS Viya at %s", VIYA_ENDPOINT)
-mcp = FastMCP("SAS Viya Execution MCP Server", auth=viya_auth)
+mcp = FastMCP("SAS Viya Execution MCP Server", auth=viya_auth, lifespan=_lifespan)
 mcp.add_middleware(AuthMiddleware())
 
 

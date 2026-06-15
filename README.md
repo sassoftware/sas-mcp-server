@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 20+ Tools spanning the Analytics Life Cycle across SAS Viya
+- 30+ Tools spanning the Analytics Life Cycle across SAS Viya
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
 - HTTP-based MCP server compatible with MCP clients
@@ -134,7 +134,7 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 ### Available Tools
 
 #### Code Execution
-- **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output)
+- **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable, per-user compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls — use **reset_compute_session** to start fresh.
 
 #### Data Discovery (CAS Management)
 - **list_cas_servers**: List available CAS servers
@@ -171,6 +171,13 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **list_registered_models**: List models in repository
 - **list_models_and_decisions**: List published MAS modules
 - **score_data**: Score data against a published model
+
+#### Compute Contexts & Code Execution
+- **list_compute_contexts**: List available compute contexts
+- **list_compute_libraries**: List the SAS libraries (librefs) assigned in a compute context
+- **list_compute_tables**: List the tables in a SAS library within a compute context
+- **list_compute_columns**: List the columns of a table in a SAS library
+- **reset_compute_session**: Delete the cached compute session for a context, discarding its SAS state and forcing a fresh session on the next call
 
 ### Prompt Templates
 
@@ -292,7 +299,7 @@ Integration tests call every tool against a live Viya environment. They require 
 ./run_tests.sh --integration-only
 ```
 
-Every one of the 27 tools and 8 prompt templates has an integration test, enforced by the
+Every one of the 32 tools and 8 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most
@@ -325,7 +332,7 @@ gh gist create reports/integration.xml                          # full XML as a 
 
 | File | Description |
 |---|---|
-| `tests/test_tool_payloads.py` | Payload assertions for all 27 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
+| `tests/test_tool_payloads.py` | Payload assertions for all 32 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
 | `tests/test_integration.py` | End-to-end workflow tests against a real Viya instance |
 | `tests/test_tools.py` | Unit tests for the generic Viya REST helpers in `viya_client` (`get_json`, `post_json`, `make_client`, …) |
 | `tests/test_viya_utils.py` | Unit tests for Viya compute session and job orchestration |

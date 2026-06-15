@@ -21,6 +21,17 @@ def test_authentication_error():
     assert str(error) == "AuthenticationError: Test error message"
 
 
+@pytest.mark.asyncio
+async def test_lifespan_cleans_up_sessions_on_shutdown():
+    """The HTTP server lifespan tears down warm compute sessions on exit."""
+    with patch(
+        "sas_mcp_server.mcp_server.shutdown_session_cache", new=AsyncMock()
+    ) as mock_shutdown:
+        async with mcp_server._lifespan(mcp_server.mcp):
+            mock_shutdown.assert_not_awaited()
+        mock_shutdown.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # _http_get_token
 # ---------------------------------------------------------------------------

@@ -33,6 +33,8 @@ import os
 import sys
 import time
 import webbrowser
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -44,6 +46,7 @@ from .exceptions import AuthenticationError
 from .prompts import register_prompts
 from .tools import register_tools
 from .viya_client import logger
+from .viya_utils import shutdown_session_cache
 
 load_dotenv()
 
@@ -164,8 +167,17 @@ async def _stdio_get_token(ctx: Context) -> str:
     return _get_viya_token()
 
 
+@asynccontextmanager
+async def _lifespan(server: FastMCP) -> AsyncIterator[dict]:
+    """Tear down warm compute sessions when the server stops."""
+    try:
+        yield {}
+    finally:
+        await shutdown_session_cache()
+
+
 logger.info("Connecting to SAS Viya at %s", VIYA_ENDPOINT)
-mcp = FastMCP("SAS Viya Execution MCP Server")
+mcp = FastMCP("SAS Viya Execution MCP Server", lifespan=_lifespan)
 register_tools(mcp, _stdio_get_token)
 register_prompts(mcp)
 

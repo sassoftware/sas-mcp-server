@@ -19,6 +19,20 @@ load_dotenv()
 from fastmcp import FastMCP  # noqa: E402  (must follow load_dotenv above)
 
 
+@pytest.fixture(autouse=True)
+def _clear_compute_session_cache():
+    """Isolate tests from the process-wide compute session cache.
+
+    The cache in ``viya_utils`` is module-level state that would otherwise leak
+    a session id (and per-key lock) from one test into the next.
+    """
+    from sas_mcp_server.viya_utils import clear_session_cache
+
+    clear_session_cache()
+    yield
+    clear_session_cache()
+
+
 @pytest.fixture
 def mock_env_vars(monkeypatch):
     """Set up mock environment variables for testing."""

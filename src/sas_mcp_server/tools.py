@@ -24,7 +24,7 @@ from .viya_client import (
     post_json,
     return_items,
 )
-from .viya_utils import create_session, delete_session, get_context_id, run_one_snippet
+from .viya_utils import get_cached_session, reset_cached_session, run_one_snippet
 
 
 def register_tools(
@@ -55,6 +55,23 @@ def register_tools(
         async with make_client(token) as client:
             yield client
 
+    @asynccontextmanager
+    async def compute_tool_session(
+        name: str, ctx: Context, context_name: str
+    ) -> AsyncIterator[tuple[httpx.AsyncClient, str]]:
+        """Like :func:`viya_session` but also resolves the cached compute session.
+
+        Yields ``(client, session_id)`` where *session_id* is the reusable
+        per-user compute session for *context_name* — created on first use and
+        reused (not torn down) on later calls. Use ``reset_compute_session`` to
+        discard it.
+        """
+        logger.info("--- TOOL USED: %s ---", name)
+        token = await get_token(ctx)
+        async with make_client(token) as client:
+            session_id = await get_cached_session(client, context_name, token)
+            yield client, session_id
+
     # ------------------------------------------------------------------
     # Original tool
     # ------------------------------------------------------------------
@@ -64,6 +81,11 @@ def register_tools(
         """
         Executes the provided SAS code in the Viya environment and returns information about the completed Job.
         This will create a job definition for the SAS code, execute it, and then retrieve the results.
+
+        The code runs in a reusable compute session that is kept warm and shared
+        across calls (per user), so SAS state — WORK tables, macro variables, and
+        assigned librefs — persists between successive ``execute_sas_code`` calls.
+        Call ``reset_compute_session`` to discard that state and start fresh.
 
         Args:
             sas_code (str): the SAS code snippet to be executed using the Viya Job Execution API Service
@@ -89,7 +111,6 @@ def register_tools(
         """List available CAS servers on the Viya environment."""
         async with viya_session("list_cas_servers", ctx) as client:
             items, _ = await get_paged_items("/casManagement/servers", client)
-            # return return_items(items, [ "name", "id", "description"])
             return [
                 {
                     "name": s.get("name"),
@@ -862,25 +883,29 @@ def register_tools(
         start: int = 0,
         filter_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List available compute libraries on the Viya environment."""
-        async with viya_session("list_compute_libraries", ctx) as client:
-            compute_context = await get_context_id(client, compute_context_name)
-            session_id = await create_session(
-                client, compute_context, name="compute-libraries-session"
+        """List the SAS libraries (librefs) assigned in a compute context.
+
+        Runs in the reusable per-user compute session for the context, so it
+        also sees libraries created by prior ``execute_sas_code`` calls.
+
+        Args:
+            compute_context_name: Name of the compute context (see list_compute_contexts).
+            limit: Maximum number of libraries to return (default 50).
+            start: Offset of the first library to return (default 0).
+            filter_name: Optional name filter (substring match).
+        """
+        async with compute_tool_session(
+            "list_compute_libraries", ctx, compute_context_name
+        ) as (client, session_id):
+            filters = f"contains(name,'{filter_name}')" if filter_name else None
+            items, _ = await get_paged_items(
+                f"/compute/sessions/{session_id}/data",
+                client,
+                limit=limit,
+                start=start,
+                filters=filters,
             )
-            logger.info("Session created: %s", session_id)
-            try:
-                filters = f"contains(name,'{filter_name}')" if filter_name else None
-                items, _ = await get_paged_items(
-                    f"/compute/sessions/{session_id}/data",
-                    client,
-                    limit=limit,
-                    start=start,
-                    filters=filters,
-                )
-                return return_items(items, ["name", "description"])
-            finally:
-                await delete_session(client, session_id)
+            return return_items(items, ["name", "description"])
 
     @mcp.tool()
     async def list_compute_tables(
@@ -891,25 +916,31 @@ def register_tools(
         start: int = 0,
         filter_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List available compute tables on the Viya environment."""
-        async with viya_session("list_compute_tables", ctx) as client:
-            compute_context = await get_context_id(client, compute_context_name)
-            session_id = await create_session(
-                client, compute_context, name="compute-tables-session"
+        """List the tables in a SAS library within a compute context.
+
+        These are SAS/Compute tables (e.g. WORK or an assigned libref), distinct
+        from in-memory CAS tables (see list_castables). Runs in the reusable
+        per-user compute session for the context.
+
+        Args:
+            compute_context_name: Name of the compute context (see list_compute_contexts).
+            library_name: Name of the SAS library/libref (e.g. 'WORK', 'SASHELP').
+            limit: Maximum number of tables to return (default 50).
+            start: Offset of the first table to return (default 0).
+            filter_name: Optional name filter (substring match).
+        """
+        async with compute_tool_session(
+            "list_compute_tables", ctx, compute_context_name
+        ) as (client, session_id):
+            filters = f"contains(name,'{filter_name}')" if filter_name else None
+            items, _ = await get_paged_items(
+                f"/compute/sessions/{session_id}/data/{library_name}",
+                client,
+                limit=limit,
+                start=start,
+                filters=filters,
             )
-            logger.info("Session created: %s", session_id)
-            try:
-                filters = f"contains(name,'{filter_name}')" if filter_name else None
-                items, _ = await get_paged_items(
-                    f"/compute/sessions/{session_id}/data/{library_name}",
-                    client,
-                    limit=limit,
-                    start=start,
-                    filters=filters,
-                )
-                return return_items(items, ["name", "description"])
-            finally:
-                await delete_session(client, session_id)
+            return return_items(items, ["name", "description"])
 
     @mcp.tool()
     async def list_compute_columns(
@@ -921,22 +952,62 @@ def register_tools(
         start: int = 0,
         filter_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List available columns in a table inside the compute context on the Viya environment."""
-        async with viya_session("list_compute_columns", ctx) as client:
-            compute_context = await get_context_id(client, compute_context_name)
-            session_id = await create_session(
-                client, compute_context, name="compute-columns-session"
+        """List the columns of a table in a SAS library within a compute context.
+
+        Runs in the reusable per-user compute session for the context.
+
+        Args:
+            compute_context_name: Name of the compute context (see list_compute_contexts).
+            library_name: Name of the SAS library/libref (e.g. 'WORK', 'SASHELP').
+            table_name: Name of the table within the library.
+            limit: Maximum number of columns to return (default 50).
+            start: Offset of the first column to return (default 0).
+            filter_name: Optional name filter (substring match).
+        """
+        async with compute_tool_session(
+            "list_compute_columns", ctx, compute_context_name
+        ) as (client, session_id):
+            filters = f"contains(name,'{filter_name}')" if filter_name else None
+            items, _ = await get_paged_items(
+                f"/compute/sessions/{session_id}/data/{library_name}/{table_name}/columns",
+                client,
+                limit=limit,
+                start=start,
+                filters=filters,
             )
-            logger.info("Session created: %s", session_id)
-            try:
-                filters = f"contains(name,'{filter_name}')" if filter_name else None
-                items, _ = await get_paged_items(
-                    f"/compute/sessions/{session_id}/data/{library_name}/{table_name}/columns",
-                    client,
-                    limit=limit,
-                    start=start,
-                    filters=filters,
-                )
-                return return_items(items, ["id", "name", "label", "type", "length"])
-            finally:
-                await delete_session(client, session_id)
+            return return_items(items, ["id", "name", "label", "type", "length"])
+
+    @mcp.tool()
+    async def reset_compute_session(
+        ctx: Context, compute_context_name: str | None = None
+    ) -> dict[str, str]:
+        """Reset (delete) the cached compute session for a compute context.
+
+        The server keeps one reusable SAS compute session per user and compute
+        context so repeat calls skip the slow session spin-up; SAS state (WORK
+        tables, macro variables, assigned librefs) therefore persists across
+        ``execute_sas_code`` and ``list_compute_*`` calls. Call this to discard
+        that state — the next compute tool call transparently creates a fresh
+        session.
+
+        Args:
+            compute_context_name: Compute context whose session to reset.
+                Defaults to the server's configured execution context (the one
+                ``execute_sas_code`` uses).
+        """
+        context_name = compute_context_name or CONTEXT_NAME
+        logger.info("--- TOOL USED: reset_compute_session ---")
+        token = await get_token(ctx)
+        async with make_client(token) as client:
+            sid = await reset_cached_session(client, context_name, token)
+        if sid is None:
+            return {
+                "status": "no_active_session",
+                "compute_context": context_name,
+                "message": "No cached compute session to reset for this context.",
+            }
+        return {
+            "status": "reset",
+            "compute_context": context_name,
+            "deleted_session": sid,
+        }

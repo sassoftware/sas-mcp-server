@@ -49,6 +49,7 @@ EXPECTED_TOOLS = [
     "list_compute_libraries",
     "list_compute_tables",
     "list_compute_columns",
+    "reset_compute_session",
 ]
 
 
@@ -979,7 +980,7 @@ async def test_list_compute_libraries_request(mcp_server_with_mock_client):
     original_get = mock_client.get.return_value
 
     def route_get(url, **kwargs):
-        if "/compute/contexts?name=" in url:
+        if url.endswith("/compute/contexts"):
             return context_resp
         if "/compute/sessions/test-session-id/data" in url:
             return libs_resp
@@ -1001,23 +1002,24 @@ async def test_list_compute_libraries_request(mcp_server_with_mock_client):
 
     calls = mock_client.get.call_args_list
     context_call = next(
-        call for call in calls if "/compute/contexts?name=" in call[0][0]
+        call for call in calls if call[0][0].endswith("/compute/contexts")
     )
     libs_call = next(
         call for call in calls if "/compute/sessions/test-session-id/data" in call[0][0]
     )
 
-    assert "/compute/contexts?name=Test Context" in context_call[0][0]
+    assert context_call[0][0].endswith("/compute/contexts")
+    assert context_call[1]["params"]["name"] == "Test Context"
 
     post_url = mock_client.post.call_args[0][0]
     assert "/compute/contexts/test-context-id/sessions" in post_url
-    assert mock_client.post.call_args[1]["json"]["name"] == "compute-libraries-session"
+    assert mock_client.post.call_args[1]["json"]["name"] == "sas-mcp-shared"
 
     assert "/compute/sessions/test-session-id/data" in libs_call[0][0]
     assert libs_call[1]["params"] == {"start": 5, "limit": 25}
 
-    delete_url = mock_client.delete.call_args[0][0]
-    assert "/compute/sessions/test-session-id" in delete_url
+    # The session is cached for reuse, not torn down after the call.
+    mock_client.delete.assert_not_called()
 
 
 async def test_list_compute_tables_request(mcp_server_with_mock_client):
@@ -1027,7 +1029,7 @@ async def test_list_compute_tables_request(mcp_server_with_mock_client):
     original_get = mock_client.get.return_value
 
     def route_get(url, **kwargs):
-        if "/compute/contexts?name=" in url:
+        if url.endswith("/compute/contexts"):
             return context_resp
         if "/compute/sessions/test-session-id/data/Public" in url:
             return tables_resp
@@ -1054,7 +1056,7 @@ async def test_list_compute_tables_request(mcp_server_with_mock_client):
 
     calls = mock_client.get.call_args_list
     context_call = next(
-        call for call in calls if "/compute/contexts?name=" in call[0][0]
+        call for call in calls if call[0][0].endswith("/compute/contexts")
     )
     tables_call = next(
         call
@@ -1062,17 +1064,18 @@ async def test_list_compute_tables_request(mcp_server_with_mock_client):
         if "/compute/sessions/test-session-id/data/Public" in call[0][0]
     )
 
-    assert "/compute/contexts?name=Test Context" in context_call[0][0]
+    assert context_call[0][0].endswith("/compute/contexts")
+    assert context_call[1]["params"]["name"] == "Test Context"
 
     post_url = mock_client.post.call_args[0][0]
     assert "/compute/contexts/test-context-id/sessions" in post_url
-    assert mock_client.post.call_args[1]["json"]["name"] == "compute-tables-session"
+    assert mock_client.post.call_args[1]["json"]["name"] == "sas-mcp-shared"
 
     assert "/compute/sessions/test-session-id/data/Public" in tables_call[0][0]
     assert tables_call[1]["params"] == {"start": 2, "limit": 10}
 
-    delete_url = mock_client.delete.call_args[0][0]
-    assert "/compute/sessions/test-session-id" in delete_url
+    # The session is cached for reuse, not torn down after the call.
+    mock_client.delete.assert_not_called()
 
 
 async def test_list_compute_columns_request(mcp_server_with_mock_client):
@@ -1082,7 +1085,7 @@ async def test_list_compute_columns_request(mcp_server_with_mock_client):
     original_get = mock_client.get.return_value
 
     def route_get(url, **kwargs):
-        if "/compute/contexts?name=" in url:
+        if url.endswith("/compute/contexts"):
             return context_resp
         if "/compute/sessions/test-session-id/data/Public/MY_TABLE/columns" in url:
             return columns_resp
@@ -1110,7 +1113,7 @@ async def test_list_compute_columns_request(mcp_server_with_mock_client):
 
     calls = mock_client.get.call_args_list
     context_call = next(
-        call for call in calls if "/compute/contexts?name=" in call[0][0]
+        call for call in calls if call[0][0].endswith("/compute/contexts")
     )
     columns_call = next(
         call
@@ -1119,11 +1122,12 @@ async def test_list_compute_columns_request(mcp_server_with_mock_client):
         in call[0][0]
     )
 
-    assert "/compute/contexts?name=Test Context" in context_call[0][0]
+    assert context_call[0][0].endswith("/compute/contexts")
+    assert context_call[1]["params"]["name"] == "Test Context"
 
     post_url = mock_client.post.call_args[0][0]
     assert "/compute/contexts/test-context-id/sessions" in post_url
-    assert mock_client.post.call_args[1]["json"]["name"] == "compute-columns-session"
+    assert mock_client.post.call_args[1]["json"]["name"] == "sas-mcp-shared"
 
     assert (
         "/compute/sessions/test-session-id/data/Public/MY_TABLE/columns"
@@ -1131,5 +1135,97 @@ async def test_list_compute_columns_request(mcp_server_with_mock_client):
     )
     assert columns_call[1]["params"] == {"start": 0, "limit": 50}
 
+    # The session is cached for reuse, not torn down after the call.
+    mock_client.delete.assert_not_called()
+
+
+async def test_compute_session_is_reused_across_calls(mcp_server_with_mock_client):
+    """Two compute tool calls reuse one session: created once, then validated."""
+    mcp, mock_client = mcp_server_with_mock_client
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    data_resp = _make_mock_response({"items": [], "count": 0})
+    state_resp = _make_mock_response(status_code=200)
+
+    def route_get(url, **kwargs):
+        if url.endswith("/compute/contexts"):
+            return context_resp
+        if "/compute/sessions/test-session-id/state" in url:
+            return state_resp
+        if "/compute/sessions/test-session-id/data" in url:
+            return data_resp
+        return mock_client.get.return_value
+
+    mock_client.get.side_effect = route_get
+    mock_client.post.return_value = _make_mock_response(
+        {"id": "test-session-id"}, status_code=201
+    )
+
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "list_compute_libraries", {"compute_context_name": "Test Context"}
+        )
+        await client.call_tool(
+            "list_compute_libraries", {"compute_context_name": "Test Context"}
+        )
+
+    mock_client.get.side_effect = None
+
+    # Session created exactly once despite two calls.
+    session_posts = [
+        c for c in mock_client.post.call_args_list if "/sessions" in c[0][0]
+    ]
+    assert len(session_posts) == 1
+    # Second call validated the cached session via its /state endpoint.
+    assert any(
+        "/compute/sessions/test-session-id/state" in c[0][0]
+        for c in mock_client.get.call_args_list
+    )
+    mock_client.delete.assert_not_called()
+
+
+async def test_reset_compute_session_request(mcp_server_with_mock_client):
+    """reset_compute_session deletes the cached session and reports it."""
+    mcp, mock_client = mcp_server_with_mock_client
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    data_resp = _make_mock_response({"items": [], "count": 0})
+
+    def route_get(url, **kwargs):
+        if url.endswith("/compute/contexts"):
+            return context_resp
+        if "/compute/sessions/test-session-id/data" in url:
+            return data_resp
+        return mock_client.get.return_value
+
+    mock_client.get.side_effect = route_get
+    mock_client.post.return_value = _make_mock_response(
+        {"id": "test-session-id"}, status_code=201
+    )
+
+    async with Client(mcp) as client:
+        # Populate the cache (creates the session), then reset it.
+        await client.call_tool(
+            "list_compute_libraries", {"compute_context_name": "Test Context"}
+        )
+        result = await client.call_tool(
+            "reset_compute_session", {"compute_context_name": "Test Context"}
+        )
+
+    mock_client.get.side_effect = None
+
     delete_url = mock_client.delete.call_args[0][0]
     assert "/compute/sessions/test-session-id" in delete_url
+    assert result.data["status"] == "reset"
+    assert result.data["deleted_session"] == "test-session-id"
+
+
+async def test_reset_compute_session_no_active_session(mcp_server_with_mock_client):
+    """Resetting when nothing is cached reports no_active_session, no delete."""
+    mcp, mock_client = mcp_server_with_mock_client
+
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "reset_compute_session", {"compute_context_name": "Test Context"}
+        )
+
+    assert result.data["status"] == "no_active_session"
+    mock_client.delete.assert_not_called()
