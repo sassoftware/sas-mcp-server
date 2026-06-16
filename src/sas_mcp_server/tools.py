@@ -111,14 +111,7 @@ def register_tools(
         """List available CAS servers on the Viya environment."""
         async with viya_session("list_cas_servers", ctx) as client:
             items, _ = await get_paged_items("/casManagement/servers", client)
-            return [
-                {
-                    "name": s.get("name"),
-                    "id": s.get("id"),
-                    "description": s.get("description", ""),
-                }
-                for s in items
-            ]
+            return return_items(items, ["name", "id", "description"])
 
     @mcp.tool()
     async def list_caslibs(
@@ -134,14 +127,7 @@ def register_tools(
             items, _ = await get_paged_items(
                 f"/casManagement/servers/{server_id}/caslibs", client, limit=limit
             )
-            return [
-                {
-                    "name": c.get("name"),
-                    "type": c.get("type", ""),
-                    "description": c.get("description", ""),
-                }
-                for c in items
-            ]
+            return return_items(items, ["name", "type", "description"])
 
     @mcp.tool()
     async def list_castables(
@@ -160,14 +146,7 @@ def register_tools(
                 client,
                 limit=limit,
             )
-            return [
-                {
-                    "name": t.get("name"),
-                    "rowCount": t.get("rowCount"),
-                    "columnCount": t.get("columnCount"),
-                }
-                for t in items
-            ]
+            return return_items(items, ["name", "rowCount", "columnCount"])
 
     @mcp.tool()
     async def list_source_tables(
@@ -190,15 +169,7 @@ def register_tools(
                 limit=limit,
                 extra_params={"state": "unloaded"},
             )
-            return [
-                {
-                    "name": t.get("name"),
-                    "sourceTableName": t.get("sourceTableName"),
-                    "scope": t.get("scope"),
-                    "state": t.get("state", "unloaded"),
-                }
-                for t in items
-            ]
+            return return_items(items, ["name", "sourceTableName", "scope", "state"])
 
     @mcp.tool()
     async def get_castable_info(
@@ -239,16 +210,7 @@ def register_tools(
                 client,
                 limit=limit,
             )
-            return [
-                {
-                    "name": c.get("name"),
-                    "type": c.get("type"),
-                    "rawLength": c.get("rawLength"),
-                    "label": c.get("label", ""),
-                    "format": c.get("format", ""),
-                }
-                for c in items
-            ]
+            return return_items(items, ["name", "type", "rawLength", "label", "format"])
 
     @mcp.tool()
     async def get_castable_data(
@@ -434,15 +396,7 @@ def register_tools(
             items, _ = await get_paged_items(
                 "/files/files", client, limit=limit, filters=filters
             )
-            return [
-                {
-                    "id": f.get("id"),
-                    "name": f.get("name"),
-                    "contentType": f.get("contentType", ""),
-                    "size": f.get("size"),
-                }
-                for f in items
-            ]
+            return return_items(items, ["id", "name", "contentType", "size"])
 
     @mcp.tool()
     async def upload_file(
@@ -499,15 +453,7 @@ def register_tools(
             items, _ = await get_paged_items(
                 "/reports/reports", client, limit=limit, filters=filters
             )
-            return [
-                {
-                    "id": r.get("id"),
-                    "name": r.get("name"),
-                    "description": r.get("description", ""),
-                    "createdBy": r.get("createdBy", ""),
-                }
-                for r in items
-            ]
+            return return_items(items, ["id", "name", "description", "createdBy"])
 
     @mcp.tool()
     async def get_report(report_id: str, ctx: Context) -> dict[str, Any]:
@@ -596,15 +542,7 @@ def register_tools(
         """
         async with viya_session("list_jobs", ctx) as client:
             items, _ = await get_paged_items("/jobExecution/jobs", client, limit=limit)
-            return [
-                {
-                    "id": j.get("id"),
-                    "name": j.get("name", ""),
-                    "state": j.get("state", ""),
-                    "creationTimeStamp": j.get("creationTimeStamp", ""),
-                }
-                for j in items
-            ]
+            return return_items(items, ["id", "name", "state", "creationTimeStamp"])
 
     @mcp.tool()
     async def cancel_job(job_id: str, ctx: Context) -> str:
@@ -665,15 +603,7 @@ def register_tools(
             items, _ = await get_paged_items(
                 "/mlPipelineAutomation/projects", client, limit=limit
             )
-            return [
-                {
-                    "id": p.get("id"),
-                    "name": p.get("name", ""),
-                    "state": p.get("state", ""),
-                    "description": p.get("description", ""),
-                }
-                for p in items
-            ]
+            return return_items(items, ["id", "name", "state", "description"])
 
     @mcp.tool()
     async def create_ml_project(
@@ -808,15 +738,7 @@ def register_tools(
             items, _ = await get_paged_items(
                 "/modelRepository/models", client, limit=limit
             )
-            return [
-                {
-                    "id": m.get("id"),
-                    "name": m.get("name", ""),
-                    "description": m.get("description", ""),
-                    "modelVersionName": m.get("modelVersionName", ""),
-                }
-                for m in items
-            ]
+            return return_items(items, ["id", "name", "description", "modelVersionName"])
 
     @mcp.tool()
     async def list_models_and_decisions(
@@ -831,14 +753,7 @@ def register_tools(
             items, _ = await get_paged_items(
                 "/microanalyticScore/modules", client, limit=limit
             )
-            return [
-                {
-                    "id": m.get("id"),
-                    "name": m.get("name", ""),
-                    "description": m.get("description", ""),
-                }
-                for m in items
-            ]
+            return return_items(items, ["id", "name", "description"])
 
     @mcp.tool()
     async def score_data(
