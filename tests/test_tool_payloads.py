@@ -10,12 +10,13 @@ params, and headers.  These tests use a mock httpx client (no network calls).
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 from fastmcp import Client
 
 from conftest import _make_mock_response
+from sas_mcp_server.helpers import ml_helpers
 
 EXPECTED_TOOLS = [
     "execute_sas_code",
@@ -41,6 +42,7 @@ EXPECTED_TOOLS = [
     "get_job_log",
     "list_ml_projects",
     "create_ml_project",
+    "register_ml_champion_model",
     "run_ml_project",
     "list_registered_models",
     "list_models_and_decisions",
@@ -108,6 +110,26 @@ async def test_tool_schemas(mcp_server_with_mock_client):
         props = submit.inputSchema["properties"]
         assert "sas_code" in props
         assert "job_name" in props
+
+        register_champion = tool_map["register_ml_champion_model"]
+        props = register_champion.inputSchema["properties"]
+        assert "project_id" in props
+        required = register_champion.inputSchema.get("required", [])
+        assert "project_id" in required
+
+        list_publishing = tool_map["list_publishing_destinations"]
+        props = list_publishing.inputSchema["properties"]
+        assert "limit" in props
+        assert "start" in props
+        assert "filter_name" in props
+
+        publish_champion = tool_map["publish_ml_champion_model"]
+        props = publish_champion.inputSchema["properties"]
+        assert "project_id" in props
+        assert "destination_name" in props
+        required = publish_champion.inputSchema.get("required", [])
+        assert "project_id" in required
+        assert "destination_name" in required
 
 
 # -----------------------------------------------------------------------
@@ -741,6 +763,63 @@ async def test_create_ml_project_table_not_found(mcp_server_with_mock_client):
         )
     assert result.data["status"] == "table_not_found"
     mock_client.post.assert_not_called()
+
+
+async def test_list_publishing_destinations_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "list_publishing_destinations",
+            {"limit": 25, "start": 10, "filter_name": "mas"},
+        )
+
+    url = mock_client.get.call_args[0][0]
+    assert "/modelRepository/destinations" in url
+    params = mock_client.get.call_args[1]["params"]
+    assert params["limit"] == 25
+    assert params["start"] == 10
+    assert params["filter"] == "contains(name,'mas')"
+
+
+async def test_publish_ml_champion_model_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    with patch(
+        "sas_mcp_server.tools.ml_helpers.ml_register_publish",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        mock_publish.return_value = {"message": "published"}
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "publish_ml_champion_model",
+                {"project_id": "proj-123", "destination_name": "MAS"},
+            )
+
+    mock_publish.assert_awaited_once()
+    args = mock_publish.await_args.args
+    assert isinstance(args[0], ml_helpers.MLPublishProps)
+    assert args[0].project_id == "proj-123"
+    assert args[0].destination_name == "MAS"
+    assert args[1] is mock_client
+
+
+async def test_register_ml_champion_model_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    with patch(
+        "sas_mcp_server.tools.ml_helpers.ml_register_publish",
+        new_callable=AsyncMock,
+    ) as mock_register:
+        mock_register.return_value = {"message": "registered"}
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "register_ml_champion_model",
+                {"project_id": "proj-123"},
+            )
+
+    mock_register.assert_awaited_once()
+    args = mock_register.await_args.args
+    assert isinstance(args[0], ml_helpers.MLRegisterProps)
+    assert args[0].project_id == "proj-123"
+    assert args[1] is mock_client
 
 
 async def test_run_ml_project_request(mcp_server_with_mock_client):

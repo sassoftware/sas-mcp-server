@@ -14,6 +14,8 @@ from typing import Any
 import httpx
 from fastmcp import Context, FastMCP
 
+from sas_mcp_server.helpers import ml_helpers
+
 from .config import CONTEXT_NAME, VIYA_ENDPOINT
 from .viya_client import (
     delete_resource,
@@ -112,7 +114,6 @@ def register_tools(
         async with viya_session("list_cas_servers", ctx) as client:
             items, _ = await get_paged_items("/casManagement/servers", client)
             return return_items(items, ["name", "id", "description"])
-
 
     @mcp.tool()
     async def list_caslibs(
@@ -695,6 +696,57 @@ def register_tools(
             return await post_json("/mlPipelineAutomation/projects", client, body=body)
 
     @mcp.tool()
+    async def list_publishing_destinations(
+        ctx: Context, limit: int = 50, start: int = 0, filter_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List available publishing destinations.
+
+        Args:
+            ctx: FastMCP context.
+            limit: Maximum destinations to return (default 50).
+            start: Row offset (default 0).
+            filter_name: Optional filter for destination names.
+        """
+        async with viya_session("list_publishing_destinations", ctx) as client:
+            items, _ = await get_paged_items(
+                "/modelRepository/destinations",
+                client,
+                limit=limit,
+                start=start,
+                filters=f"contains(name,'{filter_name}')" if filter_name else None,
+            )
+            return return_items(items, ["id", "name", "description", "destinationType"])
+
+    @mcp.tool()
+    async def register_ml_champion_model(project_id: str, ctx: Context) -> None:
+        """Register the champion model from an AutoML pipeline automation project to the Model Repository.
+
+        Args:
+            project_id: ID of the ML pipeline automation project.
+        """
+        async with viya_session("register_ml_champion_model", ctx) as client:
+            props = ml_helpers.MLRegisterProps(project_id=project_id)
+            response = await ml_helpers.ml_register_publish(props, client)
+            logger.info({response.get("message")})
+
+    @mcp.tool()
+    async def publish_ml_champion_model(
+        project_id: str, destination_name: str, ctx: Context
+    ) -> None:
+        """Publish the champion model from an AutoML pipeline automation project to the Model Repository.
+
+        Args:
+            project_id: ID of the ML pipeline automation project.
+            destination_name: Name of the destination to publish to.
+        """
+        async with viya_session("publish_ml_champion_model", ctx) as client:
+            props = ml_helpers.MLPublishProps(
+                project_id=project_id, destination_name=destination_name
+            )
+            response = await ml_helpers.ml_register_publish(props, client)
+            logger.info({response.get("message")})
+
+    @mcp.tool()
     async def run_ml_project(project_id: str, ctx: Context) -> dict[str, Any]:
         """Run an AutoML pipeline automation project.
 
@@ -739,7 +791,9 @@ def register_tools(
             items, _ = await get_paged_items(
                 "/modelRepository/models", client, limit=limit
             )
-            return return_items(items, ["id", "name", "description", "modelVersionName"])
+            return return_items(
+                items, ["id", "name", "description", "modelVersionName"]
+            )
 
     @mcp.tool()
     async def list_models_and_decisions(
@@ -1058,15 +1112,11 @@ def register_tools(
                 client,
                 params={"q": query, "start": 0, "limit": limit},
             )
-            facets = return_items(
-                data.get("items", []), ["name", "type", "indices"]
-            )
+            facets = return_items(data.get("items", []), ["name", "type", "indices"])
             return {"facets": facets}
 
     @mcp.tool()
-    async def catalog_find_instance(
-        resource_uri: str, ctx: Context
-    ) -> dict[str, Any]:
+    async def catalog_find_instance(resource_uri: str, ctx: Context) -> dict[str, Any]:
         """Resolve the catalog instance for a source-asset URI.
 
         ``catalog_search`` finds assets by free text and facets, but the
@@ -1233,9 +1283,7 @@ def register_tools(
             get_nlp_semantic_id: Derive semantic types / privacy classification
                 (informationPrivacy, nlpTerms, nlpTags) (default True).
         """
-        rtype = resource_type or (
-            "CASMEMTable" if "cas~fs~" in resource_uri else ""
-        )
+        rtype = resource_type or ("CASMEMTable" if "cas~fs~" in resource_uri else "")
         if not rtype:
             return {
                 "status": "missing_resource_type",
