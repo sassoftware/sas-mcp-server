@@ -1002,20 +1002,23 @@ def register_tools(
                 params={"q": query, "indices": indices, "start": start, "limit": limit},
                 accept=search_collection_type,
             )
-            items = [
-                {
-                    "id": it.get("id"),
-                    "type": it.get("type"),
-                    "typeLabel": it.get("typeLabel", ""),
-                    "label": it.get("label", ""),
-                    "name": it.get("name", ""),
-                    "description": it.get("description", ""),
-                    "score": it.get("score"),
-                    "resource_uri": resource_uri_of(it),
-                    "attributes": it.get("attributes", {}),
-                }
-                for it in data.get("items", [])
-            ]
+            raw_items = data.get("items", [])
+            items = return_items(
+                raw_items,
+                [
+                    "id",
+                    "type",
+                    "typeLabel",
+                    "label",
+                    "name",
+                    "description",
+                    "score",
+                    "attributes",
+                ],
+            )
+            # resource_uri is derived from the item's links, not a flat field.
+            for out, src in zip(items, raw_items, strict=True):
+                out["resource_uri"] = resource_uri_of(src)
             return {
                 "count": data.get("count", len(items)),
                 "start": data.get("start", start),
@@ -1055,14 +1058,9 @@ def register_tools(
                 client,
                 params={"q": query, "start": 0, "limit": limit},
             )
-            facets = [
-                {
-                    "name": f.get("name"),
-                    "type": f.get("type", ""),
-                    "indices": f.get("indices", []),
-                }
-                for f in data.get("items", [])
-            ]
+            facets = return_items(
+                data.get("items", []), ["name", "type", "indices"]
+            )
             return {"facets": facets}
 
     @mcp.tool()
