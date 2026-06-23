@@ -28,6 +28,7 @@ EXPECTED_TOOLS = [
     "get_castable_columns",
     "get_castable_data",
     "upload_data",
+    "upload_inline_data",
     "promote_table_to_memory",
     "list_files",
     "upload_file",
@@ -289,25 +290,27 @@ async def test_get_castable_data_request(mcp_server_with_mock_client):
 # -----------------------------------------------------------------------
 
 
-async def test_upload_data_request(mcp_server_with_mock_client):
+async def test_upload_inline_data_request(mcp_server_with_mock_client):
+    """upload_inline_data builds the same CAS multipart upload from an inline string."""
     mcp, mock_client = mcp_server_with_mock_client
-    mock_client.post.return_value.json = MagicMock(
-        return_value={
+    mock_client.post.return_value = _make_mock_response(
+        {
             "name": "MY_TABLE",
             "rowCount": 2,
             "columnCount": 2,
             "caslibName": "Public",
             "scope": "global",
-        }
+        },
+        status_code=200,
     )
     async with Client(mcp) as client:
         result = await client.call_tool(
-            "upload_data",
+            "upload_inline_data",
             {
                 "server_id": "cas1",
                 "caslib_name": "Public",
                 "table_name": "MY_TABLE",
-                "csv_data": "a,b\n1,2\n3,4",
+                "data": "a,b\n1,2\n3,4",
             },
         )
 
@@ -322,7 +325,30 @@ async def test_upload_data_request(mcp_server_with_mock_client):
     assert file_tuple[0] == "data.csv"
     assert file_tuple[2] == "text/csv"
     assert result.data["status"] == "success"
+    assert result.data["source"] == "inline"
     assert result.data["rows_uploaded"] == 2
+
+
+async def test_upload_inline_data_tsv_and_binary_guard(mcp_server_with_mock_client):
+    """upload_inline_data tsv -> tab delimiter; binary formats are refused (use upload_data)."""
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.post.return_value = _make_mock_response(
+        {"name": "T", "rowCount": 1, "columnCount": 2}, status_code=200
+    )
+    async with Client(mcp) as client:
+        tsv = await client.call_tool(
+            "upload_inline_data",
+            {"server_id": "cas1", "caslib_name": "Public", "table_name": "T",
+             "data": "a\tb\n1\t2", "data_format": "tsv"},
+        )
+        binary = await client.call_tool(
+            "upload_inline_data",
+            {"server_id": "cas1", "caslib_name": "Public", "table_name": "T",
+             "data": "x", "data_format": "xlsx"},
+        )
+    assert tsv.data["data_format"] == "tsv"
+    assert mock_client.post.call_args[1]["data"]["delimiter"] == "\t"
+    assert binary.data["status"] == "text_only"
 
 
 async def test_promote_table_to_memory_request(mcp_server_with_mock_client):
@@ -928,17 +954,163 @@ async def test_upload_data_conflict_returns_structured_error(
     mock_client.post.return_value = _make_mock_response(status_code=409)
     async with Client(mcp) as client:
         result = await client.call_tool(
-            "upload_data",
+            "upload_inline_data",
             {
                 "server_id": "cas1",
                 "caslib_name": "Public",
                 "table_name": "MY_TABLE",
-                "csv_data": "a,b\n1,2",
+                "data": "a,b\n1,2",
             },
         )
     assert result.data["status"] == "table_already_exists"
     assert result.data["table_name"] == "MY_TABLE"
     assert result.data["caslib"] == "Public"
+
+
+async def test_upload_data_from_file_path(mcp_server_with_mock_client, tmp_path):
+    """file_path: the server reads the bytes off disk; nothing inline."""
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.post.return_value = _make_mock_response(
+        {
+            "name": "MY_TABLE",
+            "rowCount": 2,
+            "columnCount": 2,
+            "caslibName": "Public",
+            "scope": "global",
+        },
+        status_code=200,
+    )
+    csv_file = tmp_path / "data.csv"
+    csv_file.write_bytes(b"a,b\n1,2\n3,4")  # exact bytes, no platform newline rewrite
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "upload_data",
+            {
+                "server_id": "cas1",
+                "caslib_name": "Public",
+                "table_name": "MY_TABLE",
+                "file_path": str(csv_file),
+            },
+        )
+    # Same CAS multipart upload, with the file's bytes read server-side.
+    kwargs = mock_client.post.call_args[1]
+    assert kwargs["data"]["tableName"] == "MY_TABLE"
+    assert kwargs["files"]["file"][1] == b"a,b\n1,2\n3,4"
+    assert result.data["status"] == "success"
+    assert result.data["source"] == "file_path"
+    assert result.data["rows_uploaded"] == 2
+
+
+async def test_upload_data_file_path_not_found(mcp_server_with_mock_client):
+    """A missing file returns a structured error and never calls Viya."""
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "upload_data",
+            {
+                "server_id": "cas1",
+                "caslib_name": "Public",
+                "table_name": "MY_TABLE",
+                "file_path": "/no/such/file.csv",
+            },
+        )
+    assert result.data["status"] == "file_not_found"
+    mock_client.post.assert_not_called()
+
+
+async def test_upload_data_requires_exactly_one_source(mcp_server_with_mock_client):
+    """Zero or multiple sources is rejected before any Viya call."""
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        none = await client.call_tool(
+            "upload_data",
+            {"server_id": "cas1", "caslib_name": "Public", "table_name": "T"},
+        )
+        both = await client.call_tool(
+            "upload_data",
+            {
+                "server_id": "cas1",
+                "caslib_name": "Public",
+                "table_name": "T",
+                "file_path": "/tmp/x.csv",
+                "url": "https://example.com/x.csv",
+            },
+        )
+    assert none.data["status"] == "invalid_source"
+    assert both.data["status"] == "invalid_source"
+    assert set(both.data["provided"]) == {"file_path", "url"}
+    mock_client.post.assert_not_called()
+
+
+async def test_upload_data_tsv_uses_tab_delimiter(mcp_server_with_mock_client, tmp_path):
+    """A .tsv file is uploaded as CSV with a tab delimiter (format auto-detected)."""
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.post.return_value = _make_mock_response(
+        {"name": "T", "rowCount": 2, "columnCount": 2}, status_code=200
+    )
+    f = tmp_path / "data.tsv"
+    f.write_bytes(b"a\tb\n1\t2\n3\t4")
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "upload_data",
+            {"server_id": "cas1", "caslib_name": "Public", "table_name": "T",
+             "file_path": str(f)},
+        )
+    data = mock_client.post.call_args[1]["data"]
+    assert data["format"] == "csv"
+    assert data["delimiter"] == "\t"
+    assert mock_client.post.call_args[1]["files"]["file"][0] == "data.tsv"
+    assert result.data["data_format"] == "tsv"
+
+
+async def test_upload_data_excel_binary_with_sheet(mcp_server_with_mock_client, tmp_path):
+    """Excel: format override, sheetName passed, sent as octet-stream binary."""
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.post.return_value = _make_mock_response(
+        {"name": "T", "rowCount": 5, "columnCount": 3}, status_code=200
+    )
+    f = tmp_path / "applicants.xlsx"
+    f.write_bytes(b"PK\x03\x04 fake xlsx bytes")
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "upload_data",
+            {"server_id": "cas1", "caslib_name": "Public", "table_name": "T",
+             "file_path": str(f), "data_format": "excel", "sheet_name": "Sheet1"},
+        )
+    kwargs = mock_client.post.call_args[1]
+    assert kwargs["data"]["format"] == "xlsx"
+    assert kwargs["data"]["sheetName"] == "Sheet1"
+    assert kwargs["data"]["containsHeaderRow"] == "true"
+    assert kwargs["files"]["file"][2] == "application/octet-stream"
+    assert result.data["data_format"] == "xlsx"
+
+
+async def test_upload_data_unknown_format(mcp_server_with_mock_client):
+    """A URL with no usable extension and no data_format is rejected up front."""
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "upload_data",
+            {"server_id": "cas1", "caslib_name": "Public", "table_name": "T",
+             "url": "https://example.com/download?id=42"},
+        )
+    assert result.data["status"] == "unknown_format"
+    mock_client.post.assert_not_called()
+
+
+async def test_upload_data_parquet_rejected_up_front(mcp_server_with_mock_client):
+    """parquet isn't an uploadTable format — fail fast with guidance, no Viya call."""
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "upload_data",
+            {"server_id": "cas1", "caslib_name": "Public", "table_name": "T",
+             "url": "https://example.com/data.parquet"},
+        )
+    assert result.data["status"] == "format_not_supported"
+    assert result.data["data_format"] == "parquet"
+    assert "path-based caslib" in result.data["message"]
+    mock_client.post.assert_not_called()
 
 
 async def test_promote_table_already_global_is_noop(mcp_server_with_mock_client):

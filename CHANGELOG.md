@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0] - 2026-06-22
+
+### Added
+- **SAS Information Catalog tools (9)** (#19) — `catalog_search`, `catalog_search_helper`, `catalog_find_instance`, `catalog_list_agents`, `catalog_run_agent`, `catalog_get_agent_history`, `catalog_run_adhoc_analysis`, `catalog_get_adhoc_analysis`, and `catalog_download_table_profile`. Metadata discovery and profiling across the whole Viya environment: search assets with the catalog grammar (free text + facets), resolve a search hit's catalog instance, submit and poll ad-hoc profiling jobs (with NLP enrichment for privacy/semantic tags), download a table's data dictionary + column profile as CSV, and list/run/inspect the discovery agents that populate the catalog. Brings the tool count to 41.
+- **`upload_inline_data` tool** — creates a *small* CAS table from inline csv/tsv text passed as a string (a lookup/mapping table the model builds on the fly, or a quick test table). This is the deliberate "data travels through the model context" path, split out from `upload_data` so the cost is explicit in the tool you pick. Brings the tool count to 42.
+
+### Changed — BREAKING
+- **`upload_data` is now reference-only and no longer takes `csv_data`.** It accepts the data by reference through exactly one of `file_path` (the server reads it off its own disk) or `url` (the server fetches it), so the payload is read **server-side** and never passes through the calling model's context. Inline text moved to the new `upload_inline_data` tool. `file_path` reads from the host the server runs on (in stdio mode, the user's machine) and can be disabled by operators with `ALLOW_LOCAL_FILE_UPLOAD=false`. Callers that passed `csv_data` should switch to `upload_inline_data` (for genuinely small tables) or write the data to a file/URL and use `upload_data`.
+
+### Changed
+- **`upload_data` accepts more formats.** Beyond CSV it ingests every format the casManagement `uploadTable` API accepts — **tsv (csv + tab delimiter), xls, xlsx (single sheet), sas7bdat, and sashdat**. The format is auto-detected from the `file_path`/`url` extension and can be overridden with `data_format`; `sheet_name` (Excel) and `contains_header_row` arguments tune the import. **parquet** is not accepted by that endpoint (confirmed against the API spec and a live `HTTP 400`) and is rejected up front with guidance to load it via a path-based caslib + `promote_table_to_memory` or convert it first.
+- `catalog_search` and `catalog_search_helper` use the shared `return_items` field projection for their result shaping (#19).
+
+### Fixed
+- **stdio token resolution is now expiry-aware (#20).** The resolver returned the first cached access token it found without checking expiry, so an expired SAS Viya CLI cache (`~/.sas`) could shadow a valid helper cache (`~/.sas-mcp-server`) and make every Viya call fail with 401. A token at or past its expiry (minus a 60s skew) is now skipped so resolution falls through to the next source; when a cache's access token is expired but it still holds a refresh token, it is exchanged for a fresh one using the client that minted it (`sas.cli` for the CLI cache, `vscode` for the helper cache), written back to that cache, and used. Refresh is best-effort — a wrong client, revoked token, or network error falls through cleanly to the next source or the device-code flow — and a missing/unparseable expiry is treated as not-expired, preserving prior behaviour.
+
 ## [1.2.0] - 2026-06-15
 
 ### Added

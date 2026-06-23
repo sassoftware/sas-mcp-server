@@ -7,7 +7,10 @@ Integration tests that call MCP tools against a real SAS Viya instance.
 Requires VIYA_ENDPOINT, VIYA_USERNAME, and VIYA_PASSWORD environment variables.
 Run with:  uv run python -m pytest -m integration
 """
+import contextlib
+import tempfile
 import time
+from pathlib import Path
 
 import pytest
 from fastmcp import Client
@@ -122,21 +125,22 @@ async def test_cas_discovery_workflow(integration_mcp_server):
 
 
 async def test_data_upload_workflow(integration_mcp_server):
-    """upload_data → promote_table_to_memory"""
+    """upload_inline_data → promote_table_to_memory"""
     async with Client(integration_mcp_server) as client:
         servers = (await client.call_tool("list_cas_servers", {})).data
         server_id = servers[0]["name"]
 
         table = f"MCP_TEST_UPLOAD_{_SUFFIX}"
         csv = "x,y,label\n1,2,A\n3,4,B\n5,6,A"
-        result = (await client.call_tool("upload_data", {
+        result = (await client.call_tool("upload_inline_data", {
             "server_id": server_id,
             "caslib_name": "Public",
             "table_name": table,
-            "csv_data": csv,
+            "data": csv,
         })).data
         assert isinstance(result, dict)
         assert result["status"] == "success"
+        assert result["source"] == "inline"
         assert result["rows_uploaded"] == 3
 
         promote_result = (await client.call_tool("promote_table_to_memory", {
@@ -145,6 +149,97 @@ async def test_data_upload_workflow(integration_mcp_server):
             "table_name": table,
         })).data
         assert isinstance(promote_result, dict)
+
+
+async def _drop_cas_table(client, server_id, caslib, table):
+    """Best-effort cleanup of a CAS table created by an upload test."""
+    code = f'proc casutil; droptable casdata="{table}" incaslib="{caslib}" quiet; run;'
+    with contextlib.suppress(Exception):  # cleanup must never fail the test
+        await client.call_tool("execute_sas_code", {"sas_code": code})
+
+
+async def test_upload_data_file_path_and_formats(integration_mcp_server):
+    """upload_data's context-free sources/formats against live CAS:
+    file_path (csv auto-detected), tsv (tab delimiter), and a data_format override.
+    """
+    async with Client(integration_mcp_server) as client:
+        server_id = (await client.call_tool("list_cas_servers", {})).data[0]["name"]
+        created = []
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                # 1. file_path source — format auto-detected from the .csv extension,
+                #    bytes read server-side (never through the model context).
+                csv_path = Path(d) / "applicants.csv"
+                csv_path.write_text("x,y,label\n1,2,A\n3,4,B\n5,6,A\n", encoding="utf-8")
+                t_csv = f"MCP_TEST_FP_{_SUFFIX}"
+                r = (await client.call_tool("upload_data", {
+                    "server_id": server_id, "caslib_name": "Public",
+                    "table_name": t_csv, "file_path": str(csv_path),
+                })).data
+                created.append(t_csv)
+                assert r["status"] == "success", r
+                assert r["source"] == "file_path"
+                assert r["data_format"] == "csv"
+                assert r["rows_uploaded"] == 3
+
+                # 2. tsv via file_path -> uploaded as csv with a tab delimiter.
+                tsv_path = Path(d) / "applicants.tsv"
+                tsv_path.write_text("x\ty\tlabel\n1\t2\tA\n3\t4\tB\n", encoding="utf-8")
+                t_tsv = f"MCP_TEST_TSV_{_SUFFIX}"
+                r2 = (await client.call_tool("upload_data", {
+                    "server_id": server_id, "caslib_name": "Public",
+                    "table_name": t_tsv, "file_path": str(tsv_path),
+                })).data
+                created.append(t_tsv)
+                assert r2["status"] == "success", r2
+                assert r2["data_format"] == "tsv"
+                assert r2["rows_uploaded"] == 2
+                assert r2["column_count"] == 3
+
+                # 3. data_format override on an extension CAS can't infer.
+                dat_path = Path(d) / "applicants.dat"
+                dat_path.write_text("x,y\n10,20\n30,40\n", encoding="utf-8")
+                t_dat = f"MCP_TEST_FMT_{_SUFFIX}"
+                r3 = (await client.call_tool("upload_data", {
+                    "server_id": server_id, "caslib_name": "Public",
+                    "table_name": t_dat, "file_path": str(dat_path),
+                    "data_format": "csv",
+                })).data
+                created.append(t_dat)
+                assert r3["status"] == "success", r3
+                assert r3["data_format"] == "csv"
+                assert r3["rows_uploaded"] == 2
+        finally:
+            for t in created:
+                await _drop_cas_table(client, server_id, "Public", t)
+
+
+async def test_upload_data_excel_format(integration_mcp_server):
+    """upload_data ingests a real .xlsx (single sheet) into CAS."""
+    openpyxl = pytest.importorskip("openpyxl")
+    async with Client(integration_mcp_server) as client:
+        server_id = (await client.call_tool("list_cas_servers", {})).data[0]["name"]
+        table = f"MCP_TEST_XLSX_{_SUFFIX}"
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                xlsx_path = Path(d) / "applicants.xlsx"
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = "Applicants"
+                ws.append(["x", "y", "label"])
+                for row in ([1, 2, "A"], [3, 4, "B"], [5, 6, "A"]):
+                    ws.append(row)
+                wb.save(xlsx_path)
+                r = (await client.call_tool("upload_data", {
+                    "server_id": server_id, "caslib_name": "Public",
+                    "table_name": table, "file_path": str(xlsx_path),
+                    "sheet_name": "Applicants",
+                })).data
+                assert r["status"] == "success", r
+                assert r["data_format"] == "xlsx"
+                assert r["rows_uploaded"] == 3
+        finally:
+            await _drop_cas_table(client, server_id, "Public", table)
 
 
 # -----------------------------------------------------------------------
@@ -390,11 +485,11 @@ async def test_ml_project_workflow(integration_mcp_server):
 
         table = f"MCP_TEST_ML_{_SUFFIX}"
         csv = "x1,x2,target\n1,2,0\n3,4,1\n5,6,0\n7,8,1\n9,10,0\n11,12,1\n13,14,0\n15,16,1"
-        await client.call_tool("upload_data", {
+        await client.call_tool("upload_inline_data", {
             "server_id": server_id,
             "caslib_name": "Public",
             "table_name": table,
-            "csv_data": csv,
+            "data": csv,
         })
 
         project = (await client.call_tool("create_ml_project", {
@@ -832,7 +927,8 @@ TOOL_COVERAGE = {
     "get_castable_info": "test_cas_discovery_workflow",
     "get_castable_columns": "test_cas_discovery_workflow",
     "get_castable_data": "test_cas_discovery_workflow",
-    "upload_data": "test_data_upload_workflow",
+    "upload_data": "test_upload_data_file_path_and_formats",
+    "upload_inline_data": "test_data_upload_workflow",
     "promote_table_to_memory": "test_promote_from_source_workflow",
     "list_files": "test_file_service_workflow",
     "upload_file": "test_file_service_workflow",
