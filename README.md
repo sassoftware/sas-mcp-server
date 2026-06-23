@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 30+ Tools spanning the Analytics Life Cycle across SAS Viya
+- 40+ Tools spanning the Analytics Life Cycle across SAS Viya
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
 - HTTP-based MCP server compatible with MCP clients
@@ -137,6 +137,17 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 #### Code Execution
 - **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable, per-user compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls — use **reset_compute_session** to start fresh.
 
+#### Data Governance (Metadata Discovery & Profiling)
+- **catalog_search**: Search the catalog for assets (tables, columns, reports, …) using the SAS catalog search grammar (free text, facets like `AssetType:Report`, ranges). Each hit carries a `resource_uri` you can hand to the matching tool (e.g. `get_report`, `get_castable_data`).
+- **catalog_search_helper**: Discover how to query the catalog — list the available facets, or the valid values for one facet — so you can build precise `catalog_search` queries.
+- **catalog_find_instance**: Resolve the catalog *instance* for a source-asset `resource_uri`, bridging a search hit to the profiling and download tools without handling an instance id by hand.
+- **catalog_run_adhoc_analysis**: Submit an ad-hoc profiling job for a table. NLP enrichment (language, sentiment, semantic IDs) is on by default, populating `informationPrivacy`, `nlpTerms`, `nlpTags`, and `mostImportantFields`.
+- **catalog_get_adhoc_analysis**: Poll a profiling job and cross-check the target instance, reporting `profile_ready` once results have landed on the asset — so a download isn't fired too early.
+- **catalog_download_table_profile**: Download a table's data dictionary and column profile as CSV, identified by either `instance_id` or `resource_uri`.
+- **catalog_list_agents**: List the catalog's discovery agents (the crawlers that populate metadata).
+- **catalog_run_agent**: Start a discovery agent run (asynchronous) to crawl its data source and refresh catalog metadata.
+- **catalog_get_agent_history**: Inspect an agent's run history — status and how much metadata each run enumerated/added/updated/removed.
+
 #### Data Discovery (CAS Management)
 - **list_cas_servers**: List available CAS servers
 - **list_caslibs**: List CAS libraries on a server
@@ -147,7 +158,8 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **get_castable_data**: Fetch sample rows from a CAS table
 
 #### Data Operations & Files
-- **upload_data**: Upload CSV data into a CAS table
+- **upload_data**: Upload a data file into a CAS table — read **server-side** so the data never passes through the model's context — from `file_path` (the server reads it off disk) or `url` (the server fetches it and converts it to the multipart upload the endpoint requires). Ingests the formats the casManagement `uploadTable` API accepts — csv, tsv (csv + tab delimiter), xls, xlsx (single sheet), sas7bdat, sashdat — auto-detected from the extension or set with `data_format`. parquet is not accepted by that endpoint and is rejected up front with guidance (load via a path-based caslib + `promote_table_to_memory`, or convert to csv/sas7bdat).
+- **upload_inline_data**: Create a *small* CAS table from inline csv/tsv text passed as a string (a lookup/mapping table the model builds on the fly, or a quick test table). The payload travels through the model's context, so it's for tiny tables only — use **upload_data** for files or anything larger.
 - **promote_table_to_memory**: Load a source table into memory at global scope (idempotent)
 - **list_files**: List files in the Viya Files Service
 - **upload_file**: Upload a file to Viya Files Service
@@ -300,7 +312,13 @@ Integration tests call every tool against a live Viya environment. They require 
 ./run_tests.sh --integration-only
 ```
 
-Every one of the 32 tools and 8 prompt templates has an integration test, enforced by the
+**Binary upload formats.** The `upload_data` Excel integration test generates its `.xlsx`
+fixture with `openpyxl`. Install the optional group so it runs instead of `importorskip`-ing:
+`uv sync --group test-formats`. (csv, tsv, and `file_path`/`data_format` coverage needs no
+extra deps.) Generating a `sas7bdat`/`sashdat` fixture requires SAS itself, so those two
+formats are covered by unit-level payload tests only, not live.
+
+Every one of the 42 tools and 8 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most
@@ -333,7 +351,7 @@ gh gist create reports/integration.xml                          # full XML as a 
 
 | File | Description |
 |---|---|
-| `tests/test_tool_payloads.py` | Payload assertions for all 32 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
+| `tests/test_tool_payloads.py` | Payload assertions for all 42 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
 | `tests/test_integration.py` | End-to-end workflow tests against a real Viya instance |
 | `tests/test_tools.py` | Unit tests for the generic Viya REST helpers in `viya_client` (`get_json`, `post_json`, `make_client`, …) |
 | `tests/test_viya_utils.py` | Unit tests for Viya compute session and job orchestration |

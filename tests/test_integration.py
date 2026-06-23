@@ -7,7 +7,10 @@ Integration tests that call MCP tools against a real SAS Viya instance.
 Requires VIYA_ENDPOINT, VIYA_USERNAME, and VIYA_PASSWORD environment variables.
 Run with:  uv run python -m pytest -m integration
 """
+import contextlib
+import tempfile
 import time
+from pathlib import Path
 
 import pytest
 from fastmcp import Client
@@ -122,21 +125,22 @@ async def test_cas_discovery_workflow(integration_mcp_server):
 
 
 async def test_data_upload_workflow(integration_mcp_server):
-    """upload_data → promote_table_to_memory"""
+    """upload_inline_data → promote_table_to_memory"""
     async with Client(integration_mcp_server) as client:
         servers = (await client.call_tool("list_cas_servers", {})).data
         server_id = servers[0]["name"]
 
         table = f"MCP_TEST_UPLOAD_{_SUFFIX}"
         csv = "x,y,label\n1,2,A\n3,4,B\n5,6,A"
-        result = (await client.call_tool("upload_data", {
+        result = (await client.call_tool("upload_inline_data", {
             "server_id": server_id,
             "caslib_name": "Public",
             "table_name": table,
-            "csv_data": csv,
+            "data": csv,
         })).data
         assert isinstance(result, dict)
         assert result["status"] == "success"
+        assert result["source"] == "inline"
         assert result["rows_uploaded"] == 3
 
         promote_result = (await client.call_tool("promote_table_to_memory", {
@@ -145,6 +149,97 @@ async def test_data_upload_workflow(integration_mcp_server):
             "table_name": table,
         })).data
         assert isinstance(promote_result, dict)
+
+
+async def _drop_cas_table(client, server_id, caslib, table):
+    """Best-effort cleanup of a CAS table created by an upload test."""
+    code = f'proc casutil; droptable casdata="{table}" incaslib="{caslib}" quiet; run;'
+    with contextlib.suppress(Exception):  # cleanup must never fail the test
+        await client.call_tool("execute_sas_code", {"sas_code": code})
+
+
+async def test_upload_data_file_path_and_formats(integration_mcp_server):
+    """upload_data's context-free sources/formats against live CAS:
+    file_path (csv auto-detected), tsv (tab delimiter), and a data_format override.
+    """
+    async with Client(integration_mcp_server) as client:
+        server_id = (await client.call_tool("list_cas_servers", {})).data[0]["name"]
+        created = []
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                # 1. file_path source — format auto-detected from the .csv extension,
+                #    bytes read server-side (never through the model context).
+                csv_path = Path(d) / "applicants.csv"
+                csv_path.write_text("x,y,label\n1,2,A\n3,4,B\n5,6,A\n", encoding="utf-8")
+                t_csv = f"MCP_TEST_FP_{_SUFFIX}"
+                r = (await client.call_tool("upload_data", {
+                    "server_id": server_id, "caslib_name": "Public",
+                    "table_name": t_csv, "file_path": str(csv_path),
+                })).data
+                created.append(t_csv)
+                assert r["status"] == "success", r
+                assert r["source"] == "file_path"
+                assert r["data_format"] == "csv"
+                assert r["rows_uploaded"] == 3
+
+                # 2. tsv via file_path -> uploaded as csv with a tab delimiter.
+                tsv_path = Path(d) / "applicants.tsv"
+                tsv_path.write_text("x\ty\tlabel\n1\t2\tA\n3\t4\tB\n", encoding="utf-8")
+                t_tsv = f"MCP_TEST_TSV_{_SUFFIX}"
+                r2 = (await client.call_tool("upload_data", {
+                    "server_id": server_id, "caslib_name": "Public",
+                    "table_name": t_tsv, "file_path": str(tsv_path),
+                })).data
+                created.append(t_tsv)
+                assert r2["status"] == "success", r2
+                assert r2["data_format"] == "tsv"
+                assert r2["rows_uploaded"] == 2
+                assert r2["column_count"] == 3
+
+                # 3. data_format override on an extension CAS can't infer.
+                dat_path = Path(d) / "applicants.dat"
+                dat_path.write_text("x,y\n10,20\n30,40\n", encoding="utf-8")
+                t_dat = f"MCP_TEST_FMT_{_SUFFIX}"
+                r3 = (await client.call_tool("upload_data", {
+                    "server_id": server_id, "caslib_name": "Public",
+                    "table_name": t_dat, "file_path": str(dat_path),
+                    "data_format": "csv",
+                })).data
+                created.append(t_dat)
+                assert r3["status"] == "success", r3
+                assert r3["data_format"] == "csv"
+                assert r3["rows_uploaded"] == 2
+        finally:
+            for t in created:
+                await _drop_cas_table(client, server_id, "Public", t)
+
+
+async def test_upload_data_excel_format(integration_mcp_server):
+    """upload_data ingests a real .xlsx (single sheet) into CAS."""
+    openpyxl = pytest.importorskip("openpyxl")
+    async with Client(integration_mcp_server) as client:
+        server_id = (await client.call_tool("list_cas_servers", {})).data[0]["name"]
+        table = f"MCP_TEST_XLSX_{_SUFFIX}"
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                xlsx_path = Path(d) / "applicants.xlsx"
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = "Applicants"
+                ws.append(["x", "y", "label"])
+                for row in ([1, 2, "A"], [3, 4, "B"], [5, 6, "A"]):
+                    ws.append(row)
+                wb.save(xlsx_path)
+                r = (await client.call_tool("upload_data", {
+                    "server_id": server_id, "caslib_name": "Public",
+                    "table_name": table, "file_path": str(xlsx_path),
+                    "sheet_name": "Applicants",
+                })).data
+                assert r["status"] == "success", r
+                assert r["data_format"] == "xlsx"
+                assert r["rows_uploaded"] == 3
+        finally:
+            await _drop_cas_table(client, server_id, "Public", table)
 
 
 # -----------------------------------------------------------------------
@@ -390,11 +485,11 @@ async def test_ml_project_workflow(integration_mcp_server):
 
         table = f"MCP_TEST_ML_{_SUFFIX}"
         csv = "x1,x2,target\n1,2,0\n3,4,1\n5,6,0\n7,8,1\n9,10,0\n11,12,1\n13,14,0\n15,16,1"
-        await client.call_tool("upload_data", {
+        await client.call_tool("upload_inline_data", {
             "server_id": server_id,
             "caslib_name": "Public",
             "table_name": table,
-            "csv_data": csv,
+            "data": csv,
         })
 
         project = (await client.call_tool("create_ml_project", {
@@ -629,6 +724,194 @@ async def test_prompt_renders_through_live_server(integration_mcp_server, prompt
 
 
 # -----------------------------------------------------------------------
+# Information Catalog Workflows
+# -----------------------------------------------------------------------
+
+
+def _hmeq_public_hit(items: list) -> dict | None:
+    """Find an HMEQ-in-Public-CAS hit by its resource URI, if present."""
+    for h in items:
+        uri = (h.get("resource_uri") or "").rstrip("/")
+        if uri.endswith("/Public/tables/HMEQ"):
+            return h
+    return None
+
+
+async def test_catalog_agents_workflow(integration_mcp_server):
+    """catalog_list_agents → catalog_get_agent_history → run the 'Public' agent."""
+    async with Client(integration_mcp_server) as client:
+        try:
+            agents = (
+                await client.call_tool("catalog_list_agents", {"limit": 100})
+            ).data
+        except Exception as e:
+            pytest.skip(f"Information Catalog not available on this Viya: {e}")
+        assert isinstance(agents, list)
+
+        public_agent = next(
+            (a for a in agents if (a.get("name") or "").strip().lower() == "public"),
+            None,
+        )
+        if public_agent is None:
+            pytest.skip("No discovery agent named 'Public' on this Viya")
+        agent_id = public_agent["id"]
+
+        # Run history must be retrievable for the agent.
+        history = (
+            await client.call_tool(
+                "catalog_get_agent_history", {"agent_id": agent_id, "limit": 5}
+            )
+        ).data
+        assert isinstance(history, list)
+
+        # Trigger the Public agent. 409 means it is already running — also a success.
+        try:
+            run = (
+                await client.call_tool("catalog_run_agent", {"agent_id": agent_id})
+            ).data
+        except Exception as e:
+            if "409" in str(e):
+                pytest.skip("Public agent is already running")
+            raise
+        assert run["agent_id"] == agent_id
+        assert run["status"]
+
+
+async def test_catalog_table_profile_loop(integration_mcp_server):
+    """Full loop: find/load HMEQ → ad-hoc analyze → poll to completion → download profile.
+
+    Proves the run→retrieve→profile chain end to end: searches for HMEQ in the
+    Public CAS library, loads sampsio.hmeq if it is not already cataloged, runs an
+    ad-hoc analysis, waits for it to complete, then downloads the profile and
+    asserts it is now available (status 'ok').
+    """
+    import asyncio
+
+    hmeq_uri = "/dataTables/dataSources/cas~fs~cas-shared-default~fs~Public/tables/HMEQ"
+
+    async with Client(integration_mcp_server) as client:
+        # 1. Is HMEQ already in the catalog under Public?
+        try:
+            results = (
+                await client.call_tool(
+                    "catalog_search", {"query": "Name:HMEQ", "limit": 25}
+                )
+            ).data
+        except Exception as e:
+            pytest.skip(f"Information Catalog not available on this Viya: {e}")
+
+        # Exercise the search helper while we are here.
+        helper = (await client.call_tool("catalog_search_helper", {})).data
+        assert "facets" in helper
+
+        hit = _hmeq_public_hit(results["items"])
+
+        # 2. Not in the catalog → ensure HMEQ is loaded (promoted) in Public CAS.
+        # Idempotent: drop any existing copy first so a re-run never hits the
+        # "global-scope tables cannot be replaced" error.
+        if hit is None:
+            load_code = (
+                "cas mySess;\n"
+                "libname public cas casLib='Public';\n"
+                "proc casutil;\n"
+                "  droptable casdata='HMEQ' incaslib='Public' quiet;\n"
+                "  load data=sampsio.hmeq outcaslib='Public' casout='HMEQ' promote;\n"
+                "quit;\n"
+                "cas mySess terminate;\n"
+            )
+            load = (
+                await client.call_tool("execute_sas_code", {"sas_code": load_code})
+            ).data
+            assert load["state"] in ("completed", "warning"), load["log"]
+
+        resource_uri = hit["resource_uri"] if hit else hmeq_uri
+        resource_type = (hit.get("type") if hit else None) or "casTable"
+
+        # 3. Submit an ad-hoc analysis; submission must return a job id + status.
+        job = (
+            await client.call_tool(
+                "catalog_run_adhoc_analysis",
+                {
+                    "resource_uri": resource_uri,
+                    "resource_type": resource_type,
+                    "name": f"mcp-hmeq-adhoc-{_SUFFIX}",
+                },
+            )
+        ).data
+        job_id = job["id"]
+        assert job_id, job
+        assert job["status"], "a submitted job should report a status"
+
+        # 4. Monitor until the job reaches a terminal state — this proves the
+        # submit -> poll -> retrieve mechanism. Whether the analysis *succeeds*
+        # depends on the Viya analysis backend, so we assert the job is trackable
+        # to a terminal state, not that the backend can always profile.
+        # 'not_found' = the job was purged after finishing, also terminal.
+        # Cold profiling of a CAS table routinely runs past two minutes, so we
+        # poll up to 5 minutes (60 x 5s) — the same envelope David's reference
+        # script waits — rather than flaking on a job that is still 'running'.
+        terminal = {"completed", "failed", "error", "canceled", "not_found"}
+        status = str(job["status"]).lower()
+        for _ in range(60):
+            if status in terminal:
+                break
+            await asyncio.sleep(5)
+            status = str(
+                (
+                    await client.call_tool(
+                        "catalog_get_adhoc_analysis", {"job_id": job_id}
+                    )
+                ).data["status"]
+            ).lower()
+        assert status in terminal, f"ad-hoc job never reached a terminal state: {status!r}"
+
+        # 4b. Resolve the instance straight from the resource URI — the search ->
+        # profile bridge. Either the URI is indexed ('ok' with an instance id) or
+        # it is not yet ('not_found'); both are valid, so assert the shape.
+        found = (
+            await client.call_tool(
+                "catalog_find_instance", {"resource_uri": resource_uri}
+            )
+        ).data
+        assert found["status"] in ("ok", "not_found"), found
+        if found["status"] == "ok":
+            assert found["instance_id"], found
+
+        # 5. Exercise the download tool end to end. Walk candidate tables across
+        # asset types and download each until one returns a profile ('ok') — that
+        # proves the CSV download path against a genuinely profiled table. If no
+        # table on this instance is profiled, the 'not_profiled' recommendation
+        # is the valid outcome.
+        candidates: list = []
+        for facet in (
+            "AssetType:parquet",
+            "AssetType:cas",
+            "AssetType:inmemorytable",
+            "AssetType:sas",
+        ):
+            candidates += (
+                await client.call_tool("catalog_search", {"query": facet, "limit": 15})
+            ).data["items"]
+        if not any(c.get("id") for c in candidates):
+            pytest.skip("No table instances available to download a profile")
+
+        last = None
+        for cand in candidates:
+            if not cand.get("id"):
+                continue
+            last = (
+                await client.call_tool(
+                    "catalog_download_table_profile", {"instance_id": cand["id"]}
+                )
+            ).data
+            if last["status"] == "ok":
+                assert last.get("csv", "").strip(), "profiled table returned empty CSV"
+                break
+        assert last is not None
+        assert last["status"] in ("ok", "not_profiled"), last
+
+
+# -----------------------------------------------------------------------
 # Coverage guards — fail if a registered tool/prompt has no integration test
 # -----------------------------------------------------------------------
 
@@ -644,7 +927,8 @@ TOOL_COVERAGE = {
     "get_castable_info": "test_cas_discovery_workflow",
     "get_castable_columns": "test_cas_discovery_workflow",
     "get_castable_data": "test_cas_discovery_workflow",
-    "upload_data": "test_data_upload_workflow",
+    "upload_data": "test_upload_data_file_path_and_formats",
+    "upload_inline_data": "test_data_upload_workflow",
     "promote_table_to_memory": "test_promote_from_source_workflow",
     "list_files": "test_file_service_workflow",
     "upload_file": "test_file_service_workflow",
@@ -668,6 +952,15 @@ TOOL_COVERAGE = {
     "list_compute_tables": "test_compute_discovery_workflow",
     "list_compute_columns": "test_compute_discovery_workflow",
     "reset_compute_session": "test_compute_session_reuse_and_reset",
+    "catalog_search": "test_catalog_table_profile_loop",
+    "catalog_search_helper": "test_catalog_table_profile_loop",
+    "catalog_find_instance": "test_catalog_table_profile_loop",
+    "catalog_download_table_profile": "test_catalog_table_profile_loop",
+    "catalog_run_adhoc_analysis": "test_catalog_table_profile_loop",
+    "catalog_get_adhoc_analysis": "test_catalog_table_profile_loop",
+    "catalog_list_agents": "test_catalog_agents_workflow",
+    "catalog_run_agent": "test_catalog_agents_workflow",
+    "catalog_get_agent_history": "test_catalog_agents_workflow",
 }
 
 

@@ -45,3 +45,6 @@ reports/
 .DS_Store
 Thumbs.db
 
+# Reference material (API specs, course samples, scratch scripts) — kept local, not tracked
+docs/
+
