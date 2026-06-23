@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 from fastmcp import Context, FastMCP
 
-from sas_mcp_server.helpers import ml_helpers
+from sas_mcp_server.helpers import auto_ml_helpers
 
 from .config import CONTEXT_NAME, VIYA_ENDPOINT
 from .viya_client import (
@@ -709,7 +709,7 @@ def register_tools(
         """
         async with viya_session("list_publishing_destinations", ctx) as client:
             items, _ = await get_paged_items(
-                "/modelRepository/destinations",
+                "/modelPublish/destinations",
                 client,
                 limit=limit,
                 start=start,
@@ -718,21 +718,27 @@ def register_tools(
             return return_items(items, ["id", "name", "description", "destinationType"])
 
     @mcp.tool()
-    async def register_ml_champion_model(project_id: str, ctx: Context) -> None:
+    async def register_ml_champion_model(
+        project_id: str, ctx: Context
+    ) -> dict[str, Any]:
         """Register the champion model from an AutoML pipeline automation project to the Model Repository.
 
         Args:
             project_id: ID of the ML pipeline automation project.
         """
         async with viya_session("register_ml_champion_model", ctx) as client:
-            props = ml_helpers.MLRegisterProps(project_id=project_id)
-            response = await ml_helpers.ml_register_publish(props, client)
-            logger.info({response.get("message")})
+            props = auto_ml_helpers.MLRegisterProps(project_id=project_id)
+            response = await auto_ml_helpers.ml_register_publish(props, client)
+            if response.get("status") == "error":
+                logger.error({response.get("message")})
+            else:
+                logger.info({response.get("message")})
+            return response
 
     @mcp.tool()
     async def publish_ml_champion_model(
         project_id: str, destination_name: str, ctx: Context
-    ) -> None:
+    ) -> dict[str, Any]:
         """Publish the champion model from an AutoML pipeline automation project to the Model Repository.
 
         Args:
@@ -740,11 +746,15 @@ def register_tools(
             destination_name: Name of the destination to publish to.
         """
         async with viya_session("publish_ml_champion_model", ctx) as client:
-            props = ml_helpers.MLPublishProps(
+            props = auto_ml_helpers.MLPublishProps(
                 project_id=project_id, destination_name=destination_name
             )
-            response = await ml_helpers.ml_register_publish(props, client)
-            logger.info({response.get("message")})
+            response = await auto_ml_helpers.ml_register_publish(props, client)
+            if response.get("status") == "error":
+                logger.error({response.get("message")})
+            else:
+                logger.info({response.get("message")})
+            return response
 
     @mcp.tool()
     async def run_ml_project(project_id: str, ctx: Context) -> dict[str, Any]:

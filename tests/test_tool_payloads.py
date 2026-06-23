@@ -16,7 +16,7 @@ import httpx
 from fastmcp import Client
 
 from conftest import _make_mock_response
-from sas_mcp_server.helpers import ml_helpers
+from sas_mcp_server.helpers import auto_ml_helpers
 
 EXPECTED_TOOLS = [
     "execute_sas_code",
@@ -774,7 +774,7 @@ async def test_list_publishing_destinations_request(mcp_server_with_mock_client)
         )
 
     url = mock_client.get.call_args[0][0]
-    assert "/modelRepository/destinations" in url
+    assert "/modelPublish/destinations" in url
     params = mock_client.get.call_args[1]["params"]
     assert params["limit"] == 25
     assert params["start"] == 10
@@ -784,7 +784,7 @@ async def test_list_publishing_destinations_request(mcp_server_with_mock_client)
 async def test_publish_ml_champion_model_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
     with patch(
-        "sas_mcp_server.tools.ml_helpers.ml_register_publish",
+        "sas_mcp_server.helpers.auto_ml_helpers.ml_register_publish",
         new_callable=AsyncMock,
     ) as mock_publish:
         mock_publish.return_value = {"message": "published"}
@@ -796,7 +796,7 @@ async def test_publish_ml_champion_model_request(mcp_server_with_mock_client):
 
     mock_publish.assert_awaited_once()
     args = mock_publish.await_args.args
-    assert isinstance(args[0], ml_helpers.MLPublishProps)
+    assert isinstance(args[0], auto_ml_helpers.MLPublishProps)
     assert args[0].project_id == "proj-123"
     assert args[0].destination_name == "MAS"
     assert args[1] is mock_client
@@ -805,7 +805,7 @@ async def test_publish_ml_champion_model_request(mcp_server_with_mock_client):
 async def test_register_ml_champion_model_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
     with patch(
-        "sas_mcp_server.tools.ml_helpers.ml_register_publish",
+        "sas_mcp_server.helpers.auto_ml_helpers.ml_register_publish",
         new_callable=AsyncMock,
     ) as mock_register:
         mock_register.return_value = {"message": "registered"}
@@ -817,7 +817,7 @@ async def test_register_ml_champion_model_request(mcp_server_with_mock_client):
 
     mock_register.assert_awaited_once()
     args = mock_register.await_args.args
-    assert isinstance(args[0], ml_helpers.MLRegisterProps)
+    assert isinstance(args[0], auto_ml_helpers.MLRegisterProps)
     assert args[0].project_id == "proj-123"
     assert args[1] is mock_client
 
@@ -1340,9 +1340,7 @@ async def test_catalog_search_request(mcp_server_with_mock_client):
                     "label": "HMEQ",
                     "score": 1.0,
                     "attributes": {"library": "Public", "rowCount": 5960},
-                    "links": [
-                        {"rel": "resource", "href": "/dataTables/x/tables/HMEQ"}
-                    ],
+                    "links": [{"rel": "resource", "href": "/dataTables/x/tables/HMEQ"}],
                 }
             ],
         }
@@ -1418,9 +1416,7 @@ async def test_catalog_run_agent_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
     mock_client.put.return_value = _make_mock_response(status_code=202, text="running")
     async with Client(mcp) as client:
-        result = (
-            await client.call_tool("catalog_run_agent", {"agent_id": "a1"})
-        ).data
+        result = (await client.call_tool("catalog_run_agent", {"agent_id": "a1"})).data
 
     url = mock_client.put.call_args[0][0]
     params = mock_client.put.call_args[1]["params"]
@@ -1742,7 +1738,9 @@ async def test_catalog_download_table_profile_by_resource_uri(
         'eq(resourceId,"/dataTables/x/tables/HMEQ")'
     )
     csv_call = next(
-        c for c in mock_client.get.call_args_list if "level" in (c[1].get("params") or {})
+        c
+        for c in mock_client.get.call_args_list
+        if "level" in (c[1].get("params") or {})
     )
     assert "eq(id,'inst1')" in csv_call[1]["params"]["filter"]
     assert result["status"] == "ok"
@@ -1750,7 +1748,9 @@ async def test_catalog_download_table_profile_by_resource_uri(
     assert "LOAN" in result["csv"]
 
 
-async def test_catalog_download_table_profile_uri_not_found(mcp_server_with_mock_client):
+async def test_catalog_download_table_profile_uri_not_found(
+    mcp_server_with_mock_client,
+):
     mcp, mock_client = mcp_server_with_mock_client
     mock_client.get.return_value = _make_mock_response({"items": []})
     async with Client(mcp) as client:
@@ -1770,15 +1770,15 @@ async def test_catalog_download_table_profile_missing_identifier(
 ):
     mcp, mock_client = mcp_server_with_mock_client
     async with Client(mcp) as client:
-        result = (
-            await client.call_tool("catalog_download_table_profile", {})
-        ).data
+        result = (await client.call_tool("catalog_download_table_profile", {})).data
 
     assert result["status"] == "missing_identifier"
     mock_client.get.assert_not_called()
 
 
-async def test_catalog_download_table_profile_invalid_level(mcp_server_with_mock_client):
+async def test_catalog_download_table_profile_invalid_level(
+    mcp_server_with_mock_client,
+):
     mcp, mock_client = mcp_server_with_mock_client
     async with Client(mcp) as client:
         result = (

@@ -11,7 +11,7 @@ import httpx
 import pytest
 from fastmcp import Client
 
-from sas_mcp_server.helpers import ml_helpers
+from sas_mcp_server.helpers import auto_ml_helpers
 from sas_mcp_server.viya_client import (
     delete_resource,
     get_json,
@@ -254,19 +254,21 @@ async def test_list_publishing_destinations_tool_request(mcp_server_with_mock_cl
 
     url = mock_client.get.call_args[0][0]
     params = mock_client.get.call_args[1]["params"]
-    assert "/modelRepository/destinations" in url
+    assert "/modelPublish/destinations" in url
     assert params["limit"] == 25
     assert params["start"] == 10
     assert params["filter"] == "contains(name,'mas')"
 
 
 @pytest.mark.asyncio
-async def test_register_ml_champion_model_tool_calls_helper(mcp_server_with_mock_client):
+async def test_register_ml_champion_model_tool_calls_helper(
+    mcp_server_with_mock_client,
+):
     """Tool should pass MLRegisterProps + client to ml_register_publish."""
     mcp, mock_client = mcp_server_with_mock_client
 
     with patch(
-        "sas_mcp_server.tools.ml_helpers.ml_register_publish",
+        "sas_mcp_server.helpers.auto_ml_helpers.ml_register_publish",
         new_callable=AsyncMock,
     ) as mock_register:
         mock_register.return_value = {"message": "registered"}
@@ -279,7 +281,7 @@ async def test_register_ml_champion_model_tool_calls_helper(mcp_server_with_mock
 
     mock_register.assert_awaited_once()
     args = mock_register.await_args.args
-    assert isinstance(args[0], ml_helpers.MLRegisterProps)
+    assert isinstance(args[0], auto_ml_helpers.MLRegisterProps)
     assert args[0].project_id == "proj-123"
     assert args[1] is mock_client
 
@@ -290,7 +292,7 @@ async def test_publish_ml_champion_model_tool_calls_helper(mcp_server_with_mock_
     mcp, mock_client = mcp_server_with_mock_client
 
     with patch(
-        "sas_mcp_server.tools.ml_helpers.ml_register_publish",
+        "sas_mcp_server.helpers.auto_ml_helpers.ml_register_publish",
         new_callable=AsyncMock,
     ) as mock_publish:
         mock_publish.return_value = {"message": "published"}
@@ -303,7 +305,7 @@ async def test_publish_ml_champion_model_tool_calls_helper(mcp_server_with_mock_
 
     mock_publish.assert_awaited_once()
     args = mock_publish.await_args.args
-    assert isinstance(args[0], ml_helpers.MLPublishProps)
+    assert isinstance(args[0], auto_ml_helpers.MLPublishProps)
     assert args[0].project_id == "proj-123"
     assert args[0].destination_name == "MAS"
     assert args[1] is mock_client

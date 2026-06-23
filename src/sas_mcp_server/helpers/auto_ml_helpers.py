@@ -39,7 +39,7 @@ async def ml_register_publish(
     url = f"{VIYA_ENDPOINT}/mlPipelineAutomation/projects/{props.project_id}/models/@championModel"
     params = httpx.QueryParams({"action": props._action.value})
     if isinstance(props, MLPublishProps):
-        params = params.update({"destinationName": props.destination_name})
+        params = params.merge({"destinationName": props.destination_name})
     headers = httpx.Headers(
         {
             "Accept": (
