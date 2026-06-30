@@ -9,7 +9,6 @@ request that would be sent to Viya — URL path, method, body structure, query
 params, and headers.  These tests use a mock httpx client (no network calls).
 """
 
-import json
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -34,7 +33,6 @@ EXPECTED_TOOLS = [
     "download_file",
     "list_reports",
     "get_report",
-    "get_report_image",
     "export_report",
     "submit_batch_job",
     "get_job_status",
@@ -442,30 +440,6 @@ async def test_get_report_request(mcp_server_with_mock_client):
 
     url = mock_client.get.call_args[0][0]
     assert "/reports/reports/rpt-456" in url
-
-
-async def test_get_report_image_request(mcp_server_with_mock_client):
-    mcp, mock_client = mcp_server_with_mock_client
-    async with Client(mcp) as client:
-        await client.call_tool(
-            "get_report_image", {"report_id": "rpt-456", "section_index": 2}
-        )
-
-    url = mock_client.post.call_args[0][0]
-    assert "/reportImages/jobs" in url
-    kwargs = mock_client.post.call_args[1]
-    body = json.loads(kwargs["content"])
-    assert body["reportUri"] == "/reports/reports/rpt-456"
-    assert body["layoutType"] == "thumbnail"
-    assert body["selectionType"] == "perSection"
-    assert body["sectionIndex"] == 2
-    assert body["size"] == "800x600"
-    assert body["renderLimit"] == 1
-    headers = kwargs["headers"]
-    assert (
-        headers["Content-Type"] == "application/vnd.sas.report.images.job.request+json"
-    )
-    assert headers["Accept"] == "application/vnd.sas.report.images.job+json"
 
 
 def _binary_export_response(content: bytes, content_type: str):

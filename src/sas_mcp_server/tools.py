@@ -801,37 +801,6 @@ def register_tools(
             return await get_json(f"/reports/reports/{report_id}", client)
 
     @mcp.tool()
-    async def get_report_image(
-        report_id: str, ctx: Context, image_type: str = "png", section_index: int = 0
-    ) -> dict[str, Any]:
-        """Render a Visual Analytics report section as an image.
-
-        Args:
-            report_id: ID of the report.
-            image_type: Image format — 'png' or 'svg' (default 'png').
-            section_index: Report section/page index (default 0).
-        """
-        async with viya_session("get_report_image", ctx) as client:
-            body = {
-                "reportUri": f"/reports/reports/{report_id}",
-                "layoutType": "thumbnail",
-                "selectionType": "perSection",
-                "sectionIndex": section_index,
-                "size": "800x600",
-                "renderLimit": 1,
-            }
-            resp = await client.post(
-                f"{VIYA_ENDPOINT}/reportImages/jobs",
-                content=json.dumps(body).encode(),
-                headers={
-                    "Content-Type": "application/vnd.sas.report.images.job.request+json",
-                    "Accept": "application/vnd.sas.report.images.job+json",
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    @mcp.tool()
     async def export_report(
         report_id: str,
         export_format: str,

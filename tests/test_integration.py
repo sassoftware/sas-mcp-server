@@ -447,7 +447,7 @@ async def test_batch_job_workflow(integration_mcp_server):
 
 
 async def test_report_workflow(integration_mcp_server):
-    """list_reports → get_report → get_report_image"""
+    """list_reports → get_report → export_report"""
     async with Client(integration_mcp_server) as client:
         reports = (await client.call_tool("list_reports", {"limit": 5})).data
         assert isinstance(reports, list)
@@ -460,14 +460,6 @@ async def test_report_workflow(integration_mcp_server):
             "report_id": report_id
         })).data
         assert isinstance(report, dict)
-
-        try:
-            image_job = (await client.call_tool("get_report_image", {
-                "report_id": report_id
-            })).data
-            assert isinstance(image_job, dict)
-        except Exception:
-            pass
 
         # export_report: the report summary is the safest universal export
         # (text, no report objects required), and the package export exercises
@@ -953,7 +945,6 @@ TOOL_COVERAGE = {
     "download_file": "test_file_service_workflow",
     "list_reports": "test_report_workflow",
     "get_report": "test_report_workflow",
-    "get_report_image": "test_report_workflow",
     "export_report": "test_report_workflow",
     "submit_batch_job": "test_batch_job_workflow",
     "get_job_status": "test_batch_job_workflow",

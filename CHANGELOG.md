@@ -8,6 +8,9 @@
 ### Changed — BREAKING
 - **`export_report_package` has been replaced by `export_report`.** The old tool hit the wrong route (`/visualAnalytics/getExportedReportPackage/{id}/package`, the operationId rather than the path) and sent `reportObjects` as a JSON body on a GET. Use `export_report` with `export_format="package"`; report objects are passed via `report_objects`.
 
+### Removed — BREAKING
+- **`get_report_image` has been removed**, superseded by `export_report`. It used the `reportImages` service to return an async *job descriptor* (not the image itself) for a report section thumbnail. `export_report` with `export_format="png"` or `"svg"` renders the whole report or a single object and returns the actual image bytes as native MCP content.
+
 ## [1.3.0] - 2026-06-22
 
 ### Added

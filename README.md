@@ -168,7 +168,6 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 #### Reports & Visualization
 - **list_reports**: List Visual Analytics reports
 - **get_report**: Get report metadata and definition
-- **get_report_image**: Render a report section as an image
 - **export_report**: export a report (or specific report objects) in any format the VA service supports — `package` (zip), `pdf`, `png`, `svg`, `csv`, `tsv`, `xlsx`, or `summary`. Text formats come back inline, `png` as image content, and binary formats (`package`/`pdf`/`xlsx`) as an embedded file with the right MIME type.
 
 #### Batch Jobs
