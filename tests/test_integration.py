@@ -12,7 +12,6 @@ import contextlib
 import tempfile
 import time
 from pathlib import Path
-from xmlrpc import client
 
 import pytest
 from fastmcp import Client
@@ -553,7 +552,8 @@ async def test_report_workflow(integration_mcp_server):
 
 
 async def test_ml_project_workflow(integration_mcp_server):
-    """create_ml_project → list_ml_projects -> register_ml_champion_model → list_publishing_destinations → publish_ml_champion_model"""
+    """create_ml_project → list_ml_projects -> register_ml_champion_model →
+    list_publishing_destinations → publish_ml_champion_model"""
     async with Client(integration_mcp_server) as client:
         servers = (await client.call_tool("list_cas_servers", {})).data
         if not servers:
