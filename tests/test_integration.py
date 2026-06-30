@@ -7,6 +7,7 @@ Integration tests that call MCP tools against a real SAS Viya instance.
 Requires VIYA_ENDPOINT, VIYA_USERNAME, and VIYA_PASSWORD environment variables.
 Run with:  uv run python -m pytest -m integration
 """
+import base64
 import contextlib
 import tempfile
 import time
@@ -23,6 +24,13 @@ from fastmcp import Client
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 _SUFFIX = str(int(time.time()))[-6:]
+
+
+def _embedded_file_bytes(result) -> int:
+    """Decode the first embedded-resource block of a tool result, return its size."""
+    block = result.content[0]
+    assert block.type == "resource", f"expected an embedded resource, got {block.type}"
+    return len(base64.b64decode(block.resource.blob))
 
 
 async def _viya_get(token: str, path: str, params: dict | None = None) -> dict:
@@ -461,23 +469,34 @@ async def test_report_workflow(integration_mcp_server):
         })).data
         assert isinstance(report, dict)
 
-        # export_report: the report summary is the safest universal export
-        # (text, no report objects required), and the package export exercises
-        # the binary/embedded-file path.
+        # export_report: retrieve the whole report in the common deliverable
+        # formats. summary is text; pdf and package come back as embedded binary
+        # files; png as image content. Each must return non-empty content.
         summary = await client.call_tool("export_report", {
             "report_id": report_id,
             "export_format": "summary",
         })
-        assert summary.content
+        assert summary.content  # text block (may be an empty summary)
 
-        try:
-            package = await client.call_tool("export_report", {
-                "report_id": report_id,
-                "export_format": "package",
-            })
-            assert package.content
-        except Exception:
-            pass
+        pdf = await client.call_tool("export_report", {
+            "report_id": report_id,
+            "export_format": "pdf",
+        })
+        assert _embedded_file_bytes(pdf) > 0
+
+        png = await client.call_tool("export_report", {
+            "report_id": report_id,
+            "export_format": "png",
+            "image_size": "1200px,800px",
+        })
+        assert png.content and png.content[0].type == "image"
+        assert len(base64.b64decode(png.content[0].data)) > 0
+
+        package = await client.call_tool("export_report", {
+            "report_id": report_id,
+            "export_format": "package",
+        })
+        assert _embedded_file_bytes(package) > 0
 
 
 # -----------------------------------------------------------------------
