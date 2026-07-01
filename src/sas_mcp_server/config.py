@@ -85,6 +85,10 @@ HOST_PORT = int(os.getenv("HOST_PORT", "8134"))
 MCP_SIGNING_KEY = os.getenv("MCP_SIGNING_KEY", "default")
 CONTEXT_NAME = os.getenv("COMPUTE_CONTEXT_NAME", "SAS Job Execution compute context")
 MCP_BASE_URL = os.getenv("MCP_BASE_URL", f"http://localhost:{HOST_PORT}")
+# Upper bound on binary export bytes returned inline as an embedded resource by
+# ``export_report``. Larger exports are refused with guidance rather than
+# streamed through the model context (default 25 MiB).
+MAX_EXPORT_INLINE_BYTES = int(os.getenv("MAX_EXPORT_INLINE_BYTES", str(25 * 1024 * 1024)))
 
 if not VIYA_ENDPOINT:
     raise ConfigError(

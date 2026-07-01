@@ -7,7 +7,9 @@ Integration tests that call MCP tools against a real SAS Viya instance.
 Requires VIYA_ENDPOINT, VIYA_USERNAME, and VIYA_PASSWORD environment variables.
 Run with:  uv run python -m pytest -m integration
 """
+import base64
 import contextlib
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -23,6 +25,13 @@ from fastmcp import Client
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 _SUFFIX = str(int(time.time()))[-6:]
+
+
+def _embedded_file_bytes(result) -> int:
+    """Decode the first embedded-resource block of a tool result, return its size."""
+    block = result.content[0]
+    assert block.type == "resource", f"expected an embedded resource, got {block.type}"
+    return len(base64.b64decode(block.resource.blob))
 
 
 async def _viya_get(token: str, path: str, params: dict | None = None) -> dict:
@@ -447,27 +456,51 @@ async def test_batch_job_workflow(integration_mcp_server):
 
 
 async def test_report_workflow(integration_mcp_server):
-    """list_reports → get_report → get_report_image"""
+    """list_reports → get_report → export_report"""
     async with Client(integration_mcp_server) as client:
         reports = (await client.call_tool("list_reports", {"limit": 5})).data
         assert isinstance(reports, list)
 
-        if not reports:
-            pytest.skip("No reports found on this Viya instance")
-
-        report_id = reports[0]["id"]
+        # Pin to TEST_REPORT_ID when set (deterministic CI); otherwise use the
+        # first report the instance returns.
+        report_id = os.getenv("TEST_REPORT_ID")
+        if not report_id:
+            if not reports:
+                pytest.skip("No reports found on this Viya instance")
+            report_id = reports[0]["id"]
         report = (await client.call_tool("get_report", {
             "report_id": report_id
         })).data
         assert isinstance(report, dict)
 
-        try:
-            image_job = (await client.call_tool("get_report_image", {
-                "report_id": report_id
-            })).data
-            assert isinstance(image_job, dict)
-        except Exception:
-            pass
+        # export_report: retrieve the whole report in the common deliverable
+        # formats. summary is text; pdf and package come back as embedded binary
+        # files; png as image content. Each must return non-empty content.
+        summary = await client.call_tool("export_report", {
+            "report_id": report_id,
+            "export_format": "summary",
+        })
+        assert summary.content  # text block (may be an empty summary)
+
+        pdf = await client.call_tool("export_report", {
+            "report_id": report_id,
+            "export_format": "pdf",
+        })
+        assert _embedded_file_bytes(pdf) > 0
+
+        png = await client.call_tool("export_report", {
+            "report_id": report_id,
+            "export_format": "png",
+            "image_size": "1200px,800px",
+        })
+        assert png.content and png.content[0].type == "image"
+        assert len(base64.b64decode(png.content[0].data)) > 0
+
+        package = await client.call_tool("export_report", {
+            "report_id": report_id,
+            "export_format": "package",
+        })
+        assert _embedded_file_bytes(package) > 0
 
 
 # -----------------------------------------------------------------------
@@ -935,7 +968,7 @@ TOOL_COVERAGE = {
     "download_file": "test_file_service_workflow",
     "list_reports": "test_report_workflow",
     "get_report": "test_report_workflow",
-    "get_report_image": "test_report_workflow",
+    "export_report": "test_report_workflow",
     "submit_batch_job": "test_batch_job_workflow",
     "get_job_status": "test_batch_job_workflow",
     "list_jobs": "test_batch_job_workflow",
