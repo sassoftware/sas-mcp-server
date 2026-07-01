@@ -301,12 +301,9 @@ Viya instance; there is no flag that "activates" them in a `not integration` run
 
 Integration tests call every tool against a live Viya environment. They require credentials, provided via `.env` or CLI arguments.
 
-For the **full** integration run (including the Excel `upload_data` test), install the
-optional format dependency first — plain `uv sync` does **not** include it:
-
-```sh
-uv sync --group test-formats
-```
+`uv sync` installs everything the integration suite needs, including `openpyxl` (used to
+build the Excel `upload_data` fixture). It lives in the `test-formats` dependency group,
+which `[tool.uv] default-groups` syncs by default — so no extra install step is required.
 
 **Full suite (unit + integration)** — reads `VIYA_ENDPOINT`, `VIYA_USERNAME`, `VIYA_PASSWORD` from `.env`:
 ```sh
@@ -341,8 +338,9 @@ uv run python -m pytest -m integration --no-cov -v   # any platform
 > when calling pytest directly (or use `--cov-fail-under=0`).
 
 **Binary upload formats.** The Excel `upload_data` integration test generates its `.xlsx`
-fixture with `openpyxl`, which lives in the optional `test-formats` group installed above.
-Without that group the test `importorskip`s (you'll see it as *skipped*, not failed). csv,
+fixture with `openpyxl`, from the `test-formats` group that `uv sync` installs by default
+(see above). If you deliberately sync without it (e.g. `uv sync --no-default-groups`), the
+test `importorskip`s — you'll see it as *skipped*, not failed. csv,
 tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
