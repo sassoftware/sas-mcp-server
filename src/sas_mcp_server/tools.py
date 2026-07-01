@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from fastmcp import Context, FastMCP
 
-from sas_mcp_server.helpers import auto_ml_helpers
+from sas_mcp_server.helpers import auto_ml_helpers, report_export_helpers
 
 from .config import CONTEXT_NAME, SSL_VERIFY, VIYA_ENDPOINT
 from .env import env_bool
@@ -258,6 +258,7 @@ async def _post_cas_upload(
     }
 
 
+# --- export_report: Visual Analytics export-format registry -------------------
 def register_tools(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
     """Register all tools on *mcp*.
 
@@ -773,35 +774,57 @@ def register_tools(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]])
             return await get_json(f"/reports/reports/{report_id}", client)
 
     @mcp.tool()
-    async def get_report_image(
-        report_id: str, ctx: Context, image_type: str = "png", section_index: int = 0
-    ) -> dict[str, Any]:
-        """Render a Visual Analytics report section as an image.
+    async def export_report(
+        report_id: str,
+        export_format: str,
+        ctx: Context,
+        report_objects: list[str] | None = None,
+        image_size: str | None = None,
+        options: dict[str, Any] | None = None,
+    ):
+        """Export a Visual Analytics report (or specific report objects) in any
+        format the VA service exposes, via its synchronous export endpoints.
+
+        Formats (``export_format``):
+          * ``package`` — full report bundle as a ``.zip`` (source files, query
+            results, and rendered content); whole report or selected objects.
+          * ``pdf`` — rendered PDF; whole report or selected objects. Pass
+            rendering overrides (e.g. ``orientation``, ``paperSize``, ``margin``,
+            ``includeCoverPage``) via ``options``.
+          * ``png`` / ``svg`` — image of the report or a single object;
+            ``image_size`` is required, e.g. ``"1200px,800px"``.
+          * ``csv`` / ``tsv`` / ``xlsx`` — the data behind a single report
+            object; exactly one object label is required.
+          * ``summary`` — the report's text summary.
 
         Args:
             report_id: ID of the report.
-            image_type: Image format — 'png' or 'svg' (default 'png').
-            section_index: Report section/page index (default 0).
+            export_format: One of package, pdf, png, svg, csv, tsv, xlsx, summary.
+            report_objects: Report object labels to export. ``package``/``pdf``
+                accept several; image and data formats accept exactly one;
+                ``summary`` accepts none. Omit to export the whole report where
+                the format allows it.
+            image_size: Required for ``png``/``svg``; format ``"<w>px,<h>px"``.
+            options: Optional ``pdf`` rendering overrides, passed through as query
+                parameters (e.g. ``{"orientation": "landscape"}``).
+
+        Returns text inline for text formats, image content for ``png``, and an
+        embedded binary file (carrying the right MIME type) for ``package`` /
+        ``pdf`` / ``xlsx``. Binary results larger than ``MAX_EXPORT_INLINE_BYTES``
+        are refused with guidance rather than streamed through the model context.
         """
-        async with viya_session("get_report_image", ctx) as client:
-            body = {
-                "reportUri": f"/reports/reports/{report_id}",
-                "layoutType": "thumbnail",
-                "selectionType": "perSection",
-                "sectionIndex": section_index,
-                "size": "800x600",
-                "renderLimit": 1,
-            }
-            resp = await client.post(
-                f"{VIYA_ENDPOINT}/reportImages/jobs",
-                content=json.dumps(body).encode(),
-                headers={
-                    "Content-Type": "application/vnd.sas.report.images.job.request+json",
-                    "Accept": "application/vnd.sas.report.images.job+json",
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
+        req = report_export_helpers.ReportExportRequest(
+            report_id=report_id,
+            export_format=export_format,
+            report_objects=report_objects,
+            image_size=image_size,
+            options=options,
+        )
+        error = report_export_helpers.validate_export_request(req)
+        if error is not None:
+            return error
+        async with viya_session("export_report", ctx) as client:
+            return await report_export_helpers.execute_export(req, client)
 
     # ------------------------------------------------------------------
     # Tier 4 — Batch Jobs & Async Execution

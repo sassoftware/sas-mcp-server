@@ -22,8 +22,8 @@ Here you can find getting articles on how to use and integrate the SAS MCP Serve
 ## Getting Started
 ### Prerequisites
 - Required
-    - [Python 3.12+](https://www.python.org/downloads) 
-    - [uv 0.8+](https://github.com/astral-sh/uv)  
+    - [Python 3.12+](https://www.python.org/downloads)
+    - [uv 0.8+](https://github.com/astral-sh/uv)
     - [SAS Viya environment](https://www.sas.com/en_us/software/viya.html) with compute service
     - Setup the Viya environment for MCP
         - See [configuration.md](/examples/configuration.md)
@@ -44,7 +44,7 @@ cd sas-mcp-server
 uv sync
 ```
 
-NOTE: This will by default create a virtual environment called .venv in the project's root directory. 
+NOTE: This will by default create a virtual environment called .venv in the project's root directory.
 
 If for some reason the virtual environment is not created, please run `uv venv` and then re-run `uv sync`.
 
@@ -168,7 +168,7 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 #### Reports & Visualization
 - **list_reports**: List Visual Analytics reports
 - **get_report**: Get report metadata and definition
-- **get_report_image**: Render a report section as an image
+- **export_report**: export a report (or specific report objects) in any format the VA service supports — `package` (zip), `pdf`, `png`, `svg`, `csv`, `tsv`, `xlsx`, or `summary`. Text formats come back inline, `png` as image content, and binary formats (`package`/`pdf`/`xlsx`) as an embedded file with the right MIME type.
 
 #### Batch Jobs
 - **submit_batch_job**: Submit a SAS job for async execution
@@ -368,8 +368,8 @@ Maintainers are accepting patches and contributions to this project. Please read
 
 ## License & Attribution
 
-Except for the the contents of the `/static` folder, this project is licensed under the [Apache 2.0 License](LICENSE). 
-Elements in the `/static` folder are owned by SAS and are not released under an open source license. 
+Except for the the contents of the `/static` folder, this project is licensed under the [Apache 2.0 License](LICENSE).
+Elements in the `/static` folder are owned by SAS and are not released under an open source license.
 SAS and all other SAS Institute Inc. product or service names are registered trademarks or trademarks of SAS Institute Inc. in the USA and other countries. ® indicates USA registration.
 
 Separate commercial licenses for SAS software (e.g., SAS Viya) are not included and are required to use these capabilities with SAS software.
@@ -389,4 +389,4 @@ This project requires the following dependencies.
 | FastMCP | [Apache License 2.0](https://github.com/PrefectHQ/fastmcp/blob/main/LICENSE) |
 | uvicorn | [BSD 3-Clause License](https://github.com/Kludex/uvicorn/blob/main/LICENSE.md) |
 | starlette | [BSD 3-Clause License](https://github.com/Kludex/starlette/blob/main/LICENSE.md)
-| httpx | [MIT License](https://github.com/projectdiscovery/httpx/blob/dev/LICENSE.md) | 
+| httpx | [MIT License](https://github.com/projectdiscovery/httpx/blob/dev/LICENSE.md) |

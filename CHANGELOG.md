@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`export_report` tool** (#18) — one tool covering every synchronous Visual Analytics report export: `package` (zip), `pdf`, `png`, `svg`, `csv`, `tsv`, `xlsx`, and `summary`, for a whole report or selected report objects. Results are returned with native MCP content types — text inline for text formats, image content for `png`, and an embedded binary file (carrying the correct MIME type, e.g. `application/zip` for packages) for `package`/`pdf`/`xlsx` — instead of a hand-rolled base64 JSON blob. Per-format input validation enforces the API's object-count and `image_size` rules; binary exports larger than `MAX_EXPORT_INLINE_BYTES` (default 25 MiB) are refused with guidance rather than streamed through the model context; and a Viya HTTP error is surfaced as a structured `export_failed` result instead of a raised exception. The format registry, validation, and request execution live in `helpers/report_export_helpers.py` so the tool stays a thin wrapper.
+
+### Changed — BREAKING
+- **`export_report_package` has been replaced by `export_report`.** The old tool hit the wrong route (`/visualAnalytics/getExportedReportPackage/{id}/package`, the operationId rather than the path) and sent `reportObjects` as a JSON body on a GET. Use `export_report` with `export_format="package"`; report objects are passed via `report_objects`.
+
+### Removed — BREAKING
+- **`get_report_image` has been removed**, superseded by `export_report`. It used the `reportImages` service to return an async *job descriptor* (not the image itself) for a report section thumbnail. `export_report` with `export_format="png"` or `"svg"` renders the whole report or a single object and returns the actual image bytes as native MCP content.
+
 ## [1.3.0] - 2026-06-22
 
 ### Added
