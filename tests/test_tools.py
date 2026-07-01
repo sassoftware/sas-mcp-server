@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from fastmcp import Client
 
+from sas_mcp_server.helpers import auto_ml_helpers
 from sas_mcp_server.viya_client import (
     delete_resource,
     get_json,
@@ -232,3 +234,78 @@ def test_return_items_no_matching_props():
     ]
     with pytest.raises(ValueError):
         return_items(items, ["name", "description"])
+
+
+# ---------------------------------------------------------------------------
+# MCP tool coverage (Tier 5 model management tools)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_publishing_destinations_tool_request(mcp_server_with_mock_client):
+    """Tool builds the expected destinations endpoint + query params."""
+    mcp, mock_client = mcp_server_with_mock_client
+
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "list_publishing_destinations",
+            {"limit": 25, "start": 10, "filter_name": "mas"},
+        )
+
+    url = mock_client.get.call_args[0][0]
+    params = mock_client.get.call_args[1]["params"]
+    assert "/modelPublish/destinations" in url
+    assert params["limit"] == 25
+    assert params["start"] == 10
+    assert params["filter"] == "contains(name,'mas')"
+
+
+@pytest.mark.asyncio
+async def test_register_ml_champion_model_tool_calls_helper(
+    mcp_server_with_mock_client,
+):
+    """Tool should pass MLRegisterProps + client to ml_register_publish."""
+    mcp, mock_client = mcp_server_with_mock_client
+
+    with patch(
+        "sas_mcp_server.helpers.auto_ml_helpers.ml_register_publish",
+        new_callable=AsyncMock,
+    ) as mock_register:
+        mock_register.return_value = {"message": "registered"}
+
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "register_ml_champion_model",
+                {"project_id": "proj-123"},
+            )
+
+    mock_register.assert_awaited_once()
+    args = mock_register.await_args.args
+    assert isinstance(args[0], auto_ml_helpers.MLRegisterProps)
+    assert args[0].project_id == "proj-123"
+    assert args[1] is mock_client
+
+
+@pytest.mark.asyncio
+async def test_publish_ml_champion_model_tool_calls_helper(mcp_server_with_mock_client):
+    """Tool should pass MLPublishProps + client to ml_register_publish."""
+    mcp, mock_client = mcp_server_with_mock_client
+
+    with patch(
+        "sas_mcp_server.helpers.auto_ml_helpers.ml_register_publish",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        mock_publish.return_value = {"message": "published"}
+
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "publish_ml_champion_model",
+                {"project_id": "proj-123", "destination_name": "MAS"},
+            )
+
+    mock_publish.assert_awaited_once()
+    args = mock_publish.await_args.args
+    assert isinstance(args[0], auto_ml_helpers.MLPublishProps)
+    assert args[0].project_id == "proj-123"
+    assert args[0].destination_name == "MAS"
+    assert args[1] is mock_client
