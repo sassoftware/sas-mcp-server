@@ -8,7 +8,10 @@ Requires VIYA_ENDPOINT, VIYA_USERNAME, and VIYA_PASSWORD environment variables.
 Run with:  uv run python -m pytest -m integration
 """
 
+import asyncio
 import contextlib
+import math
+import random
 import tempfile
 import time
 from pathlib import Path
@@ -47,6 +50,22 @@ def _dummy_input_value(var_type: str):
     if (var_type or "").lower() in ("decimal", "double", "float", "integer", "int", "bigint"):
         return 0
     return ""
+
+
+def _ml_training_csv(n: int = 600) -> str:
+    """Synthetic binary-classification data with enough rows and signal for
+    AutoML to partition and train. A handful of rows makes the pipeline fail,
+    which is why the register/publish workflow needs a real dataset here."""
+    rng = random.Random(7)
+    rows = ["x1,x2,x3,target"]
+    for _ in range(n):
+        x1 = rng.uniform(0, 10)
+        x2 = rng.uniform(0, 5)
+        x3 = rng.uniform(-3, 3)
+        p = 1 / (1 + math.exp(-(1.2 * x1 - 2.0 * x2 + 0.8 * x3 - 3.0)))
+        y = 1 if rng.random() < p else 0
+        rows.append(f"{x1:.3f},{x2:.3f},{x3:.3f},{y}")
+    return "\n".join(rows)
 
 
 # -----------------------------------------------------------------------
@@ -551,9 +570,21 @@ async def test_report_workflow(integration_mcp_server):
 # -----------------------------------------------------------------------
 
 
-async def test_ml_project_workflow(integration_mcp_server):
-    """create_ml_project → list_ml_projects -> register_ml_champion_model →
-    list_publishing_destinations → publish_ml_champion_model"""
+async def test_ml_project_workflow(integration_mcp_server, viya_token):
+    """create_ml_project (auto_run) → poll to completion → list_ml_projects →
+    register_ml_champion_model → list_publishing_destinations →
+    publish_ml_champion_model.
+
+    Registering and publishing a champion require a *completed* AutoML run — an
+    un-run project has no champion model, so the register action returns HTTP
+    500. The project is therefore created with ``auto_run=True`` and we poll its
+    state until the pipeline finishes before exercising the register/publish
+    tools. Everything created here (project, registered model, published module,
+    CAS table) is torn down at the end so repeated runs don't accumulate.
+    """
+    from sas_mcp_server.config import VIYA_ENDPOINT
+    from sas_mcp_server.viya_client import make_client
+
     async with Client(integration_mcp_server) as client:
         servers = (await client.call_tool("list_cas_servers", {})).data
         if not servers:
@@ -561,55 +592,102 @@ async def test_ml_project_workflow(integration_mcp_server):
         server_id = servers[0]["name"]
 
         table = f"MCP_TEST_ML_{_SUFFIX}"
-        csv = "x1,x2,target\n1,2,0\n3,4,1\n5,6,0\n7,8,1\n9,10,0\n11,12,1\n13,14,0\n15,16,1"
-        await client.call_tool(
-            "upload_inline_data",
-            {
-                "server_id": server_id,
-                "caslib_name": "Public",
-                "table_name": table,
-                "data": csv,
-            },
-        )
-
-        project = (
+        project_id = registered_href = published_href = None
+        try:
             await client.call_tool(
-                "create_ml_project",
+                "upload_inline_data",
                 {
-                    "project_name": f"MCP Integration Test {_SUFFIX}",
                     "server_id": server_id,
                     "caslib_name": "Public",
                     "table_name": table,
-                    "target_variable": "target",
-                    "prediction_type": "binary",
-                    "target_event_level": "1",
-                    "auto_run": False,
+                    "data": _ml_training_csv(),
                 },
             )
-        ).data
-        assert isinstance(project, dict)
-        assert "id" in project
 
-        projects = (await client.call_tool("list_ml_projects", {"limit": 100})).data
-        assert isinstance(projects, list)
-        found = any(p["id"] == project["id"] for p in projects)
-        assert found, "Created ML project not found in listing"
+            project = (
+                await client.call_tool(
+                    "create_ml_project",
+                    {
+                        "project_name": f"MCP Integration Test {_SUFFIX}",
+                        "server_id": server_id,
+                        "caslib_name": "Public",
+                        "table_name": table,
+                        "target_variable": "target",
+                        "prediction_type": "binary",
+                        "target_event_level": "1",
+                        "auto_run": True,
+                    },
+                )
+            ).data
+            assert isinstance(project, dict)
+            assert "id" in project, project
+            project_id = project["id"]
 
-        registered = (await client.call_tool("register_ml_champion_model", {"project_id": project["id"]})).data
-        assert isinstance(registered, dict)
-        assert "id" in registered
+            # list_ml_projects is paginated and unordered, and a busy Viya can
+            # hold hundreds of projects — so exercise the tool but don't require
+            # the just-created project to appear on the page (cf. the CAS
+            # discovery workflow's stance on paginated listings).
+            projects = (await client.call_tool("list_ml_projects", {"limit": 100})).data
+            assert isinstance(projects, list)
 
-        destinations = (await client.call_tool("list_publishing_destinations", {"filter_name": "mas"})).data
-        assert isinstance(destinations, list)
+            # A champion model only exists once the AutoML pipeline has finished,
+            # so poll the project state until it reaches a terminal state.
+            deadline = time.time() + 600
+            state = None
+            async with make_client(viya_token) as raw:
+                while time.time() < deadline:
+                    resp = await raw.get(
+                        f"{VIYA_ENDPOINT}/mlPipelineAutomation/projects/{project_id}",
+                        headers={"Accept": "application/json"},
+                    )
+                    resp.raise_for_status()
+                    state = resp.json().get("state")
+                    if state in ("completed", "failed", "error"):
+                        break
+                    await asyncio.sleep(15)
+            if state != "completed":
+                pytest.skip(f"AutoML pipeline did not complete in time (state={state})")
 
-        published = (
-            await client.call_tool(
-                "publish_ml_champion_model",
-                {"project_id": project["id"], "destination_name": destinations[0]["name"] if destinations else "mas"},
+            # register: the action response carries a message and a link to the
+            # newly registered model (no top-level id).
+            registered = (await client.call_tool("register_ml_champion_model", {"project_id": project_id})).data
+            assert isinstance(registered, dict)
+            registered_href = next(
+                (ln["href"] for ln in registered.get("links", []) if ln.get("rel") == "registeredModel"),
+                None,
             )
-        ).data
-        assert isinstance(published, dict)
-        assert "id" in published
+            assert registered_href, registered
+
+            destinations = (await client.call_tool("list_publishing_destinations", {"filter_name": "mas"})).data
+            assert isinstance(destinations, list)
+
+            # publish: response links to the published model (again, no id).
+            published = (
+                await client.call_tool(
+                    "publish_ml_champion_model",
+                    {
+                        "project_id": project_id,
+                        "destination_name": destinations[0]["name"] if destinations else "maslocal",
+                    },
+                )
+            ).data
+            assert isinstance(published, dict)
+            published_href = next(
+                (ln["href"] for ln in published.get("links", []) if ln.get("rel") == "publishedModel"),
+                None,
+            )
+            assert published_href, published
+        finally:
+            # Best-effort teardown; cleanup must never fail the test.
+            async with make_client(viya_token) as raw:
+                for href in (published_href, registered_href):
+                    if href:
+                        with contextlib.suppress(Exception):
+                            await raw.delete(f"{VIYA_ENDPOINT}{href}")
+                if project_id:
+                    with contextlib.suppress(Exception):
+                        await raw.delete(f"{VIYA_ENDPOINT}/mlPipelineAutomation/projects/{project_id}")
+            await _drop_cas_table(client, server_id, "Public", table)
 
 
 # -----------------------------------------------------------------------
@@ -1038,6 +1116,9 @@ TOOL_COVERAGE = {
     "get_job_log": "test_batch_job_workflow",
     "list_ml_projects": "test_ml_project_workflow",
     "create_ml_project": "test_ml_project_workflow",
+    "register_ml_champion_model": "test_ml_project_workflow",
+    "list_publishing_destinations": "test_ml_project_workflow",
+    "publish_ml_champion_model": "test_ml_project_workflow",
     "run_ml_project": "test_run_ml_project_workflow",
     "list_registered_models": "test_scoring_workflow",
     "list_models_and_decisions": "test_scoring_workflow",

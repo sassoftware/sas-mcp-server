@@ -1025,10 +1025,7 @@ def register_tools(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]])
         """
         async with viya_session("register_ml_champion_model", ctx) as client:
             props = auto_ml_helpers.MLRegisterProps(project_id=project_id)
-            response = await auto_ml_helpers.ml_register_publish(props, client)
-            if response.get("status") == "error":
-                return {"status": "error", "message": response.get("message")}
-            return response
+            return await auto_ml_helpers.ml_register_publish(props, client)
 
     @mcp.tool()
     async def publish_ml_champion_model(project_id: str, destination_name: str, ctx: Context) -> dict[str, Any]:
@@ -1040,10 +1037,7 @@ def register_tools(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]])
         """
         async with viya_session("publish_ml_champion_model", ctx) as client:
             props = auto_ml_helpers.MLPublishProps(project_id=project_id, destination_name=destination_name)
-            response = await auto_ml_helpers.ml_register_publish(props, client)
-            if response.get("status") == "error":
-                return {"status": "error", "message": response.get("message")}
-            return response
+            return await auto_ml_helpers.ml_register_publish(props, client)
 
     @mcp.tool()
     async def run_ml_project(project_id: str, ctx: Context) -> dict[str, Any]:
