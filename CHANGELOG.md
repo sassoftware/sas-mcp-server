@@ -2,7 +2,10 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-02
+
 ### Added
+- **AutoML champion model register/publish tools (3)** (#22) — `register_ml_champion_model` registers an AutoML pipeline automation project's champion model to the Model Repository; `publish_ml_champion_model` publishes it to a scoring destination; `list_publishing_destinations` lists the available destinations to publish to. All three drive the `mlPipelineAutomation` champion-model action endpoint (`register`/`publish`), shared via `helpers/auto_ml_helpers.py`. Brings the tool count to 45.
 - **`export_report` tool** (#18) — one tool covering every synchronous Visual Analytics report export: `package` (zip), `pdf`, `png`, `svg`, `csv`, `tsv`, `xlsx`, and `summary`, for a whole report or selected report objects. Results are returned with native MCP content types — text inline for text formats, image content for `png`, and an embedded binary file (carrying the correct MIME type, e.g. `application/zip` for packages) for `package`/`pdf`/`xlsx` — instead of a hand-rolled base64 JSON blob. Per-format input validation enforces the API's object-count and `image_size` rules; binary exports larger than `MAX_EXPORT_INLINE_BYTES` (default 25 MiB) are refused with guidance rather than streamed through the model context; and a Viya HTTP error is surfaced as a structured `export_failed` result instead of a raised exception. The format registry, validation, and request execution live in `helpers/report_export_helpers.py` so the tool stays a thin wrapper.
 
 ### Changed — BREAKING
