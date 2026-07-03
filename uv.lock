@@ -1277,6 +1277,7 @@ name = "sas-mcp-server"
 version = "1.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "pydantic" },
@@ -1298,6 +1299,7 @@ test-formats = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.0.0" },
     { name = "fastmcp", specifier = ">=3.0.0,<4.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.12.4" },
