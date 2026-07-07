@@ -54,7 +54,7 @@ TIER_TITLES: dict[int, str] = {
     4: "Batch Jobs & Async Execution",
     5: "Automated Machine Learning",
     6: "Model Management & Scoring",
-    7: "Decisioning (Business Rules & Intelligent Decisioning)",
+    7: "Decisioning (SAS Intelligent Decisioning)",
 }
 
 ALL_TIERS: frozenset[int] = frozenset(_TIER_REGISTRARS)
