@@ -156,3 +156,18 @@ def return_items(
         result = {prop: item.get(prop, "") for prop in prop_selection}
         results.append(result)
     return results
+
+
+def contains_filter(value: str | None, field: str = "name") -> str | None:
+    """Build a Viya ``contains(field,'value')`` substring filter, or ``None``.
+
+    Returns ``None`` for an empty *value*, so callers can pass the result
+    straight to :func:`get_paged_items`' ``filters`` argument. Single quotes in
+    *value* are doubled per the Viya filter string-literal escaping rules, so a
+    value like ``O'Brien`` produces a valid filter instead of a malformed one
+    that Viya rejects with HTTP 400.
+    """
+    if not value:
+        return None
+    escaped = value.replace("'", "''")
+    return f"contains({field},'{escaped}')"

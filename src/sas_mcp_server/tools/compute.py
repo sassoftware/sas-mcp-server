@@ -9,7 +9,7 @@ from typing import Any
 from fastmcp import Context, FastMCP
 
 from ..config import CONTEXT_NAME
-from ..viya_client import get_paged_items, logger, make_client, return_items
+from ..viya_client import contains_filter, get_paged_items, logger, make_client, return_items
 from ..viya_utils import reset_cached_session, run_one_snippet
 from ._common import make_session_helpers
 
@@ -51,7 +51,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
     ) -> list[dict[str, Any]]:
         """List available compute contexts on the Viya environment."""
         async with viya_session("list_compute_contexts", ctx) as client:
-            filters = f"contains(name,'{filter_name}')" if filter_name else None
+            filters = contains_filter(filter_name)
             items, _ = await get_paged_items("/compute/contexts", client, limit=limit, start=start, filters=filters)
             return return_items(items, ["name", "description"])
 

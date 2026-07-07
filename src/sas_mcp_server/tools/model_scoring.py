@@ -8,7 +8,7 @@ from typing import Any
 
 from fastmcp import Context, FastMCP
 
-from ..viya_client import get_json, get_paged_items, post_json, return_items
+from ..viya_client import contains_filter, get_json, get_paged_items, post_json, return_items
 from ._common import make_session_helpers
 
 
@@ -46,7 +46,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 client,
                 limit=limit,
                 start=start,
-                filters=f"contains(name,'{filter_name}')" if filter_name else None,
+                filters=contains_filter(filter_name),
             )
             return return_items(items, ["id", "name", "description", "destinationType"])
 

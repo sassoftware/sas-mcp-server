@@ -13,7 +13,7 @@ from fastmcp import Context, FastMCP
 
 from ..config import SSL_VERIFY, VIYA_ENDPOINT
 from ..env import env_bool
-from ..viya_client import get_json, get_paged_items, return_items
+from ..viya_client import contains_filter, get_json, get_paged_items, return_items
 from ._common import make_session_helpers
 
 
@@ -448,7 +448,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             limit: Maximum files to return (default 50).
             filter_name: Optional name filter (substring match).
         """
-        filters = f"contains(name,'{filter_name}')" if filter_name else None
+        filters = contains_filter(filter_name)
         async with viya_session("list_files", ctx) as client:
             items, _ = await get_paged_items("/files/files", client, limit=limit, filters=filters)
             return return_items(items, ["id", "name", "contentType", "size"])

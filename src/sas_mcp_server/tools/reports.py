@@ -9,7 +9,7 @@ from typing import Any
 from fastmcp import Context, FastMCP
 
 from ..helpers import report_export_helpers
-from ..viya_client import get_json, get_paged_items, return_items
+from ..viya_client import contains_filter, get_json, get_paged_items, return_items
 from ._common import make_session_helpers
 
 
@@ -26,7 +26,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             limit: Maximum reports to return (default 50).
             filter_name: Optional name filter (substring match).
         """
-        filters = f"contains(name,'{filter_name}')" if filter_name else None
+        filters = contains_filter(filter_name)
         async with viya_session("list_reports", ctx) as client:
             items, _ = await get_paged_items("/reports/reports", client, limit=limit, filters=filters)
             return return_items(items, ["id", "name", "description", "createdBy"])

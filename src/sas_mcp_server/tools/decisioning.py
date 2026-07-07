@@ -11,7 +11,7 @@ from typing import Any
 from fastmcp import Context, FastMCP
 
 from ..config import VIYA_ENDPOINT
-from ..viya_client import delete_resource, get_json, get_paged_items, post_json, put_json, return_items
+from ..viya_client import contains_filter, delete_resource, get_json, get_paged_items, post_json, put_json, return_items
 from ._common import make_session_helpers
 
 
@@ -112,7 +112,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             limit: Maximum number of results to return (default 20).
             filter_name: Optional substring to match against rule set names.
         """
-        filters = f"contains(name,'{filter_name}')" if filter_name else None
+        filters = contains_filter(filter_name)
         async with viya_session("list_business_rulesets", ctx) as client:
             items, _ = await get_paged_items("/businessRules/ruleSets", client, limit=limit, filters=filters)
             return return_items(items, ["id", "name", "status"])
@@ -383,7 +383,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             limit: Maximum number of results to return (default 20).
             filter_name: Optional substring to match against decision names.
         """
-        filters = f"contains(name,'{filter_name}')" if filter_name else None
+        filters = contains_filter(filter_name)
         async with viya_session("list_decision_flows", ctx) as client:
             items, _ = await get_paged_items("/decisions/flows", client, limit=limit, filters=filters)
             return return_items(items, ["id", "name", "majorRevision"])

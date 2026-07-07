@@ -10,7 +10,7 @@ import httpx
 from fastmcp import Context, FastMCP
 
 from ..config import VIYA_ENDPOINT
-from ..viya_client import get_json, get_paged_items, post_json, return_items
+from ..viya_client import contains_filter, get_json, get_paged_items, post_json, return_items
 from ._common import make_session_helpers
 
 
@@ -204,7 +204,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         """
         params: dict[str, Any] = {"start": start, "limit": limit}
         if filter_name:
-            params["filter"] = f"contains(name,'{filter_name}')"
+            params["filter"] = contains_filter(filter_name)
         async with viya_session("catalog_list_agents", ctx) as client:
             data = await get_json(f"{catalog}/bots", client, params=params)
             return return_items(
@@ -540,7 +540,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             filter_name: Optional name filter (substring match).
         """
         async with compute_tool_session("list_compute_libraries", ctx, compute_context_name) as (client, session_id):
-            filters = f"contains(name,'{filter_name}')" if filter_name else None
+            filters = contains_filter(filter_name)
             items, _ = await get_paged_items(
                 f"/compute/sessions/{session_id}/data",
                 client,
@@ -573,7 +573,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             filter_name: Optional name filter (substring match).
         """
         async with compute_tool_session("list_compute_tables", ctx, compute_context_name) as (client, session_id):
-            filters = f"contains(name,'{filter_name}')" if filter_name else None
+            filters = contains_filter(filter_name)
             items, _ = await get_paged_items(
                 f"/compute/sessions/{session_id}/data/{library_name}",
                 client,
@@ -606,7 +606,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             filter_name: Optional name filter (substring match).
         """
         async with compute_tool_session("list_compute_columns", ctx, compute_context_name) as (client, session_id):
-            filters = f"contains(name,'{filter_name}')" if filter_name else None
+            filters = contains_filter(filter_name)
             items, _ = await get_paged_items(
                 f"/compute/sessions/{session_id}/data/{library_name}/{table_name}/columns",
                 client,

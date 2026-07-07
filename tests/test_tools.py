@@ -14,6 +14,7 @@ from fastmcp import Client
 
 from sas_mcp_server.helpers import auto_ml_helpers
 from sas_mcp_server.viya_client import (
+    contains_filter,
     delete_resource,
     get_json,
     get_paged_items,
@@ -299,6 +300,28 @@ def test_return_items_no_matching_props():
     ]
     with pytest.raises(ValueError):
         return_items(items, ["name", "description"])
+
+
+# ---------------------------------------------------------------------------
+# contains_filter
+# ---------------------------------------------------------------------------
+
+
+def test_contains_filter_none_and_empty():
+    """An empty/None value yields None so it can pass straight to get_paged_items."""
+    assert contains_filter(None) is None
+    assert contains_filter("") is None
+
+
+def test_contains_filter_basic():
+    """Builds a contains(field,'value') filter, defaulting the field to name."""
+    assert contains_filter("sales") == "contains(name,'sales')"
+    assert contains_filter("sales", field="displayName") == "contains(displayName,'sales')"
+
+
+def test_contains_filter_escapes_single_quotes():
+    """A single quote is doubled so the Viya filter stays well-formed (no HTTP 400)."""
+    assert contains_filter("O'Brien") == "contains(name,'O''Brien')"
 
 
 # ---------------------------------------------------------------------------
