@@ -531,12 +531,14 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             # from the initial POST response (properties is {} for a moment),
             # so re-fetch the model until masModules[0].jobUri appears. Check
             # what's already in hand before sleeping so poll_timeout=0 still
-            # returns any immediately-available result.
+            # returns any immediately-available result. Re-fetching needs the
+            # publish record's id; if the POST response carried none, stop here
+            # and return a pending record rather than GET .../models/None (404).
             job_uri = ""
             while True:
                 mas_modules = (published.get("properties") or {}).get("masModules") or []
                 job_uri = mas_modules[0].get("jobUri", "") if mas_modules else ""
-                if job_uri or elapsed >= poll_timeout:
+                if job_uri or model_id is None or elapsed >= poll_timeout:
                     break
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval

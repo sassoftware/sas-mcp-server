@@ -1460,6 +1460,33 @@ async def test_publish_decision_flow_polls_model_then_job(mcp_server_with_mock_c
     assert result["moduleState"] == "completed"
 
 
+async def test_publish_decision_flow_pending_when_post_returns_no_id(mcp_server_with_mock_client):
+    """A publish POST response with no 'id' must not trigger GET /modelPublish/models/None.
+
+    Instead the tool stops polling and returns a graceful pending record.
+    """
+    mcp, mock_client = mcp_server_with_mock_client
+    # POST record carries no 'id' and no masModules jobUri yet.
+    mock_client.post.return_value.json = MagicMock(
+        return_value={"items": [{"state": "pending", "properties": {}}]}
+    )
+    code_resp = _make_mock_response(text="package X;")
+    mock_client.get.side_effect = [code_resp]
+
+    with patch("sas_mcp_server.tools.decisioning.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        async with Client(mcp) as client:
+            result = (await client.call_tool(
+                "publish_decision_flow",
+                {"decision_id": "dec-1", "revision_id": "rev-1", "publish_name": "P", "poll_timeout": 5},
+            )).data
+
+    # Only the DS2 code fetch happened — never re-fetched the model by a None id.
+    assert len(mock_client.get.call_args_list) == 1
+    assert "/decisions/flows/dec-1/revisions/rev-1/code" in mock_client.get.call_args_list[0].args[0]
+    assert result["moduleState"] == "pending"
+    mock_sleep.assert_not_awaited()
+
+
 async def test_create_decision_flow_rejects_step_missing_key(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
     raised = False
