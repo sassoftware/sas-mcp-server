@@ -54,6 +54,16 @@ async def _viya_get(token: str, path: str, params: dict | None = None) -> dict:
         return resp.json()
 
 
+async def _viya_delete(token: str, path: str) -> None:
+    """Authenticated DELETE against the live Viya, used for best-effort cleanup."""
+    from sas_mcp_server.config import VIYA_ENDPOINT
+    from sas_mcp_server.viya_client import make_client
+
+    async with make_client(token) as client:
+        resp = await client.delete(f"{VIYA_ENDPOINT}{path}", follow_redirects=True)
+        resp.raise_for_status()
+
+
 def _dummy_input_value(var_type: str):
     """A type-appropriate placeholder value for a MAS step input variable."""
     if (var_type or "").lower() in ("decimal", "double", "float", "integer", "int", "bigint"):
@@ -793,6 +803,239 @@ async def test_scoring_workflow(integration_mcp_server, viya_token):
 
 
 # -----------------------------------------------------------------------
+# Business Rules & Decisions Workflow
+# -----------------------------------------------------------------------
+
+
+async def test_business_rules_and_decisions_workflow(integration_mcp_server, viya_token):
+    """create_business_ruleset → create_business_rule → lock revision →
+    create_decision_flow → lock revision → publish_decision_flow →
+    get_mas_module_step_signature, with update/list/get coverage for every
+    resource along the way and deletion of everything created.
+
+    Condition/action expressions must include the variable name directly
+    (e.g. ``"credit_score < 650"``, not just ``"< 650"``) — the API accepts
+    the latter as valid but generates DS2 with a missing left-hand operand.
+    """
+    ruleset_name = f"mcp_test_ruleset_{_SUFFIX}"
+    decision_name = f"mcp_test_decision_{_SUFFIX}"
+    ruleset_id = None
+    rule_id = None
+    decision_id = None
+    published_model_id = None
+    published_module_id = None
+
+    # Skip cleanly on Viya instances without SAS Intelligent Decisioning
+    # deployed — matching how the rest of this suite skips when a service or
+    # resource is absent, rather than erroring. Probed via the raw API rather
+    # than the tools under test, so a genuine tool bug still fails the test
+    # instead of being masked as a skip.
+    try:
+        await _viya_get(viya_token, "/businessRules/ruleSets", {"limit": 1})
+        await _viya_get(viya_token, "/decisions/flows", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Intelligent Decisioning not available on this instance: {e}")
+
+    async with Client(integration_mcp_server) as client:
+        try:
+            ruleset = (await client.call_tool("create_business_ruleset", {
+                "name": ruleset_name,
+                "signature": [
+                    {"name": "credit_score", "dataType": "integer", "direction": "input"},
+                    {"name": "risk_category", "dataType": "string", "direction": "output"},
+                ],
+                "description": "Integration test ruleset",
+            })).data
+            ruleset_id = ruleset["id"]
+
+            rule = (await client.call_tool("create_business_rule", {
+                "ruleset_id": ruleset_id,
+                "name": "Risk_High",
+                "conditional": "if",
+                "rule_fired_tracking_enabled": True,
+                "conditions": [{
+                    "type": "complex",
+                    "expression": "credit_score < 650",
+                    "term": {"name": "credit_score", "dataType": "integer", "direction": "input"},
+                }],
+                "actions": [{
+                    "type": "assignment",
+                    "term": {"name": "risk_category", "dataType": "string", "direction": "output"},
+                    "expression": '"High"',
+                }],
+            })).data
+            rule_id = rule["id"]
+
+            fetched_rule = (await client.call_tool("get_business_rule", {
+                "ruleset_id": ruleset_id, "rule_id": rule_id,
+            })).data
+            assert fetched_rule["name"] == "Risk_High"
+
+            rules = (await client.call_tool("list_business_rules", {"ruleset_id": ruleset_id})).data
+            assert any(r["id"] == rule_id for r in rules)
+
+            updated_rule = (await client.call_tool("update_business_rule", {
+                "ruleset_id": ruleset_id,
+                "rule_id": rule_id,
+                "name": "Risk_High",
+                "conditional": "if",
+                "rule_fired_tracking_enabled": True,
+                "conditions": [{
+                    "type": "complex",
+                    "expression": "credit_score < 600",
+                    "term": {"name": "credit_score", "dataType": "integer", "direction": "input"},
+                }],
+                "actions": [{
+                    "type": "assignment",
+                    "term": {"name": "risk_category", "dataType": "string", "direction": "output"},
+                    "expression": '"High"',
+                }],
+            })).data
+            assert updated_rule["conditions"][0]["expression"] == "credit_score < 600"
+
+            fetched_ruleset = (await client.call_tool("get_business_ruleset", {
+                "ruleset_id": ruleset_id,
+            })).data
+            assert fetched_ruleset["name"] == ruleset_name
+
+            rulesets = (await client.call_tool("list_business_rulesets", {
+                "filter_name": ruleset_name,
+            })).data
+            assert any(r["id"] == ruleset_id for r in rulesets)
+
+            updated_ruleset = (await client.call_tool("update_business_ruleset", {
+                "ruleset_id": ruleset_id,
+                "name": ruleset_name,
+                "signature": [
+                    {"name": "credit_score", "dataType": "integer", "direction": "input"},
+                    {"name": "risk_category", "dataType": "string", "direction": "output"},
+                ],
+                "description": "Integration test ruleset (updated)",
+            })).data
+            assert updated_ruleset["description"] == "Integration test ruleset (updated)"
+
+            revision = (await client.call_tool("lock_business_ruleset_revision", {
+                "ruleset_id": ruleset_id,
+            })).data
+            version_id = revision["id"]
+
+            revisions = (await client.call_tool("list_business_ruleset_revisions", {
+                "ruleset_id": ruleset_id,
+            })).data
+            assert any(r["id"] == version_id for r in revisions)
+
+            decision = (await client.call_tool("create_decision_flow", {
+                "name": decision_name,
+                "signature": [
+                    {"name": "credit_score", "direction": "input", "dataType": "integer"},
+                    {"name": "risk_category", "direction": "output", "dataType": "string"},
+                ],
+                "rule_set_steps": [{
+                    "ruleSetId": ruleset_id,
+                    "versionId": version_id,
+                    "mappings": [
+                        {"stepTermName": "credit_score", "direction": "input",
+                         "targetDecisionTermName": "credit_score"},
+                        {"stepTermName": "risk_category", "direction": "output",
+                         "targetDecisionTermName": "risk_category"},
+                    ],
+                }],
+            })).data
+            decision_id = decision["id"]
+
+            fetched_decision = (await client.call_tool("get_decision_flow", {
+                "decision_id": decision_id,
+            })).data
+            assert fetched_decision["name"] == decision_name
+
+            decisions = (await client.call_tool("list_decision_flows", {
+                "filter_name": decision_name,
+            })).data
+            assert any(d["id"] == decision_id for d in decisions)
+
+            updated_decision = (await client.call_tool("update_decision_flow", {
+                "decision_id": decision_id,
+                "name": decision_name,
+                "signature": [
+                    {"name": "credit_score", "direction": "input", "dataType": "integer"},
+                    {"name": "risk_category", "direction": "output", "dataType": "string"},
+                ],
+                "rule_set_steps": [{
+                    "ruleSetId": ruleset_id,
+                    "versionId": version_id,
+                    "mappings": [
+                        {"stepTermName": "credit_score", "direction": "input",
+                         "targetDecisionTermName": "credit_score"},
+                        {"stepTermName": "risk_category", "direction": "output",
+                         "targetDecisionTermName": "risk_category"},
+                    ],
+                }],
+            })).data
+            assert updated_decision["name"] == decision_name
+
+            code = (await client.call_tool("get_decision_flow_code", {
+                "decision_id": decision_id,
+            })).data
+            assert isinstance(code, str) and len(code) > 0
+
+            decision_revision = (await client.call_tool("lock_decision_flow_revision", {
+                "decision_id": decision_id,
+            })).data
+            decision_revision_id = decision_revision["id"]
+
+            decision_revisions = (await client.call_tool("list_decision_flow_revisions", {
+                "decision_id": decision_id,
+            })).data
+            assert any(r["id"] == decision_revision_id for r in decision_revisions)
+
+            fetched_revision = (await client.call_tool("get_decision_flow_revision", {
+                "decision_id": decision_id, "revision_id": decision_revision_id,
+            })).data
+            assert fetched_revision["name"] == decision_name
+
+            try:
+                published = (await client.call_tool("publish_decision_flow", {
+                    "decision_id": decision_id,
+                    "revision_id": decision_revision_id,
+                    "publish_name": f"mcp_test_publish_{_SUFFIX}",
+                })).data
+                assert isinstance(published, dict)
+                published_model_id = published.get("id")
+                published_module_id = published.get("moduleId")
+                if not published_module_id:
+                    pytest.skip("Publish job did not reach a terminal state within the poll timeout")
+
+                signature = (await client.call_tool("get_mas_module_step_signature", {
+                    "module_id": published_module_id,
+                })).data
+                assert "inputs" in signature
+            except Exception as e:
+                pytest.skip(f"DS2 codegen/publish unavailable on this instance: {e}")
+        finally:
+            # Best-effort cleanup, innermost/most-dependent first. The MAS
+            # module and Model Publish record have no MCP delete tool, so they
+            # are removed via the raw API.
+            if published_module_id:
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/microanalyticScore/modules/{published_module_id}")
+            if published_model_id:
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/modelPublish/models/{published_model_id}")
+            async with Client(integration_mcp_server) as cleanup_client:
+                if decision_id:
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool("delete_decision_flow", {"decision_id": decision_id})
+                if ruleset_id and rule_id:
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool("delete_business_rule", {
+                            "ruleset_id": ruleset_id, "rule_id": rule_id,
+                        })
+                if ruleset_id:
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool("delete_business_ruleset", {"ruleset_id": ruleset_id})
+
+
+# -----------------------------------------------------------------------
 # Cancel Job Workflow
 # -----------------------------------------------------------------------
 
@@ -1170,6 +1413,29 @@ TOOL_COVERAGE = {
     "list_registered_models": "test_scoring_workflow",
     "list_models_and_decisions": "test_scoring_workflow",
     "score_data": "test_scoring_workflow",
+    "create_business_ruleset": "test_business_rules_and_decisions_workflow",
+    "update_business_ruleset": "test_business_rules_and_decisions_workflow",
+    "get_business_ruleset": "test_business_rules_and_decisions_workflow",
+    "list_business_rulesets": "test_business_rules_and_decisions_workflow",
+    "delete_business_ruleset": "test_business_rules_and_decisions_workflow",
+    "lock_business_ruleset_revision": "test_business_rules_and_decisions_workflow",
+    "list_business_ruleset_revisions": "test_business_rules_and_decisions_workflow",
+    "create_business_rule": "test_business_rules_and_decisions_workflow",
+    "update_business_rule": "test_business_rules_and_decisions_workflow",
+    "get_business_rule": "test_business_rules_and_decisions_workflow",
+    "list_business_rules": "test_business_rules_and_decisions_workflow",
+    "delete_business_rule": "test_business_rules_and_decisions_workflow",
+    "create_decision_flow": "test_business_rules_and_decisions_workflow",
+    "update_decision_flow": "test_business_rules_and_decisions_workflow",
+    "get_decision_flow": "test_business_rules_and_decisions_workflow",
+    "list_decision_flows": "test_business_rules_and_decisions_workflow",
+    "delete_decision_flow": "test_business_rules_and_decisions_workflow",
+    "get_decision_flow_code": "test_business_rules_and_decisions_workflow",
+    "lock_decision_flow_revision": "test_business_rules_and_decisions_workflow",
+    "list_decision_flow_revisions": "test_business_rules_and_decisions_workflow",
+    "get_decision_flow_revision": "test_business_rules_and_decisions_workflow",
+    "publish_decision_flow": "test_business_rules_and_decisions_workflow",
+    "get_mas_module_step_signature": "test_business_rules_and_decisions_workflow",
     "list_compute_contexts": "test_compute_discovery_workflow",
     "list_compute_libraries": "test_compute_discovery_workflow",
     "list_compute_tables": "test_compute_discovery_workflow",

@@ -9,6 +9,7 @@ request that would be sent to Viya — URL path, method, body structure, query
 params, and headers.  These tests use a mock httpx client (no network calls).
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -47,6 +48,29 @@ EXPECTED_TOOLS = [
     "list_registered_models",
     "list_models_and_decisions",
     "score_data",
+    "create_business_ruleset",
+    "update_business_ruleset",
+    "get_business_ruleset",
+    "list_business_rulesets",
+    "delete_business_ruleset",
+    "lock_business_ruleset_revision",
+    "list_business_ruleset_revisions",
+    "create_business_rule",
+    "update_business_rule",
+    "get_business_rule",
+    "list_business_rules",
+    "delete_business_rule",
+    "create_decision_flow",
+    "update_decision_flow",
+    "get_decision_flow",
+    "list_decision_flows",
+    "delete_decision_flow",
+    "get_decision_flow_code",
+    "lock_decision_flow_revision",
+    "list_decision_flow_revisions",
+    "get_decision_flow_revision",
+    "publish_decision_flow",
+    "get_mas_module_step_signature",
     "list_compute_contexts",
     "list_compute_libraries",
     "list_compute_tables",
@@ -997,6 +1021,471 @@ async def test_score_data_request(mcp_server_with_mock_client):
     input_values = {inp["name"]: inp["value"] for inp in body["inputs"]}
     assert input_values["age"] == 35
     assert input_values["income"] == 50000
+
+
+# -----------------------------------------------------------------------
+# Business Rules & Decisions
+# -----------------------------------------------------------------------
+
+
+async def test_create_business_ruleset_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "create_business_ruleset",
+            {
+                "name": "CreditRisk_ScoringRules",
+                "signature": [
+                    {"name": "credit_score", "dataType": "integer", "direction": "input"},
+                    {"name": "risk_category", "dataType": "string", "direction": "output"},
+                ],
+                "description": "Derives risk category from credit score",
+            },
+        )
+
+    url = mock_client.post.call_args[0][0]
+    assert "/businessRules/ruleSets" in url
+    body = mock_client.post.call_args[1]["json"]
+    assert body["name"] == "CreditRisk_ScoringRules"
+    assert body["description"] == "Derives risk category from credit score"
+    assert len(body["signature"]) == 2
+    assert body["signature"][0]["name"] == "credit_score"
+
+
+async def test_update_business_ruleset_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"rs-etag"', "Content-Type": "application/json"}
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "update_business_ruleset",
+            {
+                "ruleset_id": "rs-1",
+                "name": "CreditRisk_ScoringRules",
+                "signature": [{"name": "credit_score", "dataType": "integer", "direction": "input"}],
+            },
+        )
+
+    get_url = mock_client.get.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1" in get_url
+    put_url = mock_client.put.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1" in put_url
+    headers = mock_client.put.call_args[1]["headers"]
+    assert headers["If-Match"] == '"rs-etag"'
+    sent_body = json.loads(mock_client.put.call_args[1]["content"])
+    assert sent_body["name"] == "CreditRisk_ScoringRules"
+    assert sent_body["signature"][0]["name"] == "credit_score"
+
+
+async def test_get_business_ruleset_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("get_business_ruleset", {"ruleset_id": "rs-1"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1" in url
+
+
+async def test_list_business_rulesets_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("list_business_rulesets", {"filter_name": "CreditRisk"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/businessRules/ruleSets" in url
+    params = mock_client.get.call_args[1]["params"]
+    assert params["filter"] == "contains(name,'CreditRisk')"
+
+
+async def test_delete_business_ruleset_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool("delete_business_ruleset", {"ruleset_id": "rs-1"})
+
+    delete_url = mock_client.delete.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1" in delete_url
+    assert "rs-1" in result.data
+
+
+async def test_lock_business_ruleset_revision_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.json = MagicMock(
+        return_value={
+            "name": "CreditRisk_ScoringRules",
+            "description": "desc",
+            "signature": [{"name": "credit_score", "dataType": "integer", "direction": "input"}],
+            "rules": [{"id": "rule-1", "name": "Risk_High"}],
+        }
+    )
+    async with Client(mcp) as client:
+        await client.call_tool("lock_business_ruleset_revision", {"ruleset_id": "rs-1"})
+
+    get_headers = mock_client.get.call_args[1]["headers"]
+    assert get_headers["Accept"] == "application/vnd.sas.business.rule.set.integral+json"
+    post_url = mock_client.post.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1/revisions" in post_url
+    params = mock_client.post.call_args[1]["params"]
+    assert params["revisionType"] == "minor"
+    sent_body = json.loads(mock_client.post.call_args[1]["content"])
+    assert sent_body["rules"] == [{"id": "rule-1", "name": "Risk_High"}]
+
+
+async def test_list_business_ruleset_revisions_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("list_business_ruleset_revisions", {"ruleset_id": "rs-1"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1/revisions" in url
+
+
+async def test_create_business_rule_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "create_business_rule",
+            {
+                "ruleset_id": "rs-1",
+                "name": "Risk_High",
+                "conditional": "if",
+                "rule_fired_tracking_enabled": True,
+                "conditions": [
+                    {
+                        "type": "complex",
+                        "expression": "credit_score < 650",
+                        "term": {"name": "credit_score", "dataType": "integer", "direction": "input"},
+                    }
+                ],
+                "actions": [
+                    {
+                        "type": "assignment",
+                        "term": {"name": "risk_category", "dataType": "string", "direction": "output"},
+                        "expression": '"High"',
+                    }
+                ],
+            },
+        )
+
+    url = mock_client.post.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1/rules" in url
+    params = mock_client.post.call_args[1]["params"]
+    assert params["createVariables"] == 1
+    body = mock_client.post.call_args[1]["json"]
+    assert body["name"] == "Risk_High"
+    assert body["conditional"] == "if"
+    assert body["ruleFiredTrackingEnabled"] is True
+    assert body["conditions"][0]["expression"] == "credit_score < 650"
+
+
+async def test_update_business_rule_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"rule-etag"', "Content-Type": "application/json"}
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "update_business_rule",
+            {
+                "ruleset_id": "rs-1",
+                "rule_id": "rule-1",
+                "name": "Risk_High",
+                "conditional": "if",
+                "rule_fired_tracking_enabled": True,
+                "conditions": [{"type": "complex", "expression": "credit_score < 600",
+                                 "term": {"name": "credit_score", "dataType": "integer", "direction": "input"}}],
+                "actions": [{"type": "assignment",
+                             "term": {"name": "risk_category", "dataType": "string", "direction": "output"},
+                             "expression": '"High"'}],
+            },
+        )
+
+    get_url = mock_client.get.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1/rules/rule-1" in get_url
+    put_url = mock_client.put.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1/rules/rule-1" in put_url
+    headers = mock_client.put.call_args[1]["headers"]
+    assert headers["If-Match"] == '"rule-etag"'
+    sent_body = json.loads(mock_client.put.call_args[1]["content"])
+    assert sent_body["name"] == "Risk_High"
+    assert sent_body["conditional"] == "if"
+    assert sent_body["ruleFiredTrackingEnabled"] is True
+    assert sent_body["conditions"][0]["expression"] == "credit_score < 600"
+
+
+async def test_get_business_rule_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("get_business_rule", {"ruleset_id": "rs-1", "rule_id": "rule-1"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1/rules/rule-1" in url
+
+
+async def test_list_business_rules_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("list_business_rules", {"ruleset_id": "rs-1"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1/rules" in url
+
+
+async def test_delete_business_rule_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "delete_business_rule", {"ruleset_id": "rs-1", "rule_id": "rule-1"}
+        )
+
+    delete_url = mock_client.delete.call_args[0][0]
+    assert "/businessRules/ruleSets/rs-1/rules/rule-1" in delete_url
+    assert "rule-1" in result.data
+    assert "rs-1" in result.data
+
+
+async def test_create_decision_flow_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "create_decision_flow",
+            {
+                "name": "CreditRisk_Decision",
+                "signature": [
+                    {"name": "credit_score", "direction": "input", "dataType": "integer"},
+                    {"name": "risk_category", "direction": "output", "dataType": "string"},
+                ],
+                "rule_set_steps": [
+                    {
+                        "ruleSetId": "rs-1",
+                        "versionId": "ver-1",
+                        "mappings": [
+                            {"stepTermName": "credit_score", "direction": "input",
+                             "targetDecisionTermName": "credit_score"},
+                            {"stepTermName": "risk_category", "direction": "output",
+                             "targetDecisionTermName": "risk_category"},
+                        ],
+                    }
+                ],
+            },
+        )
+
+    url = mock_client.post.call_args[0][0]
+    assert "/decisions/flows" in url
+    body = mock_client.post.call_args[1]["json"]
+    assert body["name"] == "CreditRisk_Decision"
+    steps = body["flow"]["steps"]
+    assert len(steps) == 1
+    assert steps[0]["type"] == "application/vnd.sas.decision.step.ruleset"
+    assert steps[0]["ruleset"] == {"id": "rs-1", "versionId": "ver-1"}
+    assert steps[0]["mappings"][0]["stepTermName"] == "credit_score"
+
+
+async def test_update_decision_flow_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"dec-etag"', "Content-Type": "application/json"}
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "update_decision_flow",
+            {
+                "decision_id": "dec-1",
+                "name": "CreditRisk_Decision",
+                "signature": [{"name": "credit_score", "direction": "input", "dataType": "integer"}],
+                "rule_set_steps": [
+                    {
+                        "ruleSetId": "rs-1",
+                        "versionId": "ver-2",
+                        "mappings": [{"stepTermName": "credit_score", "direction": "input",
+                                       "targetDecisionTermName": "credit_score"}],
+                    }
+                ],
+            },
+        )
+
+    get_url = mock_client.get.call_args[0][0]
+    assert "/decisions/flows/dec-1" in get_url
+    put_url = mock_client.put.call_args[0][0]
+    assert "/decisions/flows/dec-1" in put_url
+    headers = mock_client.put.call_args[1]["headers"]
+    assert headers["If-Match"] == '"dec-etag"'
+    sent_body = json.loads(mock_client.put.call_args[1]["content"])
+    step = sent_body["flow"]["steps"][0]
+    assert step["type"] == "application/vnd.sas.decision.step.ruleset"
+    assert step["ruleset"] == {"id": "rs-1", "versionId": "ver-2"}
+    assert step["mappings"][0]["stepTermName"] == "credit_score"
+
+
+async def test_get_decision_flow_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("get_decision_flow", {"decision_id": "dec-1"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/decisions/flows/dec-1" in url
+
+
+async def test_list_decision_flows_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("list_decision_flows", {"filter_name": "CreditRisk_Decision"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/decisions/flows" in url
+    params = mock_client.get.call_args[1]["params"]
+    assert params["filter"] == "contains(name,'CreditRisk_Decision')"
+
+
+async def test_delete_decision_flow_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool("delete_decision_flow", {"decision_id": "dec-1"})
+
+    delete_url = mock_client.delete.call_args[0][0]
+    assert "/decisions/flows/dec-1" in delete_url
+    assert "dec-1" in result.data
+
+
+async def test_get_decision_flow_code_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.text = "package Decision_dec_1 / inline;"
+    async with Client(mcp) as client:
+        result = await client.call_tool("get_decision_flow_code", {"decision_id": "dec-1"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/decisions/flows/dec-1/code" in url
+    headers = mock_client.get.call_args[1]["headers"]
+    assert headers["Accept"] == "text/vnd.sas.source.ds2"
+    assert result.data == "package Decision_dec_1 / inline;"
+
+
+async def test_lock_decision_flow_revision_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.json = MagicMock(
+        return_value={
+            "name": "CreditRisk_Decision",
+            "description": "desc",
+            "signature": [{"name": "credit_score", "direction": "input", "dataType": "integer"}],
+            "flow": {"steps": [{"type": "application/vnd.sas.decision.step.ruleset"}]},
+        }
+    )
+    async with Client(mcp) as client:
+        await client.call_tool("lock_decision_flow_revision", {"decision_id": "dec-1"})
+
+    post_url = mock_client.post.call_args[0][0]
+    assert "/decisions/flows/dec-1/revisions" in post_url
+    sent_body = mock_client.post.call_args[1]["json"]
+    assert sent_body["flow"]["steps"] == [{"type": "application/vnd.sas.decision.step.ruleset"}]
+
+
+async def test_list_decision_flow_revisions_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("list_decision_flow_revisions", {"decision_id": "dec-1"})
+
+    url = mock_client.get.call_args[0][0]
+    assert "/decisions/flows/dec-1/revisions" in url
+
+
+async def test_get_decision_flow_revision_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "get_decision_flow_revision", {"decision_id": "dec-1", "revision_id": "rev-1"}
+        )
+
+    url = mock_client.get.call_args[0][0]
+    assert "/decisions/flows/dec-1/revisions/rev-1" in url
+
+
+async def test_publish_decision_flow_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.text = "package Decision_dec_1 / inline;"
+    mock_client.get.return_value.json = MagicMock(
+        return_value={"state": "completed", "moduleId": "decision_rev_1", "errors": []}
+    )
+    mock_client.post.return_value.json = MagicMock(
+        return_value={
+            "items": [{
+                "id": "pub-1",
+                "state": "pending",
+                "properties": {"masModules": [{"jobUri": "/microanalyticScore/jobs/job-1"}]},
+            }]
+        }
+    )
+    async with Client(mcp) as client:
+        result = (await client.call_tool(
+            "publish_decision_flow",
+            {"decision_id": "dec-1", "revision_id": "rev-1", "publish_name": "CreditRisk_Decision_v1"},
+        )).data
+
+    get_urls = [c.args[0] for c in mock_client.get.call_args_list]
+    assert any("/decisions/flows/dec-1/revisions/rev-1/code" in u for u in get_urls)
+    assert any("/microanalyticScore/jobs/job-1" in u for u in get_urls)
+
+    post_url = mock_client.post.call_args[0][0]
+    assert "/modelPublish/models" in post_url
+    post_headers = mock_client.post.call_args[1]["headers"]
+    assert post_headers["Content-Type"] == "application/vnd.sas.models.publishing.request+json"
+    sent_body = json.loads(mock_client.post.call_args[1]["content"])
+    assert sent_body["name"] == "CreditRisk_Decision_v1"
+    assert sent_body["destinationName"] == "maslocal"
+    assert sent_body["modelContents"][0]["code"] == "package Decision_dec_1 / inline;"
+    assert sent_body["modelContents"][0]["sourceUri"] == "/decisions/flows/dec-1/revisions/rev-1"
+    assert result["id"] == "pub-1"
+    assert result["moduleId"] == "decision_rev_1"
+    assert result["moduleState"] == "completed"
+
+
+async def test_publish_decision_flow_polls_model_then_job(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    # POST returns a publish record with no masModules yet, forcing phase 1 to
+    # re-fetch the model before the job URI is available.
+    mock_client.post.return_value.json = MagicMock(
+        return_value={"items": [{"id": "pub-1", "state": "pending", "properties": {}}]}
+    )
+    code_resp = _make_mock_response(text="package X;")
+    model_resp = _make_mock_response(
+        {"id": "pub-1", "properties": {"masModules": [{"jobUri": "/microanalyticScore/jobs/job-1"}]}}
+    )
+    job_resp = _make_mock_response({"state": "completed", "moduleId": "decision_rev_1"})
+    mock_client.get.side_effect = [code_resp, model_resp, job_resp]
+
+    with patch("sas_mcp_server.tools.asyncio.sleep", new=AsyncMock()):
+        async with Client(mcp) as client:
+            result = (await client.call_tool(
+                "publish_decision_flow",
+                {"decision_id": "dec-1", "revision_id": "rev-1", "publish_name": "P", "poll_timeout": 5},
+            )).data
+
+    get_urls = [c.args[0] for c in mock_client.get.call_args_list]
+    assert any("/modelPublish/models/pub-1" in u for u in get_urls)
+    assert any("/microanalyticScore/jobs/job-1" in u for u in get_urls)
+    assert result["moduleId"] == "decision_rev_1"
+    assert result["moduleState"] == "completed"
+
+
+async def test_create_decision_flow_rejects_step_missing_key(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    raised = False
+    async with Client(mcp) as client:
+        try:
+            await client.call_tool("create_decision_flow", {
+                "name": "D",
+                "signature": [{"name": "x", "direction": "input", "dataType": "integer"}],
+                "rule_set_steps": [{"ruleSetId": "rs-1", "mappings": []}],
+            })
+        except Exception as e:  # noqa: BLE001
+            raised = True
+            assert "versionId" in str(e)
+    assert raised, "expected a validation error naming the missing versionId key"
+    mock_client.post.assert_not_called()
+
+
+async def test_get_mas_module_step_signature_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "get_mas_module_step_signature", {"module_id": "mod-1", "step_id": "execute"}
+        )
+
+    url = mock_client.get.call_args[0][0]
+    assert "/microanalyticScore/modules/mod-1/steps/execute" in url
 
 
 # -----------------------------------------------------------------------
