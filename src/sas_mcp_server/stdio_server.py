@@ -49,6 +49,7 @@ from fastmcp import Context, FastMCP
 from .config import CLIENT_ID, SSL_VERIFY, VIYA_ENDPOINT
 from .exceptions import AuthenticationError
 from .prompts import register_prompts
+from .telemetry import install_telemetry
 from .tools import register_tools
 from .viya_client import logger
 from .viya_utils import shutdown_session_cache
@@ -313,6 +314,8 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict]:
 logger.info("Connecting to SAS Viya at %s", VIYA_ENDPOINT)
 mcp = FastMCP("SAS Viya Execution MCP Server", lifespan=_lifespan)
 register_tools(mcp, _stdio_get_token)
+# Opt-in telemetry (no-op unless COLLECTION_MODE is enabled).
+install_telemetry(mcp, "stdio")
 register_prompts(mcp)
 
 

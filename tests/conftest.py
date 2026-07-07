@@ -251,7 +251,12 @@ def integration_mcp_server(viya_token):
         return _token
 
     from sas_mcp_server.prompts import register_prompts
+    from sas_mcp_server.telemetry import install_telemetry
     from sas_mcp_server.tools import register_tools
+    # Mirror the production HTTP server so integration runs exercise telemetry
+    # when COLLECTION_MODE is enabled. No-op (adds no middleware) when off, so
+    # the default suite is byte-identical.
+    install_telemetry(mcp, "http")
     register_tools(mcp, real_get_token)
     register_prompts(mcp)
     return mcp

@@ -275,6 +275,49 @@ run;
 
 **For more details, configuration options, and deployment options, please refer to the **examples** folder and follow the instructions listed there.**
 
+## Collection Mode (Usage Telemetry)
+
+An **opt-in**, **off-by-default** mode that records how the server is actually used — which tools, for what goals, with what inputs, and where they fall short. It serves two audiences:
+
+- **Contributors giving structured feedback to the maintainers.** Rather than filing prose bug reports, you can turn it on for a while and share the resulting log so maintainers can see which tools are used, which fail, and what goals have no good tool yet — a direct signal for improving existing tools and identifying new ones.
+- **Organizations running the server for their own users.** Teams that deploy the MCP server internally can enable it to understand what their users do with it and why, entirely within their own infrastructure.
+
+It is implemented as a FastMCP middleware wrapper (`telemetry.py` + `usage_logger.py`) and requires **no changes to any tool**.
+
+> 🔒 **Nothing is ever sent anywhere automatically.** Collection mode only appends to a local log file on the machine running the server. It is disabled unless you explicitly enable it, and even when enabled the data stays on your disk — sharing it with anyone (including the maintainers) is a deliberate, manual step you take by sending the file yourself. There is no phone-home, no network transmission, and no third party involved.
+
+When enabled it does two things:
+
+1. **Injects a required `goal` parameter** into every tool's schema, asking the model to state in one sentence *why* it chose that tool for the current
+   request. The `goal` is stripped from the arguments before the real tool runs, so tools never see it.
+2. **Appends one JSON line per tool call** (JSON Lines / NDJSON) to a local log file: timestamp, session id, tool name, goal, arguments, result, status,
+   error, and latency. Secret-shaped keys and inline Bearer/JWT tokens are redacted and every field is size-capped.
+
+### Enabling it
+
+Set the toggle in `.env` (all options are documented in `.env.sample`):
+
+```sh
+COLLECTION_MODE=true
+# optional overrides (defaults shown):
+# COLLECTION_LOG_PATH=~/.sas-mcp-server/tool-usage.log
+# COLLECTION_LOG_RESULTS=false   # false = record result shape only, not contents
+```
+
+By default (`COLLECTION_LOG_RESULTS=false`) tool **results** are recorded only as a content-free shape summary (e.g. `{"_type":"array","_items":500}`) — arguments, goal, status, and error text are still captured. Set it to `true` to capture (capped + redacted) result contents for richer analysis.
+
+> ⚠️ **Privacy:** when enabled, the log captures your tool inputs (e.g. the SAS code and queries you submit) and — if `COLLECTION_LOG_RESULTS=true` — real result data that may include table rows, SAS listings, and PII. Redaction is heuristic (credential-shaped keys + Bearer/JWT only) and does **not** detect PII in data values. **Review the log before sharing it.** The file is locked to your user (chmod 0600 on POSIX; icacls on Windows, best-effort).
+
+### Performance impact
+
+Collection mode is designed to be cheap enough to leave on. Measured on this repo (45 registered tools, FastMCP 3.4.2):
+
+- **Prompt tokens.** The injected `goal` field grows the `tools/list` schema the model sees by roughly **+2,400 input tokens (~29%) per turn**. Because the tool list is stable within a session it is served from the prompt cache after the first turn (steady-state ≈ +240 tokens/turn), plus ~15–30 output tokens per call for the model to write the `goal` sentence. This is the only client-visible cost and it applies only while collection mode is enabled. 
+- **Per-call latency.** Middleware + logging adds **≈1.4 ms per call** at the shape-only default (**≈5.3 ms** with `COLLECTION_LOG_RESULTS=true`). The JSONL
+  write is offloaded to a worker thread so it never blocks the event loop. Against real Viya calls (typically hundreds of milliseconds to seconds) this is
+  negligible — the live integration suite passed identically with collection mode off and on, the overhead lost in normal network variance.
+- **Disk.** Roughly **0.5–0.7 KB per tool call** at the shape-only default. The log rotates at `COLLECTION_MAX_LOG_BYTES` (default 10 MiB, ≈16k calls) and keeps `COLLECTION_LOG_BACKUPS` (default 3) rotated files, so on-disk growth is bounded.
+
 ## Testing
 
 The project includes two layers of tests: **unit tests** (fast, no credentials required) and **integration tests** (run against a real SAS Viya instance).

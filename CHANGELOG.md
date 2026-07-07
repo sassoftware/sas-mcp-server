@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Opt-in "collection mode" usage telemetry** — an off-by-default mode that helps maintainers (or organizations running the server internally) learn how the server is actually used: which tools, for what goals, with what inputs, and where they fall short. Implemented as a FastMCP middleware (`telemetry.py` plus a fastmcp-free `usage_logger.py`) that requires **no changes to any existing tool**. When enabled it (1) injects a required `goal` parameter into every tool's published schema asking the model to state in one sentence *why* it chose that tool — stripped from the arguments before the tool runs, so tools never see it — and (2) appends one redacted, size-bounded JSON Lines record per call (timestamp, session id, tool, goal, arguments, result, status, error, latency, transport) to a rotating local log file. Controlled by `COLLECTION_MODE` (off by default); **nothing is ever transmitted anywhere** — the log stays on the machine running the server and sharing it with the maintainers is a deliberate, manual step. Tool results are recorded as a content-free shape summary unless `COLLECTION_LOG_RESULTS=true`; secret-shaped keys and inline Bearer/JWT tokens are redacted, every field is size-capped, and the log file is locked to the current user. Wired into both the HTTP (`mcp_server.py`, registered outermost so it also records auth failures) and stdio (`stdio_server.py`) entry points and configured via seven `COLLECTION_*` variables documented in `.env.sample` and the README. Measured cost (45 tools): ~+2,400 prompt tokens/turn from the injected schema (largely prompt-cache-amortized) and ≈1.4 ms/call server overhead at the shape-only default — negligible against live Viya latency (the integration suite passes identically with it off and on).
+
 ## [1.4.0] - 2026-07-02
 
 ### Added
