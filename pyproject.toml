@@ -1,6 +1,6 @@
 [project]
 name = "sas-mcp-server"
-version = "1.4.0"
+version = "1.5.0"
 description = "An MCP server for executing SAS code and querying Compute, CAS, and model APIs on SAS Viya via OAuth 2.0."
 readme = "README.md"
 authors = [{name = "SAS Institute Inc."}]

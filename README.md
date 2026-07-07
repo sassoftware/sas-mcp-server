@@ -186,7 +186,25 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **publish_ml_champion_model**: Publish an AutoML project's champion model to a scoring destination
 - **list_registered_models**: List models in repository
 - **list_models_and_decisions**: List published MAS modules
-- **score_data**: Score data against a published model
+- **get_mas_module_step_signature**: Inspect a published MAS module step's input/output variable signature before scoring
+- **score_data**: Score data against a published model or decision
+
+#### Decisioning (SAS Intelligent Decisioning)
+Build and manage SAS Intelligent Decisioning rule sets and decision flows end to end, then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it.
+
+*Business rules — rule sets:*
+- **create_business_ruleset** / **update_business_ruleset** / **get_business_ruleset** / **list_business_rulesets** / **delete_business_ruleset**: Manage rule sets (the input/output signature the rules operate on)
+- **lock_business_ruleset_revision**: Lock the current rule set state as an immutable revision (what a decision step references)
+- **list_business_ruleset_revisions**: List a rule set's locked revisions
+
+*Business rules — rules:*
+- **create_business_rule** / **update_business_rule** / **get_business_rule** / **list_business_rules** / **delete_business_rule**: Manage the conditional rules inside a rule set
+
+*Decision flows:*
+- **create_decision_flow** / **update_decision_flow** / **get_decision_flow** / **list_decision_flows** / **delete_decision_flow**: Manage decision flows that chain rule set steps
+- **get_decision_flow_code**: Retrieve the generated DS2 execution code for a flow
+- **lock_decision_flow_revision** / **list_decision_flow_revisions** / **get_decision_flow_revision**: Lock, list, and fetch immutable decision revisions
+- **publish_decision_flow**: Publish a locked decision revision to a MAS destination, polling to completion and returning the server-generated MAS `moduleId` (directly usable with **get_mas_module_step_signature** / **score_data**)
 
 #### Compute Contexts & Code Execution
 - **list_compute_contexts**: List available compute contexts
@@ -364,7 +382,7 @@ fixture with `openpyxl`. Install the optional group so it runs instead of `impor
 extra deps.) Generating a `sas7bdat`/`sashdat` fixture requires SAS itself, so those two
 formats are covered by unit-level payload tests only, not live.
 
-Every one of the 45 tools and 8 prompt templates has an integration test, enforced by the
+Every one of the 68 tools and 8 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most
@@ -397,7 +415,7 @@ gh gist create reports/integration.xml                          # full XML as a 
 
 | File | Description |
 |---|---|
-| `tests/test_tool_payloads.py` | Payload assertions for all 45 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
+| `tests/test_tool_payloads.py` | Payload assertions for all 68 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
 | `tests/test_integration.py` | End-to-end workflow tests against a real Viya instance |
 | `tests/test_tools.py` | Unit tests for the generic Viya REST helpers in `viya_client` (`get_json`, `post_json`, `make_client`, …) |
 | `tests/test_viya_utils.py` | Unit tests for Viya compute session and job orchestration |
