@@ -5,6 +5,7 @@
 Tests for the generic Viya REST helper functions in viya_client.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -18,6 +19,7 @@ from sas_mcp_server.viya_client import (
     get_paged_items,
     make_client,
     post_json,
+    put_json,
     return_items,
 )
 
@@ -147,6 +149,69 @@ async def test_post_json_no_content(mock_httpx_client, mock_env_vars):
     result = await post_json("/some/action", mock_httpx_client)
 
     assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# put_json
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_put_json_with_etag(mock_httpx_client, mock_env_vars):
+    """put_json GETs the resource for its ETag, then PUTs it back with If-Match."""
+    get_resp = AsyncMock()
+    get_resp.raise_for_status = MagicMock()
+    get_resp.headers = {"etag": 'W/"abc"'}
+    put_resp = AsyncMock()
+    put_resp.raise_for_status = MagicMock()
+    put_resp.status_code = 200
+    put_resp.content = b'{"id": "rs1"}'
+    put_resp.json = MagicMock(return_value={"id": "rs1"})
+    mock_httpx_client.get.return_value = get_resp
+    mock_httpx_client.put.return_value = put_resp
+
+    result = await put_json("/businessRules/ruleSets/rs1", mock_httpx_client, {"name": "x"})
+
+    assert result == {"id": "rs1"}
+    mock_httpx_client.get.assert_called_once()
+    put_kwargs = mock_httpx_client.put.call_args.kwargs
+    assert put_kwargs["headers"]["If-Match"] == 'W/"abc"'
+    assert put_kwargs["headers"]["Content-Type"] == "application/json"
+    assert put_kwargs["content"] == json.dumps({"name": "x"}).encode()
+
+
+@pytest.mark.asyncio
+async def test_put_json_no_content(mock_httpx_client, mock_env_vars):
+    """put_json returns {} on a 204 / empty response."""
+    get_resp = AsyncMock()
+    get_resp.raise_for_status = MagicMock()
+    get_resp.headers = {}
+    put_resp = AsyncMock()
+    put_resp.raise_for_status = MagicMock()
+    put_resp.status_code = 204
+    put_resp.content = b""
+    mock_httpx_client.get.return_value = get_resp
+    mock_httpx_client.put.return_value = put_resp
+
+    result = await put_json("/decisions/flows/d1", mock_httpx_client, {"a": 1})
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_put_json_without_if_match(mock_httpx_client, mock_env_vars):
+    """put_json(if_match=False) skips the ETag GET and sends no If-Match header."""
+    put_resp = AsyncMock()
+    put_resp.raise_for_status = MagicMock()
+    put_resp.status_code = 200
+    put_resp.content = b"{}"
+    put_resp.json = MagicMock(return_value={})
+    mock_httpx_client.put.return_value = put_resp
+
+    await put_json("/x", mock_httpx_client, {"a": 1}, if_match=False)
+
+    mock_httpx_client.get.assert_not_called()
+    assert "If-Match" not in mock_httpx_client.put.call_args.kwargs["headers"]
 
 
 # ---------------------------------------------------------------------------

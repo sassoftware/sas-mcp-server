@@ -132,6 +132,26 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **Deploying for a team or on a server?** Use **Docker** — portable, no Python dependency on the host, easy to integrate with orchestrators.
 - **Using Gemini CLI?** Use **stdio** — Gemini CLI does not support HTTP mode or browser-based OAuth. See [Gemini CLI configuration](examples/configuration.md#gemini-cli).
 
+### Limiting exposed tools (tiers)
+
+Tools are grouped into numbered tiers. By default the server exposes all of them; set `MCP_TIERS` to expose only a subset — handy for keeping a client's tool list small and focused, or hiding capabilities a deployment shouldn't offer. Accepts ranges and comma lists (e.g. `MCP_TIERS=0-4` or `MCP_TIERS=0,1,6,7`); unset means all tiers.
+
+| Tier | Group |
+|---|---|
+| 0 | Compute Contexts & Code Execution |
+| 1 | Data Discovery |
+| 2 | Data Operations & Files |
+| 3 | Reports & Visualization |
+| 4 | Batch Jobs & Async Execution |
+| 5 | Automated Machine Learning |
+| 6 | Model Management & Scoring |
+| 7 | Decisioning (Business Rules & Intelligent Decisioning) |
+
+```sh
+# Example: expose only compute/discovery/data-ops and reporting
+MCP_TIERS=0-3 uv run app
+```
+
 ### Available Tools
 
 #### Code Execution
@@ -185,7 +205,7 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **list_publishing_destinations**: List available scoring/publishing destinations, for use with **publish_ml_champion_model**
 - **publish_ml_champion_model**: Publish an AutoML project's champion model to a scoring destination
 - **list_registered_models**: List models in repository
-- **list_models_and_decisions**: List published MAS modules
+- **list_mas_modules**: List published MAS modules
 - **get_mas_module_step_signature**: Inspect a published MAS module step's input/output variable signature before scoring
 - **score_data**: Score data against a published model or decision
 

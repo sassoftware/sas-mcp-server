@@ -12,6 +12,7 @@ depend on them. The shared :data:`logger` lives here as the lowest-level module
 without creating an import cycle.
 """
 
+import json
 from typing import Any
 
 import httpx
@@ -74,6 +75,44 @@ async def post_json(
         full_url,
         json=body,
         headers={"Content-Type": "application/json", "Accept": accept},
+        params=params or {},
+    )
+    resp.raise_for_status()
+    if resp.status_code == 204 or not resp.content:
+        return {}
+    return resp.json()
+
+
+async def put_json(
+    url: str,
+    client: httpx.AsyncClient,
+    body: Any,
+    *,
+    if_match: bool = True,
+    params: dict[str, Any] | None = None,
+    content_type: str = "application/json",
+    accept: str = "application/json",
+) -> JSONDict:
+    """PUT JSON to a Viya REST endpoint, handling optimistic-concurrency ETags.
+
+    Viya's update endpoints require the resource's current ETag echoed back in an
+    ``If-Match`` header. When *if_match* is true this GETs the resource first to
+    read that ETag, then PUTs *body*. This collapses the GET-etag-then-PUT
+    boilerplate shared by every ``update_*`` tool into one call, mirroring the
+    :func:`get_json`/:func:`post_json`/:func:`delete_resource` helpers.
+
+    Returns the response JSON, or ``{}`` on a 204 / empty body.
+    """
+    full_url = f"{VIYA_ENDPOINT}{url}"
+    headers = {"Content-Type": content_type, "Accept": accept}
+    if if_match:
+        get_resp = await client.get(full_url)
+        get_resp.raise_for_status()
+        headers["If-Match"] = get_resp.headers.get("etag", "")
+    resp = await client.put(
+        full_url,
+        content=json.dumps(body).encode(),
+        headers=headers,
         params=params or {},
     )
     resp.raise_for_status()
