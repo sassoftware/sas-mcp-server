@@ -825,6 +825,17 @@ async def test_business_rules_and_decisions_workflow(integration_mcp_server, viy
     published_model_id = None
     published_module_id = None
 
+    # Skip cleanly on Viya instances without SAS Intelligent Decisioning
+    # deployed — matching how the rest of this suite skips when a service or
+    # resource is absent, rather than erroring. Probed via the raw API rather
+    # than the tools under test, so a genuine tool bug still fails the test
+    # instead of being masked as a skip.
+    try:
+        await _viya_get(viya_token, "/businessRules/ruleSets", {"limit": 1})
+        await _viya_get(viya_token, "/decisions/flows", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Intelligent Decisioning not available on this instance: {e}")
+
     async with Client(integration_mcp_server) as client:
         try:
             ruleset = (await client.call_tool("create_business_ruleset", {
