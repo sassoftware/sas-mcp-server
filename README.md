@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 40+ Tools spanning the Analytics Life Cycle across SAS Viya
+- 68 tools across 8 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
 - HTTP-based MCP server compatible with MCP clients
@@ -132,12 +132,37 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **Deploying for a team or on a server?** Use **Docker** — portable, no Python dependency on the host, easy to integrate with orchestrators.
 - **Using Gemini CLI?** Use **stdio** — Gemini CLI does not support HTTP mode or browser-based OAuth. See [Gemini CLI configuration](examples/configuration.md#gemini-cli).
 
+### Limiting exposed tools (tiers)
+
+Tools are grouped into numbered tiers. By default the server exposes all of them; set `MCP_TIERS` to expose only a subset — handy for keeping a client's tool list small and focused, or hiding capabilities a deployment shouldn't offer. Accepts ranges and comma lists (e.g. `MCP_TIERS=0-4` or `MCP_TIERS=0,1,6,7`); unset means all tiers.
+
+| Tier | Group |
+|---|---|
+| 0 | Compute Contexts & Code Execution |
+| 1 | Data Discovery |
+| 2 | Data Operations & Files |
+| 3 | Reports & Visualization |
+| 4 | Batch Jobs & Async Execution |
+| 5 | Automated Machine Learning |
+| 6 | Model Management & Scoring |
+| 7 | Decisioning (SAS Intelligent Decisioning) |
+
+```sh
+# Example: expose only compute/discovery/data-ops and reporting
+MCP_TIERS=0-3 uv run app
+```
+
 ### Available Tools
 
-#### Code Execution
-- **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable, per-user compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls — use **reset_compute_session** to start fresh.
+The headings below match the numbered **tiers** above, so `MCP_TIERS` maps directly to the tools you expose (e.g. `MCP_TIERS=0-3` gives Tiers 0–3).
 
-#### Data Governance (Metadata Discovery & Profiling)
+#### Tier 0 — Compute Contexts & Code Execution
+- **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable, per-user compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls — use **reset_compute_session** to start fresh.
+- **list_compute_contexts**: List available compute contexts
+- **reset_compute_session**: Delete the cached compute session for a context, discarding its SAS state and forcing a fresh session on the next call
+
+#### Tier 1 — Data Discovery
+*Information Catalog (metadata discovery & profiling):*
 - **catalog_search**: Search the catalog for assets (tables, columns, reports, …) using the SAS catalog search grammar (free text, facets like `AssetType:Report`, ranges). Each hit carries a `resource_uri` you can hand to the matching tool (e.g. `get_report`, `get_castable_data`).
 - **catalog_search_helper**: Discover how to query the catalog — list the available facets, or the valid values for one facet — so you can build precise `catalog_search` queries.
 - **catalog_find_instance**: Resolve the catalog *instance* for a source-asset `resource_uri`, bridging a search hit to the profiling and download tools without handling an instance id by hand.
@@ -148,7 +173,7 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **catalog_run_agent**: Start a discovery agent run (asynchronous) to crawl its data source and refresh catalog metadata.
 - **catalog_get_agent_history**: Inspect an agent's run history — status and how much metadata each run enumerated/added/updated/removed.
 
-#### Data Discovery (CAS Management)
+*CAS data (in-memory):*
 - **list_cas_servers**: List available CAS servers
 - **list_caslibs**: List CAS libraries on a server
 - **list_castables**: List tables in a CAS library
@@ -157,7 +182,12 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **get_castable_columns**: Get column names, types, labels, formats
 - **get_castable_data**: Fetch sample rows from a CAS table
 
-#### Data Operations & Files
+*Compute libraries (SAS/Compute, within a compute context):*
+- **list_compute_libraries**: List the SAS libraries (librefs) assigned in a compute context
+- **list_compute_tables**: List the tables in a SAS library within a compute context
+- **list_compute_columns**: List the columns of a table in a SAS library
+
+#### Tier 2 — Data Operations & Files
 - **upload_data**: Upload a data file into a CAS table — read **server-side** so the data never passes through the model's context — from `file_path` (the server reads it off disk) or `url` (the server fetches it and converts it to the multipart upload the endpoint requires). Ingests the formats the casManagement `uploadTable` API accepts — csv, tsv (csv + tab delimiter), xls, xlsx (single sheet), sas7bdat, sashdat — auto-detected from the extension or set with `data_format`. parquet is not accepted by that endpoint and is rejected up front with guidance (load via a path-based caslib + `promote_table_to_memory`, or convert to csv/sas7bdat).
 - **upload_inline_data**: Create a *small* CAS table from inline csv/tsv text passed as a string (a lookup/mapping table the model builds on the fly, or a quick test table). The payload travels through the model's context, so it's for tiny tables only — use **upload_data** for files or anything larger.
 - **promote_table_to_memory**: Load a source table into memory at global scope (idempotent)
@@ -165,31 +195,33 @@ The server validates the token against Viya's JWKS and uses it upstream as-is, b
 - **upload_file**: Upload a file to Viya Files Service
 - **download_file**: Download file content
 
-#### Reports & Visualization
+#### Tier 3 — Reports & Visualization
 - **list_reports**: List Visual Analytics reports
 - **get_report**: Get report metadata and definition
 - **export_report**: export a report (or specific report objects) in any format the VA service supports — `package` (zip), `pdf`, `png`, `svg`, `csv`, `tsv`, `xlsx`, or `summary`. Text formats come back inline, `png` as image content, and binary formats (`package`/`pdf`/`xlsx`) as an embedded file with the right MIME type.
 
-#### Batch Jobs
+#### Tier 4 — Batch Jobs & Async Execution
 - **submit_batch_job**: Submit a SAS job for async execution
 - **get_job_status**: Check job state
 - **list_jobs**: List recent/running jobs
 - **cancel_job**: Cancel a running job
 - **get_job_log**: Retrieve job log
 
-#### Model Management & Scoring
+#### Tier 5 — Automated Machine Learning
 - **list_ml_projects**: List AutoML projects
 - **create_ml_project**: Create a new AutoML project from a loaded, global-scope CAS table (caslib + table + optional CAS server)
 - **run_ml_project**: Run pipeline automation
 - **register_ml_champion_model**: Register an AutoML project's champion model to the Model Repository
-- **list_publishing_destinations**: List available scoring/publishing destinations, for use with **publish_ml_champion_model**
 - **publish_ml_champion_model**: Publish an AutoML project's champion model to a scoring destination
+
+#### Tier 6 — Model Management & Scoring
 - **list_registered_models**: List models in repository
-- **list_models_and_decisions**: List published MAS modules
+- **list_publishing_destinations**: List available scoring/publishing destinations, for use with **publish_ml_champion_model**
+- **list_mas_modules**: List published MAS modules
 - **get_mas_module_step_signature**: Inspect a published MAS module step's input/output variable signature before scoring
 - **score_data**: Score data against a published model or decision
 
-#### Decisioning (SAS Intelligent Decisioning)
+#### Tier 7 — Decisioning (SAS Intelligent Decisioning)
 Build and manage SAS Intelligent Decisioning rule sets and decision flows end to end, then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it.
 
 *Business rules — rule sets:*
@@ -205,13 +237,6 @@ Build and manage SAS Intelligent Decisioning rule sets and decision flows end to
 - **get_decision_flow_code**: Retrieve the generated DS2 execution code for a flow
 - **lock_decision_flow_revision** / **list_decision_flow_revisions** / **get_decision_flow_revision**: Lock, list, and fetch immutable decision revisions
 - **publish_decision_flow**: Publish a locked decision revision to a MAS destination, polling to completion and returning the server-generated MAS `moduleId` (directly usable with **get_mas_module_step_signature** / **score_data**)
-
-#### Compute Contexts & Code Execution
-- **list_compute_contexts**: List available compute contexts
-- **list_compute_libraries**: List the SAS libraries (librefs) assigned in a compute context
-- **list_compute_tables**: List the tables in a SAS library within a compute context
-- **list_compute_columns**: List the columns of a table in a SAS library
-- **reset_compute_session**: Delete the cached compute session for a context, discarding its SAS state and forcing a fresh session on the next call
 
 ### Prompt Templates
 

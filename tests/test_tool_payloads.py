@@ -46,7 +46,7 @@ EXPECTED_TOOLS = [
     "register_ml_champion_model",
     "run_ml_project",
     "list_registered_models",
-    "list_models_and_decisions",
+    "list_mas_modules",
     "score_data",
     "create_business_ruleset",
     "update_business_ruleset",
@@ -991,10 +991,10 @@ async def test_list_registered_models_request(mcp_server_with_mock_client):
     assert "/modelRepository/models" in url
 
 
-async def test_list_models_and_decisions_request(mcp_server_with_mock_client):
+async def test_list_mas_modules_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
     async with Client(mcp) as client:
-        await client.call_tool("list_models_and_decisions", {})
+        await client.call_tool("list_mas_modules", {})
 
     url = mock_client.get.call_args[0][0]
     assert "/microanalyticScore/modules" in url
@@ -1446,7 +1446,7 @@ async def test_publish_decision_flow_polls_model_then_job(mcp_server_with_mock_c
     job_resp = _make_mock_response({"state": "completed", "moduleId": "decision_rev_1"})
     mock_client.get.side_effect = [code_resp, model_resp, job_resp]
 
-    with patch("sas_mcp_server.tools.asyncio.sleep", new=AsyncMock()):
+    with patch("sas_mcp_server.tools.decisioning.asyncio.sleep", new=AsyncMock()):
         async with Client(mcp) as client:
             result = (await client.call_tool(
                 "publish_decision_flow",
@@ -1458,6 +1458,33 @@ async def test_publish_decision_flow_polls_model_then_job(mcp_server_with_mock_c
     assert any("/microanalyticScore/jobs/job-1" in u for u in get_urls)
     assert result["moduleId"] == "decision_rev_1"
     assert result["moduleState"] == "completed"
+
+
+async def test_publish_decision_flow_pending_when_post_returns_no_id(mcp_server_with_mock_client):
+    """A publish POST response with no 'id' must not trigger GET /modelPublish/models/None.
+
+    Instead the tool stops polling and returns a graceful pending record.
+    """
+    mcp, mock_client = mcp_server_with_mock_client
+    # POST record carries no 'id' and no masModules jobUri yet.
+    mock_client.post.return_value.json = MagicMock(
+        return_value={"items": [{"state": "pending", "properties": {}}]}
+    )
+    code_resp = _make_mock_response(text="package X;")
+    mock_client.get.side_effect = [code_resp]
+
+    with patch("sas_mcp_server.tools.decisioning.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        async with Client(mcp) as client:
+            result = (await client.call_tool(
+                "publish_decision_flow",
+                {"decision_id": "dec-1", "revision_id": "rev-1", "publish_name": "P", "poll_timeout": 5},
+            )).data
+
+    # Only the DS2 code fetch happened — never re-fetched the model by a None id.
+    assert len(mock_client.get.call_args_list) == 1
+    assert "/decisions/flows/dec-1/revisions/rev-1/code" in mock_client.get.call_args_list[0].args[0]
+    assert result["moduleState"] == "pending"
+    mock_sleep.assert_not_awaited()
 
 
 async def test_create_decision_flow_rejects_step_missing_key(mcp_server_with_mock_client):
@@ -1495,7 +1522,7 @@ async def test_get_mas_module_step_signature_request(mcp_server_with_mock_client
 
 async def test_execute_sas_code_request(mcp_server_with_mock_client):
     mcp, _ = mcp_server_with_mock_client
-    with patch("sas_mcp_server.tools.run_one_snippet") as mock_run:
+    with patch("sas_mcp_server.tools.compute.run_one_snippet") as mock_run:
         mock_run.return_value = {
             "snippet_id": "1",
             "state": "completed",

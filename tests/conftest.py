@@ -187,7 +187,13 @@ def mcp_server_with_mock_client():
     mock_client.put.return_value = put_resp
     mock_client.delete.return_value = delete_resp
 
-    with patch("sas_mcp_server.tools.make_client", return_value=mock_client):
+    # make_client is imported into the shared session factory (tools._common)
+    # and into the compute tier (reset_compute_session calls it directly); patch
+    # both so every tool's client resolves to the mock.
+    with (
+        patch("sas_mcp_server.tools._common.make_client", return_value=mock_client),
+        patch("sas_mcp_server.tools.compute.make_client", return_value=mock_client),
+    ):
         mcp = FastMCP("Payload Test Server")
 
         async def mock_get_token(ctx):

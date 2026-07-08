@@ -753,7 +753,7 @@ async def test_ml_project_workflow(integration_mcp_server, viya_token):
 
 
 async def test_scoring_workflow(integration_mcp_server, viya_token):
-    """list_registered_models → list_models_and_decisions → score_data.
+    """list_registered_models → list_mas_modules → score_data.
 
     Scores against the most recently modified MAS module on the instance,
     discovering a real step and its input variables rather than guessing.
@@ -762,7 +762,7 @@ async def test_scoring_workflow(integration_mcp_server, viya_token):
         models = (await client.call_tool("list_registered_models", {"limit": 5})).data
         assert isinstance(models, list)
 
-        modules = (await client.call_tool("list_models_and_decisions", {"limit": 5})).data
+        modules = (await client.call_tool("list_mas_modules", {"limit": 5})).data
         assert isinstance(modules, list)
 
     # Identify the latest module directly (sorted by modified time, newest first).
@@ -1411,7 +1411,7 @@ TOOL_COVERAGE = {
     "publish_ml_champion_model": "test_ml_project_workflow",
     "run_ml_project": "test_run_ml_project_workflow",
     "list_registered_models": "test_scoring_workflow",
-    "list_models_and_decisions": "test_scoring_workflow",
+    "list_mas_modules": "test_scoring_workflow",
     "score_data": "test_scoring_workflow",
     "create_business_ruleset": "test_business_rules_and_decisions_workflow",
     "update_business_ruleset": "test_business_rules_and_decisions_workflow",
