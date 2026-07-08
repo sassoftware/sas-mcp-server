@@ -382,7 +382,7 @@ uv run python -m pytest -m "not integration" -v    # any platform, incl. Windows
 ```
 
 This runs the unit suite and **deselects the integration tests**, which then show up in the
-summary as e.g. `27 deselected`. That is expected — those tests are *not* meant to run in a
+summary as e.g. `28 deselected`. That is expected — those tests are *not* meant to run in a
 unit-only pass. They only execute in the integration modes below, because they need a live
 Viya instance; there is no flag that "activates" them in a `not integration` run.
 
