@@ -1,4 +1,4 @@
-## Configuration details for the SAS MCP Server
+## Configuration details for the SAS Viya MCP Server
 
 ### Authentication modes — at a glance
 
