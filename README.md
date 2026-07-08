@@ -1,4 +1,4 @@
-# SAS MCP Server
+# SAS Viya MCP Server
 
 A Model Context Protocol (MCP) server for executing SAS code, training AutoML projects, scoring models and so much more for SAS Viya environments.
 
