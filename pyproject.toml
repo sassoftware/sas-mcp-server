@@ -32,11 +32,16 @@ dev = [
     "ruff>=0.14.4",
 ]
 # Writer used only to generate the binary .xlsx fixture for the upload_data
-# Excel integration test. Without it that test importorskips.
-# Install with: uv sync --group test-formats
+# Excel integration test; without it that test importorskips. Synced by default
+# via [tool.uv] default-groups below, so a plain `uv sync` installs it too.
 test-formats = [
     "openpyxl>=3.1",
 ]
+
+[tool.uv]
+# Include test-formats in a plain `uv sync` so the Excel upload_data integration
+# test runs out of the box, with no separate `--group test-formats` step.
+default-groups = ["dev", "test-formats"]
 
 [tool.ruff]
 target-version = "py312"
