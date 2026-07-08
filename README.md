@@ -365,47 +365,76 @@ Collection mode is designed to be cheap enough to leave on. Measured on this rep
 
 The project includes two layers of tests: **unit tests** (fast, no credentials required) and **integration tests** (run against a real SAS Viya instance).
 
+> **`run_tests.sh` vs. running `pytest` directly — pick by platform.** `run_tests.sh` is a
+> Bash convenience wrapper (it adds the ruff + pyright gates, credential wiring, and JUnit
+> reporting). It runs on **Linux/macOS** — and on Windows only under **Git Bash or WSL**. On
+> **Windows PowerShell or `cmd`**, use the **`uv run python -m pytest …`** commands shown
+> under each mode below. They are cross-platform, do the same test selection, and need no
+> setup beyond `uv sync`.
+
 ### Running Unit Tests
 
 Unit tests verify tool schemas, request payloads, and internal logic without making any network calls:
 
 ```sh
-./run_tests.sh
+./run_tests.sh                                     # Linux/macOS (also runs ruff + pyright)
+uv run python -m pytest -m "not integration" -v    # any platform, incl. Windows PowerShell
 ```
 
-Or directly via pytest:
-
-```sh
-uv run python -m pytest -m "not integration" -v
-```
+This runs the unit suite and **deselects the integration tests**, which then show up in the
+summary as e.g. `27 deselected`. That is expected — those tests are *not* meant to run in a
+unit-only pass. They only execute in the integration modes below, because they need a live
+Viya instance; there is no flag that "activates" them in a `not integration` run.
 
 ### Running Integration Tests
 
-Integration tests call every tool against a live Viya environment. They require credentials, which can be provided via CLI arguments or `.env`:
+Integration tests call every tool against a live Viya environment. They require credentials, provided via `.env` or CLI arguments.
 
-**Using `.env`** (set `VIYA_ENDPOINT`, `VIYA_USERNAME`, `VIYA_PASSWORD`):
+For the **full** integration run (including the Excel `upload_data` test), install the
+optional format dependency first — plain `uv sync` does **not** include it:
+
 ```sh
-./run_tests.sh --integration
+uv sync --group test-formats
 ```
 
-**Using CLI arguments:**
+**Full suite (unit + integration)** — reads `VIYA_ENDPOINT`, `VIYA_USERNAME`, `VIYA_PASSWORD` from `.env`:
+```sh
+./run_tests.sh --integration      # Linux/macOS
+uv run python -m pytest -v        # any platform
+```
+
+**Passing credentials on the command line** (wrapper only):
 ```sh
 ./run_tests.sh --integration \
     --endpoint https://your-viya-server.com \
     --username youruser \
     --password yourpassword
 ```
+With the direct `pytest` command, set the same three variables in `.env` (or export them in your shell) instead.
 
 **Integration tests only** (skip unit tests):
 ```sh
-./run_tests.sh --integration-only
+./run_tests.sh --integration-only                    # Linux/macOS
+uv run python -m pytest -m integration --no-cov -v   # any platform
 ```
 
-**Binary upload formats.** The `upload_data` Excel integration test generates its `.xlsx`
-fixture with `openpyxl`. Install the optional group so it runs instead of `importorskip`-ing:
-`uv sync --group test-formats`. (csv, tsv, and `file_path`/`data_format` coverage needs no
-extra deps.) Generating a `sas7bdat`/`sashdat` fixture requires SAS itself, so those two
-formats are covered by unit-level payload tests only, not live.
+> **The pytest marker is `integration`, not `integration-only`.** `--integration-only` is a
+> flag of the `run_tests.sh` *wrapper*; the underlying pytest marker is just `integration`.
+> Running `pytest -m "integration-only"` matches no marker and silently deselects **all**
+> tests (`0 selected`). Use `-m integration`.
+>
+> **Why `--no-cov`?** `pytest.ini` enforces a 90% coverage floor that only the *full* unit
+> suite reaches. An integration-only run exercises far less code (~65%), so without
+> `--no-cov` pytest exits non-zero with a **coverage** failure even though every selected
+> test passed. `run_tests.sh --integration-only` adds `--no-cov` for you; add it yourself
+> when calling pytest directly (or use `--cov-fail-under=0`).
+
+**Binary upload formats.** The Excel `upload_data` integration test generates its `.xlsx`
+fixture with `openpyxl`, which lives in the optional `test-formats` group installed above.
+Without that group the test `importorskip`s (you'll see it as *skipped*, not failed). csv,
+tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
+`sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
+unit-level payload tests only, not live.
 
 Every one of the 68 tools and 8 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
@@ -413,7 +442,10 @@ guards — adding a new tool or prompt without integration coverage fails the su
 resource-dependent tests discover real targets on the instance: `score_data` scores the most
 recently modified MAS module (discovering a real step and its inputs), and `run_ml_project`
 re-runs the most recently modified `completed` ML project. They `skip` only if the instance
-has no such resource at all.
+has no such resource at all. Likewise, `test_catalog_agents_workflow` `skip`s with *"No
+discovery agent named 'Public'"* on instances where SAS Information Catalog has no discovery
+agent named `Public` configured — an expected skip, not a failure; ask a Viya admin to
+configure one if you need that test to run.
 
 **In CI:** the `.github/workflows/integration.yml` workflow runs this suite on demand
 (manual dispatch, or by adding the `run-integration` label to a PR) using repository
