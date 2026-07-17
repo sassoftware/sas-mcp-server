@@ -622,6 +622,150 @@ async def test_report_workflow(integration_mcp_server):
         assert _embedded_file_bytes(package) > 0
 
 
+async def test_report_authoring_workflow(integration_mcp_server):
+    """describe_report_objects → create_report (one atomic build with data
+    polish + page title + titled chart) → apply_report_operations (relative
+    placement chained on returned names, then save-as) → get_report_outline →
+    copy_report → delete_report.
+
+    Uses the ``Public.HMEQ`` sample table (same anchor as the CAS discovery
+    workflow); every report created here — the build, the save-as result, and
+    the copy — is deleted at the end.
+    """
+    report_name = f"MCP Authoring IT {_SUFFIX}"
+    async with Client(integration_mcp_server) as client:
+        # Discovery is a local catalog read — sanity-check the surfaces the
+        # authoring loop depends on.
+        index = (await client.call_tool("describe_report_objects", {})).data
+        assert any(o["schema_key"] == "keyValue" for o in index["objects"])
+        assert "single KPI number" in index["intent_map"]
+        add_data = (await client.call_tool("describe_report_objects", {"operation": "addData"})).data
+        assert "dataItems" in add_data["example"]["addData"]
+
+        servers = (await client.call_tool("list_cas_servers", {})).data
+        assert servers, "No CAS servers found"
+        cas_server = servers[0]["name"]
+
+        extra_ids: list[str] = []
+        created = (
+            await client.call_tool(
+                "create_report",
+                {
+                    "name": report_name,
+                    "operations": [
+                        {
+                            "addData": {
+                                "cas": {"server": cas_server, "library": "Public", "table": "HMEQ"},
+                                "dataItems": [
+                                    {
+                                        "dataItem": "LOAN",
+                                        "properties": {
+                                            "name": "Loan Amount",
+                                            "format": "DOLLAR12.",
+                                            "aggregation": "average",
+                                        },
+                                    }
+                                ],
+                            }
+                        },
+                        {"addPage": {"pageName": "Overview", "title": "HMEQ Overview"}},
+                        {
+                            "addObject": {
+                                "object": {
+                                    "barChart": {
+                                        "dataSource": "HMEQ",
+                                        "dataRoles": {"category": "REASON", "measures": ["Loan Amount"]},
+                                        "options": {"object": {"title": "Average Loan by Reason"}},
+                                    }
+                                },
+                                "placement": {"page": {"target": "Overview"}},
+                            }
+                        },
+                    ],
+                },
+            )
+        ).data
+        if created.get("status") == "create_failed":
+            pytest.skip(f"Report create failed on this Viya (is Public.HMEQ available?): {created.get('message')}")
+        assert created["status"] == "created"
+        report_id = created["id"]
+        try:
+            # The title expands into a body text object appended at the END of
+            # the batch (so caller op indices survive), giving [barChart, text]
+            # — index-aligned names from the response.
+            objects = created["created"]["objects"]
+            assert [o["type"] for o in objects] == ["barChart", "text"]
+            bar_name = objects[0].get("name")
+            assert bar_name, "create response carried no object names"
+
+            # Chain a KPI tile to the right of the bar chart by its returned name.
+            applied = (
+                await client.call_tool(
+                    "apply_report_operations",
+                    {
+                        "report_id": report_id,
+                        "operations": [
+                            {
+                                "addObject": {
+                                    "object": {
+                                        # keyValue tiles get no title — the measure's
+                                        # label renders prominently on the tile.
+                                        "keyValue": {
+                                            "dataSource": "HMEQ",
+                                            "dataRoles": {"measure": "Loan Amount"},
+                                        }
+                                    },
+                                    "placement": {
+                                        "relativeToObject": {"target": bar_name, "position": "right"}
+                                    },
+                                }
+                            }
+                        ],
+                    },
+                )
+            ).data
+            assert applied["status"] == "applied"
+            assert applied["created"]["objects"][0].get("name")
+
+            # Read the structure back: the page and both chained objects.
+            outline = (await client.call_tool("get_report_outline", {"report_id": report_id})).data
+            assert outline["status"] == "ok"
+            overview = next(p for p in outline["pages"] if p["label"] == "Overview")
+            assert any(o["name"] == bar_name for o in overview["objects"])
+
+            # Save-as: apply to a NEW report, leaving the source untouched.
+            saved = (
+                await client.call_tool(
+                    "apply_report_operations",
+                    {
+                        "report_id": report_id,
+                        "operations": [{"addPage": {"pageName": "SaveAsPage"}}],
+                        "result_report_name": f"{report_name} SaveAs",
+                    },
+                )
+            ).data
+            assert saved["status"] == "applied"
+            assert saved["saved_as"]["id"]
+            extra_ids.append(saved["saved_as"]["id"])
+            source_outline = (await client.call_tool("get_report_outline", {"report_id": report_id})).data
+            assert all(p["label"] != "SaveAsPage" for p in source_outline["pages"])
+
+            copied = (
+                await client.call_tool(
+                    "copy_report", {"report_id": report_id, "name": f"{report_name} Copy"}
+                )
+            ).data
+            assert copied["status"] == "copied"
+            assert copied["id"]
+            extra_ids.append(copied["id"])
+        finally:
+            deleted = (await client.call_tool("delete_report", {"report_id": report_id})).data
+            assert deleted["status"] == "deleted"
+            for extra in extra_ids:
+                with contextlib.suppress(Exception):
+                    await client.call_tool("delete_report", {"report_id": extra})
+
+
 # -----------------------------------------------------------------------
 # ML Project Workflow
 # -----------------------------------------------------------------------
@@ -1200,6 +1344,7 @@ PROMPT_RENDER_ARGS = {
     "explain_sas_code": {"sas_code": "proc print data=sashelp.class; run;"},
     "sas_macro_builder": {"macro_name": "loadcsv", "purpose": "Load a CSV into CAS"},
     "generate_report": {"dataset": "SASHELP.CLASS"},
+    "build_va_dashboard": {"table": "Public.HMEQ"},
 }
 
 
@@ -1399,6 +1544,12 @@ TOOL_COVERAGE = {
     "list_reports": "test_report_workflow",
     "get_report": "test_report_workflow",
     "export_report": "test_report_workflow",
+    "describe_report_objects": "test_report_authoring_workflow",
+    "create_report": "test_report_authoring_workflow",
+    "apply_report_operations": "test_report_authoring_workflow",
+    "get_report_outline": "test_report_authoring_workflow",
+    "copy_report": "test_report_authoring_workflow",
+    "delete_report": "test_report_authoring_workflow",
     "submit_batch_job": "test_batch_job_workflow",
     "get_job_status": "test_batch_job_workflow",
     "list_jobs": "test_batch_job_workflow",

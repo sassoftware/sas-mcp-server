@@ -134,3 +134,43 @@ def register_prompts(mcp: FastMCP) -> None:
             f"- Appropriate summary statistics\n"
             f"- Proper ODS open/close statements"
         ))]
+
+    @mcp.prompt()
+    def build_va_dashboard(table: str,
+                           audience: str | None = None,
+                           focus: str | None = None) -> list[Message]:
+        """Build a polished multi-page Visual Analytics dashboard from a CAS table,
+        using the report-authoring tools (discover → shape → structure → polish → verify)."""
+        audience_line = f"\nAudience: {audience} — match depth and terminology to them." if audience else ""
+        focus_line = f"\nFocus / key questions: {focus}." if focus else ""
+        return [Message(role="user", content=(
+            f"Build a polished SAS Visual Analytics dashboard from the CAS table {table}, "
+            f"using the report-authoring tools (describe_report_objects, create_report, "
+            f"apply_report_operations, get_report_outline, export_report).{audience_line}{focus_line}\n\n"
+            f"Work through these stages in order:\n\n"
+            f"1. DISCOVER — get_castable_columns on {table}; classify each column (measure, "
+            f"category, date, geography); pick 3-5 headline KPIs; sketch a page plan "
+            f"(overview -> detail -> data) BEFORE creating anything. Use "
+            f"describe_report_objects()'s intent_map to pick a deliberate chart variety.\n\n"
+            f"2. SHAPE THE DATA — in addData, use dataItems to rename every used column to a "
+            f"human label, apply formats (DOLLAR/PERCENT/COMMA), set the right aggregation "
+            f"(average for rates and prices — never sum a ratio), and classify geography "
+            f"columns. See describe_report_objects(operation='addData'). After a rename, "
+            f"dataRoles must use the NEW label.\n\n"
+            f"3. STRUCTURE — build the skeleton in ONE atomic create_report: pages with titles "
+            f"(addPage.title renders as a text band at the top of the page body — page headers "
+            f"accept only controls), a KPI row (standardContainer + keyValue tiles), and the "
+            f"main visuals. Then chain apply_report_operations calls for side-by-side layout "
+            f"via relativeToObject, targeting the object names each result returns (same-batch "
+            f"forward references fail; placement is write-once). The page body auto-flows "
+            f"VERTICALLY — objects that are merely page-placed render as one tall stack, so "
+            f"tiles go side by side in the container and charts pair up left/right.\n\n"
+            f"4. POLISH — give every visual a meaningful options.object.title at add time, "
+            f"EXCEPT keyValue tiles (they render their measure's label prominently — name the "
+            f"measure well in dataItems instead); 3-7 objects per page; pie charts only for "
+            f"five or fewer slices; detail rows in a listTable on their own page.\n\n"
+            f"5. VERIFY — after each structural change, get_report_outline for the structure "
+            f"and export_report (png, one page label at a time — whole-report png can render "
+            f"blank) to LOOK at the result; iterate until the overview page answers the key "
+            f"questions in five seconds."
+        ))]

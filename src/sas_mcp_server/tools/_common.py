@@ -13,14 +13,88 @@ is the single shared dependency of the tiers — no tier imports another, so any
 subset of tiers can be registered on its own.
 """
 
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 from fastmcp import Context
 
 from ..viya_client import logger, make_client
 from ..viya_utils import get_cached_session
+
+# --- tolerant input coercion -------------------------------------------------
+# Some MCP clients (observed live: Claude Cowork) serialize optional list/dict
+# parameters as JSON-ENCODED STRINGS ('[{"addData": ...}]' instead of the
+# array), and the model cannot fix that from its side — pydantic rejects the
+# call before the tool body runs. These BeforeValidator coercions absorb the
+# whole failure class server-side without changing the published JSON schema
+# (BeforeValidator does not alter the annotated type's schema).
+
+
+def coerce_json_list(value: Any) -> Any:
+    """Parse a JSON-encoded string into the list it encodes."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(
+                "expected a JSON array (got an unparseable string). Pass the value as a "
+                "real array, not a quoted JSON string."
+            ) from exc
+        if not isinstance(parsed, list):
+            # ValueError, not TypeError: pydantic only converts ValueError into
+            # a clean validation error inside a BeforeValidator.
+            raise ValueError("expected a JSON array; the string decodes to a non-array value.")  # noqa: TRY004
+        return parsed
+    return value
+
+
+def coerce_str_or_json_list(value: Any) -> Any:
+    """Like :func:`coerce_json_list`, but a bare string becomes a 1-element list.
+
+    ``report_objects='["Overview"]'`` and ``report_objects='Overview'`` were both
+    observed live; each has exactly one sensible reading. A string that merely
+    LOOKS like JSON but isn't (a label such as ``'[Draft] Overview'``) is a
+    label, and a double-encoded scalar (``'"Overview"'``) unwraps once.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, ValueError):
+                return [value]  # a label that happens to start with '['
+            if isinstance(parsed, list):
+                return parsed
+            return [value]
+        if text.startswith('"'):
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, ValueError):
+                return [value]
+            if isinstance(parsed, str):
+                return [parsed]
+        return [value]
+    return value
+
+
+def coerce_json_dict(value: Any) -> Any:
+    """Parse a JSON-encoded string into the object it encodes."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(
+                "expected a JSON object (got an unparseable string). Pass the value as a "
+                "real object, not a quoted JSON string."
+            ) from exc
+        if not isinstance(parsed, dict):
+            # ValueError, not TypeError: see coerce_json_list.
+            raise ValueError("expected a JSON object; the string decodes to a non-object value.")  # noqa: TRY004
+        return parsed
+    return value
 
 
 def make_session_helpers(get_token: Callable[[Context], Awaitable[str]]):

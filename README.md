@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 68 tools across 8 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 74 tools across 8 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
 - HTTP-based MCP server compatible with MCP clients
@@ -199,6 +199,12 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **list_reports**: List Visual Analytics reports
 - **get_report**: Get report metadata and definition
 - **export_report**: export a report (or specific report objects) in any format the VA service supports — `package` (zip), `pdf`, `png`, `svg`, `csv`, `tsv`, `xlsx`, or `summary`. Text formats come back inline, `png` as image content, and binary formats (`package`/`pdf`/`xlsx`) as an embedded file with the right MIME type.
+- **describe_report_objects**: Discover what a report can contain — the eight report operations and every addable object (bar chart, list table, geo map, key value, …) with a one-line purpose, its data roles, common options, and an example payload. Call with no arguments for the catalog (including an intent→object map, placement guide, layout recipes, and the API's hard limits), `object_type=` for one object's contract (colloquial aliases like `kpi` resolve), `category=` to filter, or `operation=` for one operation's full shape — `operation="addData"` documents `dataItems` (column renames, SAS formats, aggregations, geography classification). Backs the `apply_report_operations` loop.
+- **create_report**: Create a Visual Analytics report and return its id. Optionally pass an `operations` array to build the whole report in one atomic call; the result carries the created page/object names+labels and a verify hint.
+- **apply_report_operations**: The authoring workhorse — apply an ordered batch of native VA operations (`addData`, `addPage`, `addObject`, `updateObject`, `setParameterValue`, `updateData`, `changeData`, `applyDataView`) to a report. Give a page a **title** with `addPage`'s `title` field (a text band at the top of the page body — VA headers are controls-only); title every chart at add time via `options.object.title`; arrange objects with **placement** — `page`, `relativeToObject` (left/right/top/bottom for columns, rows, and grids), `container` (group into a `standardContainer`), or `report` (`new_page` creates-and-names a page inline for one-batch multi-page reports). The batch is atomic. Validates every operation, object key, and placement against the catalog first (reporting all errors at once), supports `dry_run`, handles the ETag concurrency handshake, and — with `result_report_name`/`result_folder` — applies the batch **save-as** to a new report, leaving the source untouched. Typical loop: `describe_report_objects` → `get_castable_columns` → `apply_report_operations` → `get_report_outline` / `export_report` (png, page-by-page) to verify.
+- **get_report_outline**: Read a report's structure back — pages → objects with the handles the other tools need (object `name` for placement/`updateObject` targets, `label` for `export_report`, page `label` for page placement).
+- **copy_report**: Copy a report to a new one (optionally renaming/refoldering). Pairs with a `changeData` operation for the copy-and-replace pattern.
+- **delete_report**: Delete a report and its content.
 
 #### Tier 4 — Batch Jobs & Async Execution
 - **submit_batch_job**: Submit a SAS job for async execution
@@ -248,6 +254,7 @@ Build and manage SAS Intelligent Decisioning rule sets and decision flows end to
 - **explain_sas_code**: Block-by-block code explanation
 - **sas_macro_builder**: Build production-quality SAS macros
 - **generate_report**: Generate ODS/PROC REPORT code
+- **build_va_dashboard**: Guide a polished multi-page Visual Analytics dashboard build from a CAS table — a discover → shape → structure → polish → verify method over the report-authoring tools
 
 ## MCP Client Configuration
 

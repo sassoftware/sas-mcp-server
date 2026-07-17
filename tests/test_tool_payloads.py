@@ -13,6 +13,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 from fastmcp import Client
 
 from conftest import _make_mock_response
@@ -36,6 +37,12 @@ EXPECTED_TOOLS = [
     "list_reports",
     "get_report",
     "export_report",
+    "describe_report_objects",
+    "create_report",
+    "apply_report_operations",
+    "get_report_outline",
+    "copy_report",
+    "delete_report",
     "submit_batch_job",
     "get_job_status",
     "list_jobs",
@@ -618,6 +625,633 @@ async def test_export_report_unsupported_format(mcp_server_with_mock_client):
     assert result.data["status"] == "unsupported_format"
     assert "package" in result.data["supported"]
     mock_client.get.assert_not_called()
+
+
+# -----------------------------------------------------------------------
+# Tier 3 — Report Authoring (create / apply operations / describe)
+# -----------------------------------------------------------------------
+
+
+async def test_describe_report_objects_index(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("describe_report_objects", {})).data
+
+    assert "operations" in result
+    op_keys = {op["key"] for op in result["operations"]}
+    assert {"addData", "addObject", "addPage", "setParameterValue"} <= op_keys
+    schema_keys = {o["schema_key"] for o in result["objects"]}
+    assert "barChart" in schema_keys and "geoRegion" in schema_keys
+    # Pure local catalog read — no HTTP.
+    mock_client.get.assert_not_called()
+
+
+async def test_describe_report_objects_detail(mcp_server_with_mock_client):
+    mcp, _ = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("describe_report_objects", {"object_type": "bubblePlot"})).data
+
+    assert result["schema_key"] == "bubblePlot"
+    role_names = {r["name"] for r in result["data_roles"]}
+    assert {"xAxis", "yAxis", "size"} <= role_names
+    assert result["commonly_required"] == ["xAxis", "yAxis", "size"]
+    assert "addObject" in result["example"]
+
+
+async def test_describe_report_objects_not_addable(mcp_server_with_mock_client):
+    mcp, _ = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("describe_report_objects", {"object_type": "decisionTree"})).data
+
+    assert result["status"] == "not_addable"
+    assert result["nearest"] == "gradientBoosting"
+
+
+async def test_create_report_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("create_report", {"name": "Cars Dashboard"})).data
+
+    url = mock_client.post.call_args[0][0]
+    assert url.endswith("/visualAnalytics/reports")
+    body = json.loads(mock_client.post.call_args[1]["content"])
+    assert body["resultReportName"] == "Cars Dashboard"
+    assert body["resultNameConflict"] == "rename"
+    assert result["status"] == "created"
+    assert result["id"] == "test-id"
+
+
+async def test_create_report_one_shot_operations(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "create_report",
+            {
+                "name": "Cars",
+                "folder": "/folders/folders/abc",
+                "operations": [
+                    {"addData": {"cas": {"server": "cas-shared-default", "library": "Public", "table": "CARS"}}}
+                ],
+            },
+        )
+
+    body = json.loads(mock_client.post.call_args[1]["content"])
+    assert body["resultFolder"] == "/folders/folders/abc"
+    assert body["operations"][0]["addData"]["cas"]["table"] == "CARS"
+
+
+async def test_create_report_invalid_conflict(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("create_report", {"name": "X", "on_conflict": "merge"})).data
+
+    assert result["status"] == "invalid_request"
+    mock_client.post.assert_not_called()
+
+
+async def test_apply_report_operations_dry_run_normalizes(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {
+                    "report_id": "r1",
+                    "dry_run": True,
+                    "operations": [
+                        {
+                            "addObject": {
+                                "object": {"barChart": {"dataSource": "CARS",
+                                                        "dataRoles": {"category": "Origin", "measures": "MSRP"}}},
+                                "placement": {"page": {"target": "P1"}},
+                            }
+                        }
+                    ],
+                },
+            )
+        ).data
+
+    assert result["status"] == "valid"
+    # A bare column string is normalised to a list for the array-valued role.
+    roles = result["normalized_operations"][0]["addObject"]["object"]["barChart"]["dataRoles"]
+    assert roles["measures"] == ["MSRP"]
+    mock_client.put.assert_not_called()
+
+
+async def test_apply_report_operations_commit_etag(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"rpt-etag"'}
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {
+                    "report_id": "abc123",
+                    "operations": [
+                        {"addPage": {"pageName": "Overview"}},
+                        {
+                            "addObject": {
+                                "object": {"barChart": {"dataSource": "CARS",
+                                                        "dataRoles": {"category": "Origin", "measures": ["MSRP"]}}},
+                                "placement": {"page": {"target": "Overview"}},
+                            }
+                        },
+                    ],
+                },
+            )
+        ).data
+
+    # ETag is read from the Reports service, the operations PUT to Visual Analytics.
+    assert "/reports/reports/abc123" in mock_client.get.call_args[0][0]
+    put_url = mock_client.put.call_args[0][0]
+    assert put_url.endswith("/visualAnalytics/reports/abc123")
+    assert mock_client.put.call_args[1]["headers"]["If-Match"] == '"rpt-etag"'
+    sent = json.loads(mock_client.put.call_args[1]["content"])
+    assert sent["operations"][0]["addPage"]["pageName"] == "Overview"
+    assert result["status"] == "applied"
+    assert result["created"]["pages"][0]["label"] == "Overview"
+    assert "barChart" in {o["type"] for o in result["created"]["objects"]}
+
+
+async def test_apply_report_operations_412_retry(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    resp_412 = _make_mock_response(status_code=412)
+    resp_412.content = b""
+    resp_ok = _make_mock_response({"ok": True}, status_code=200)
+    mock_client.put.side_effect = [resp_412, resp_ok]
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {"report_id": "abc", "operations": [{"addPage": {"pageName": "P"}}]},
+            )
+        ).data
+
+    assert result["status"] == "applied"
+    assert mock_client.put.call_count == 2  # re-read + retry once on the stale ETag
+
+
+async def test_apply_report_operations_http_error_is_structured(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    err = _make_mock_response(status_code=400)
+    err.content = b""
+    err.text = ""
+    mock_client.put.return_value = err
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {"report_id": "abc", "operations": [{"addPage": {"pageName": "P"}}]},
+            )
+        ).data
+
+    assert result["status"] == "apply_failed"
+    assert result["http_status"] == 400
+
+
+async def test_apply_report_operations_attaches_warnings(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {
+                    "report_id": "abc",
+                    "operations": [
+                        {
+                            "addObject": {
+                                "object": {
+                                    "keyValue": {"dataSource": "CARS", "dataRoles": {"latticeCategory": "Origin"}}
+                                },
+                                "placement": {"page": {"target": "P"}},
+                            }
+                        }
+                    ],
+                },
+            )
+        ).data
+
+    # keyValue usually needs a measure; the applied result carries the soft warning.
+    assert result["status"] == "applied"
+    assert any("measure" in w for w in result.get("warnings", []))
+
+
+async def test_apply_report_operations_invalid_object_skips_http(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {
+                    "report_id": "r1",
+                    "operations": [{"addObject": {"object": {"decisionTree": {"dataSource": "CARS"}}}}],
+                },
+            )
+        ).data
+
+    assert result["status"] == "not_addable"
+    assert result["nearest"] == "gradientBoosting"
+    mock_client.put.assert_not_called()
+
+
+async def test_apply_report_operations_page_title_expands(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {
+                    "report_id": "abc",
+                    "operations": [{"addPage": {"pageName": "Overview", "title": "Sales Overview"}}],
+                },
+            )
+        ).data
+
+    sent = json.loads(mock_client.put.call_args[1]["content"])
+    # The page title became a body text band appended after the addPage —
+    # never a header object (VA's page header is controls-only).
+    assert len(sent["operations"]) == 2
+    text = sent["operations"][1]["addObject"]
+    assert text["object"]["text"]["options"]["content"] == "Sales Overview"
+    assert text["placement"]["page"]["context"] == "body"
+    assert text["placement"]["page"]["position"] == "start"
+    assert result["status"] == "applied"
+
+
+async def test_apply_report_operations_relative_placement(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    op = {
+        "addObject": {
+            "object": {"barChart": {"dataSource": "CARS", "dataRoles": {"category": "Origin", "measures": ["MSRP"]}}},
+            "placement": {"relativeToObject": {"target": "kv1", "position": "right"}},
+        }
+    }
+    async with Client(mcp) as client:
+        result = (await client.call_tool("apply_report_operations", {"report_id": "abc", "operations": [op]})).data
+
+    assert result["status"] == "applied"
+    sent = json.loads(mock_client.put.call_args[1]["content"])
+    assert sent["operations"][0]["addObject"]["placement"]["relativeToObject"]["position"] == "right"
+
+
+async def test_apply_report_operations_invalid_placement_skips_http(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    op = {
+        "addObject": {
+            "object": {"barChart": {"dataSource": "CARS", "dataRoles": {"category": "Origin"}}},
+            "placement": {"relativeToObject": {"target": "kv1", "position": "below"}},
+        }
+    }
+    async with Client(mcp) as client:
+        result = (await client.call_tool("apply_report_operations", {"report_id": "abc", "operations": [op]})).data
+
+    assert result["status"] == "invalid_placement"
+    assert "bottom" in result["valid_values"]
+    mock_client.put.assert_not_called()
+
+
+async def test_apply_report_operations_save_as(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    save_as_resp = _make_mock_response(
+        {
+            "resultReportId": "new-42",
+            "resultReportName": "From Template (2)",
+            "operations": [{"name": "vi8", "label": "SaveAsPage", "status": "Success"}],
+        },
+        status_code=201,
+    )
+    save_as_resp.content = b"x"
+    mock_client.put.return_value = save_as_resp
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {
+                    "report_id": "src-1",
+                    "operations": [{"addPage": {"pageName": "SaveAsPage"}}],
+                    "result_report_name": "From Template",
+                },
+            )
+        ).data
+
+    body = json.loads(mock_client.put.call_args[1]["content"])
+    assert body["resultReportName"] == "From Template"
+    assert body["resultNameConflict"] == "rename"
+    # Save-as still uses the SOURCE report's ETag handshake.
+    assert mock_client.put.call_args[1]["headers"]["If-Match"] == '"e1"'
+    assert result["status"] == "applied"
+    assert result["saved_as"]["id"] == "new-42"
+    assert result["saved_as"]["name"] == "From Template (2)"
+    assert result["saved_as"]["open_url"].endswith("/reports/reports/new-42")
+    assert result["created"]["pages"][0]["name"] == "vi8"
+
+
+async def test_apply_report_operations_accepts_stringified_list(mcp_server_with_mock_client):
+    """Some clients (observed live) send list params as JSON-encoded strings —
+    the tool coerces them instead of failing pydantic validation."""
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {"report_id": "abc", "operations": '[{"addPage": {"pageName": "P"}}]'},
+            )
+        ).data
+
+    assert result["status"] == "applied"
+    sent = json.loads(mock_client.put.call_args[1]["content"])
+    assert sent["operations"][0]["addPage"]["pageName"] == "P"
+
+
+async def test_export_report_accepts_stringified_and_bare_report_objects(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    csv_resp = _make_mock_response(status_code=200)
+    csv_resp.content = b"a,b"
+    csv_resp.text = "a,b"
+    csv_resp.headers = {"content-type": "text/csv"}
+    mock_client.get.return_value = csv_resp
+    async with Client(mcp) as client:
+        # JSON-encoded list
+        r1 = await client.call_tool(
+            "export_report",
+            {"report_id": "rep1", "export_format": "csv", "report_objects": '["Overview"]'},
+        )
+        # bare string -> one-element list
+        r2 = await client.call_tool(
+            "export_report",
+            {"report_id": "rep1", "export_format": "csv", "report_objects": "Overview"},
+        )
+    assert r1.content and r2.content
+    assert mock_client.get.call_count == 2
+
+
+def test_coerce_helpers_edge_cases():
+    from sas_mcp_server.tools._common import coerce_json_list, coerce_str_or_json_list
+
+    # A label that merely LOOKS like JSON is a label, not an error.
+    assert coerce_str_or_json_list("[Draft] Overview") == ["[Draft] Overview"]
+    # A double-encoded scalar unwraps once.
+    assert coerce_str_or_json_list('"Overview"') == ["Overview"]
+    assert coerce_str_or_json_list('["A", "B"]') == ["A", "B"]
+    assert coerce_str_or_json_list("Overview") == ["Overview"]
+    assert coerce_str_or_json_list(["A"]) == ["A"]
+    assert coerce_json_list('[{"a": 1}]') == [{"a": 1}]
+    with pytest.raises(ValueError):
+        coerce_json_list('{"a": 1}')  # object where an array is required
+
+
+async def test_create_report_attaches_warnings(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "create_report",
+                {
+                    "name": "Stacked",
+                    "operations": [
+                        {
+                            "addObject": {
+                                "object": {"barChart": {"dataSource": "T", "dataRoles": {"category": "C"}}},
+                                "placement": {"page": {"target": "P"}},
+                            }
+                        }
+                    ],
+                },
+            )
+        ).data
+
+    assert result["status"] == "created"
+    assert any("renders EMPTY" in w for w in result["warnings"])
+
+
+async def test_business_ruleset_accepts_stringified_signature(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "create_business_ruleset",
+            {
+                "name": "RS",
+                "signature": '[{"name": "score", "dataType": "decimal", "direction": "input"}]',
+            },
+        )
+
+    body = mock_client.post.call_args[1]["json"]
+    assert body["signature"][0]["name"] == "score"
+
+
+async def test_report_results_carry_open_url(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    async with Client(mcp) as client:
+        created = (await client.call_tool("create_report", {"name": "Cars"})).data
+        applied = (
+            await client.call_tool(
+                "apply_report_operations",
+                {"report_id": "abc", "operations": [{"addPage": {"pageName": "P"}}]},
+            )
+        ).data
+
+    assert created["open_url"].endswith("/SASVisualAnalytics/?reportUri=/reports/reports/test-id")
+    assert applied["open_url"].endswith("/SASVisualAnalytics/?reportUri=/reports/reports/abc")
+
+
+async def test_apply_text_misroute_detected_via_content_check(mcp_server_with_mock_client):
+    """When a batch creates text objects and the stored content does not match,
+    the result carries text_content_warning (one extra content GET)."""
+    mcp, mock_client = mcp_server_with_mock_client
+    etag_resp = _make_mock_response()
+    etag_resp.headers = {"etag": '"e1"'}
+    content_resp = _make_mock_response(
+        {
+            "visualElements": [
+                {"@element": "Text", "name": "ve9", "labelAttribute": "Text 1",
+                 "paragraphList": [{"elements": [{"text": "WRONG CONTENT"}]}]},
+            ],
+            "view": {"sections": [{"name": "vi7", "label": "P",
+                                   "body": {"containedElementList": [{"@element": "Visual", "ref": "ve9"}]}}]},
+        }
+    )
+    mock_client.get.side_effect = [etag_resp, content_resp]
+    put_resp = _make_mock_response(
+        {"operations": [{"name": "ve9", "label": "Text 1", "status": "Success"}]}, status_code=200
+    )
+    put_resp.content = b"x"
+    mock_client.put.return_value = put_resp
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {
+                    "report_id": "abc",
+                    "operations": [
+                        {"addObject": {"object": {"text": {"options": {"content": "Intended Title"}}},
+                                       "placement": {"page": {"target": "P"}}}}
+                    ],
+                },
+            )
+        ).data
+
+    assert result["status"] == "applied"
+    assert "misroutes" in result["text_content_warning"]
+    assert "Intended Title" in result["text_content_warning"]
+
+
+async def test_get_castable_columns_404_is_structured(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    missing = _make_mock_response(status_code=404)
+    missing.content = b""
+    missing.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=missing)
+    )
+    mock_client.get.return_value = missing
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "get_castable_columns",
+                {"server_id": "cas-shared-default", "caslib_name": "Public", "table_name": "GHOST"},
+            )
+        ).data
+
+    assert result["status"] == "not_found"
+    assert "PROMOTE=YES" in result["message"]
+    assert "promote_table_to_memory" in result["message"]
+
+
+async def test_apply_report_operations_blank_save_as_rejected(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {
+                    "report_id": "src-1",
+                    "operations": [{"addPage": {"pageName": "P"}}],
+                    "result_report_name": "  ",
+                },
+            )
+        ).data
+
+    # A blank save-as name would silently edit the source in place.
+    assert result["status"] == "invalid_request"
+    mock_client.put.assert_not_called()
+
+
+async def test_apply_report_operations_failure_parses_operation_errors(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e1"'}
+    err = _make_mock_response(status_code=400)
+    err.content = b"x"
+    err.text = (
+        '{"operations": [{"status": "Failed", "messages": ["The target was not found in the report: veX"]}],'
+        '"status": "Failed", "messages": ["Operation addObject failed at index 0"]}'
+    )
+    mock_client.put.return_value = err
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "apply_report_operations",
+                {"report_id": "abc", "operations": [{"addPage": {"pageName": "P"}}]},
+            )
+        ).data
+
+    assert result["status"] == "apply_failed"
+    assert result["failed_operation_index"] == 0
+    assert "veX" in result["failed_operations"][0]["messages"][0]
+
+
+async def test_get_report_outline_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    content = {
+        "visualElements": [{"@element": "Text", "name": "ve9", "labelAttribute": "Text 1"}],
+        "view": {
+            "sections": [
+                {"name": "vi7", "label": "Overview",
+                 "body": {"containedElementList": [{"@element": "Visual", "ref": "ve9"}]}}
+            ]
+        },
+    }
+    outline_resp = _make_mock_response(content)
+    mock_client.get.return_value = outline_resp
+    async with Client(mcp) as client:
+        result = (await client.call_tool("get_report_outline", {"report_id": "rpt-1"})).data
+
+    url = mock_client.get.call_args[0][0]
+    assert url.endswith("/reports/reports/rpt-1/content")
+    # The BIRD content read requires the vnd media type (application/json gets a 415).
+    assert mock_client.get.call_args[1]["headers"]["Accept"] == "application/vnd.sas.report.content+json"
+    assert result["status"] == "ok"
+    assert result["pages"][0]["label"] == "Overview"
+    assert result["pages"][0]["objects"][0] == {"name": "ve9", "type": "Text", "label": "Text 1"}
+
+
+async def test_describe_report_objects_operation_mode(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("describe_report_objects", {"operation": "addData"})).data
+
+    assert result["key"] == "addData"
+    assert "dataItems" in result["example"]["addData"]
+    mock_client.get.assert_not_called()
+
+
+async def test_copy_report_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    copy_resp = _make_mock_response({"resultReportId": "copy-9"}, status_code=201)
+    copy_resp.content = b'{"resultReportId": "copy-9"}'
+    mock_client.put.return_value = copy_resp
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool("copy_report", {"report_id": "src-1", "name": "My Copy"})
+        ).data
+
+    url = mock_client.put.call_args[0][0]
+    assert url.endswith("/visualAnalytics/reports/src-1/copy")
+    # A copy mints a new report — no ETag/If-Match handshake.
+    assert "If-Match" not in mock_client.put.call_args[1]["headers"]
+    body = json.loads(mock_client.put.call_args[1]["content"])
+    assert body["resultReportName"] == "My Copy"
+    assert body["resultNameConflict"] == "rename"
+    assert result["status"] == "copied"
+    assert result["id"] == "copy-9"
+    assert result["source_report_id"] == "src-1"
+
+
+async def test_copy_report_invalid_conflict(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("copy_report", {"report_id": "src", "on_conflict": "merge"})).data
+
+    assert result["status"] == "invalid_request"
+    mock_client.put.assert_not_called()
+
+
+async def test_delete_report_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("delete_report", {"report_id": "rpt-9"})).data
+
+    url = mock_client.delete.call_args[0][0]
+    assert url.endswith("/visualAnalytics/reports/rpt-9")
+    assert result["status"] == "deleted"
+    assert result["report_id"] == "rpt-9"
+
+
+async def test_delete_report_not_found_is_structured(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    missing = _make_mock_response(status_code=404)
+    missing.content = b""
+    mock_client.delete.return_value = missing
+    async with Client(mcp) as client:
+        result = (await client.call_tool("delete_report", {"report_id": "ghost"})).data
+
+    assert result["status"] == "not_found"
 
 
 # -----------------------------------------------------------------------
