@@ -6,13 +6,18 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
+from pydantic import BeforeValidator
 
 from ..config import VIYA_ENDPOINT
 from ..viya_client import contains_filter, delete_resource, get_json, get_paged_items, post_json, put_json, return_items
-from ._common import make_session_helpers
+from ._common import coerce_json_list, make_session_helpers
+
+# Tolerant alias for list params some MCP clients deliver as JSON-encoded
+# strings (see _common.coerce_json_list). The published schema is unchanged.
+DictListParam = Annotated[list[dict[str, Any]], BeforeValidator(coerce_json_list)]
 
 
 def _build_decision_flow_body(
@@ -54,7 +59,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
     @mcp.tool()
     async def create_business_ruleset(
-        name: str, signature: list[dict[str, Any]], ctx: Context, description: str | None = None
+        name: str, signature: DictListParam, ctx: Context, description: str | None = None
     ) -> dict[str, Any]:
         """Create a new SAS Business Rules rule set.
 
@@ -75,7 +80,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
     @mcp.tool()
     async def update_business_ruleset(
-        ruleset_id: str, name: str, signature: list[dict[str, Any]], ctx: Context, description: str | None = None
+        ruleset_id: str, name: str, signature: DictListParam, ctx: Context, description: str | None = None
     ) -> dict[str, Any]:
         """Update an existing SAS Business Rules rule set's name/description/signature.
 
@@ -196,8 +201,8 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         name: str,
         conditional: str,
         rule_fired_tracking_enabled: bool,
-        conditions: list[dict[str, Any]],
-        actions: list[dict[str, Any]],
+        conditions: DictListParam,
+        actions: DictListParam,
         ctx: Context,
     ) -> dict[str, Any]:
         """Create a new rule inside an existing SAS Business Rules rule set.
@@ -243,8 +248,8 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         name: str,
         conditional: str,
         rule_fired_tracking_enabled: bool,
-        conditions: list[dict[str, Any]],
-        actions: list[dict[str, Any]],
+        conditions: DictListParam,
+        actions: DictListParam,
         ctx: Context,
     ) -> dict[str, Any]:
         """Update an existing rule inside a SAS Business Rules rule set.
@@ -311,8 +316,8 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
     @mcp.tool()
     async def create_decision_flow(
         name: str,
-        signature: list[dict[str, Any]],
-        rule_set_steps: list[dict[str, Any]],
+        signature: DictListParam,
+        rule_set_steps: DictListParam,
         ctx: Context,
         description: str | None = None,
     ) -> dict[str, Any]:
@@ -341,8 +346,8 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
     async def update_decision_flow(
         decision_id: str,
         name: str,
-        signature: list[dict[str, Any]],
-        rule_set_steps: list[dict[str, Any]],
+        signature: DictListParam,
+        rule_set_steps: DictListParam,
         ctx: Context,
         description: str | None = None,
     ) -> dict[str, Any]:

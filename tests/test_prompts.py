@@ -39,6 +39,7 @@ async def test_all_prompts_registered(prompt_mcp):
         "explain_sas_code",
         "sas_macro_builder",
         "generate_report",
+        "build_va_dashboard",
     }
     prompts = await prompt_mcp.list_prompts()
     registered = {p.name for p in prompts}
@@ -133,3 +134,27 @@ async def test_generate_report(prompt_mcp):
     assert "detailed" in content
     assert "PDF" in content
     assert "WORK.SALES" in content
+
+
+async def test_build_va_dashboard(prompt_mcp):
+    """Test build_va_dashboard prompt."""
+    prompt_fn = await _prompt_fn(prompt_mcp, "build_va_dashboard")
+    messages = prompt_fn(table="Public.HMEQ", audience="executives", focus="loan default risk")
+    content = messages[0].content.text
+    assert "Public.HMEQ" in content
+    assert "executives" in content
+    assert "loan default risk" in content
+    # The method stages and the tools they lean on are all named.
+    for stage in ("DISCOVER", "SHAPE THE DATA", "STRUCTURE", "POLISH", "VERIFY"):
+        assert stage in content
+    for tool in ("create_report", "apply_report_operations", "get_report_outline", "export_report"):
+        assert tool in content
+
+
+async def test_build_va_dashboard_minimal(prompt_mcp):
+    """Optional args omitted — no dangling audience/focus lines."""
+    prompt_fn = await _prompt_fn(prompt_mcp, "build_va_dashboard")
+    content = prompt_fn(table="Public.CARS")[0].content.text
+    assert "Public.CARS" in content
+    assert "Audience:" not in content
+    assert "Focus" not in content.split("\n")[0]
