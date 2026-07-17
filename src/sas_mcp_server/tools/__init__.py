@@ -21,6 +21,7 @@ cause server-side work, across whichever tiers are enabled. See
 """
 
 from collections.abc import Awaitable, Callable, Iterable
+from typing import cast
 
 from fastmcp import Context, FastMCP
 
@@ -133,15 +134,18 @@ def register_tools(
     """
     enabled = resolve_enabled_tiers(tiers)
     ro = MCP_READ_ONLY if read_only is None else bool(read_only)
-    target: FastMCP | ReadOnlyGate = ReadOnlyGate(mcp) if ro else mcp
+    gate = ReadOnlyGate(mcp) if ro else None
+    # The gate stands in for the server by duck-typing ``tool()`` — deliberate,
+    # so the tiers register unmodified — which a static type cannot express.
+    target = cast(FastMCP, gate) if gate is not None else mcp
     logger.info("Registering tool tiers: %s (read_only=%s)", sorted(enabled), ro)
     for tier in sorted(enabled):
         _TIER_REGISTRARS[tier](target, get_token)
-    if isinstance(target, ReadOnlyGate):
+    if gate is not None:
         logger.info(
             "Read-only mode: withheld %d mutating tool(s): %s",
-            len(target.withheld),
-            ", ".join(sorted(target.withheld)),
+            len(gate.withheld),
+            ", ".join(sorted(gate.withheld)),
         )
 
 
