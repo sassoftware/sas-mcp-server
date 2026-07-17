@@ -152,6 +152,31 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 MCP_TIERS=0-3 uv run app
 ```
 
+### Read-only mode
+
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 43 of the 74 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+
+This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
+
+```sh
+# Every read tool, all tiers
+MCP_READ_ONLY=true uv run app
+
+# Read tools of the reporting and decisioning tiers only
+MCP_TIERS=3,7 MCP_READ_ONLY=true uv run app
+```
+
+The definition is strict: a tool qualifies only if it can neither write nor start work. Beyond the obvious create/update/delete tools, that withholds:
+
+| Withheld | Why |
+|---|---|
+| `execute_sas_code`, `submit_batch_job` | Run arbitrary code — can perform any operation, including deletes |
+| `score_data`, `catalog_run_agent`, `catalog_run_adhoc_analysis` | Start server-side jobs and leave run records, though they return data |
+| `promote_table_to_memory` | Mutates CAS in-memory state |
+| `cancel_job`, `reset_compute_session` | Destroy something the caller owns |
+
+Classification is fail-closed: a tool that is not explicitly classified as read-only is withheld. The list lives in [`src/sas_mcp_server/tools/_access.py`](src/sas_mcp_server/tools/_access.py), and a test asserts it covers every registered tool, so a newly added tool cannot silently land in read-only mode.
+
 ### Available Tools
 
 The headings below match the numbered **tiers** above, so `MCP_TIERS` maps directly to the tools you expose (e.g. `MCP_TIERS=0-3` gives Tiers 0–3).

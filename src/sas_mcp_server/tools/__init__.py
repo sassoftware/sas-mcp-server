@@ -13,13 +13,18 @@ its own.
 with the ``MCP_TIERS`` env var (e.g. ``"0-4"`` or ``"0,1,7"``); unset means all
 tiers. Callers may also pass ``tiers=`` explicitly (a spec string or an iterable
 of tier numbers), which overrides the env var.
+
+A second, independent axis selects *verbs* rather than domains: ``MCP_READ_ONLY``
+(or ``read_only=``) withholds every tool that could change server-side state or
+cause server-side work, across whichever tiers are enabled. See
+:mod:`sas_mcp_server.tools._access`.
 """
 
 from collections.abc import Awaitable, Callable, Iterable
 
 from fastmcp import Context, FastMCP
 
-from ..config import MCP_TIERS
+from ..config import MCP_READ_ONLY, MCP_TIERS
 from ..exceptions import ConfigError
 from ..viya_client import logger
 from . import (
@@ -32,6 +37,7 @@ from . import (
     model_scoring,
     reports,
 )
+from ._access import READ_ONLY_TOOLS, WRITE_TOOLS, ReadOnlyGate
 
 Registrar = Callable[[FastMCP, Callable[[Context], Awaitable[str]]], None]
 
@@ -109,6 +115,7 @@ def register_tools(
     mcp: FastMCP,
     get_token: Callable[[Context], Awaitable[str]],
     tiers: str | Iterable[int] | None = None,
+    read_only: bool | None = None,
 ) -> None:
     """Register the enabled tiers' tools on *mcp*.
 
@@ -120,16 +127,29 @@ def register_tools(
         tiers: Optional tier selection — a spec string (``"0-4,7"``), an iterable
             of tier numbers, or ``None`` to use the ``MCP_TIERS`` env var (all
             tiers when unset).
+        read_only: When true, register only the read-only tools of the enabled
+            tiers; mutating tools are never registered, so they do not appear in
+            ``list_tools``. ``None`` uses the ``MCP_READ_ONLY`` env var.
     """
     enabled = resolve_enabled_tiers(tiers)
-    logger.info("Registering tool tiers: %s", sorted(enabled))
+    ro = MCP_READ_ONLY if read_only is None else bool(read_only)
+    target: FastMCP | ReadOnlyGate = ReadOnlyGate(mcp) if ro else mcp
+    logger.info("Registering tool tiers: %s (read_only=%s)", sorted(enabled), ro)
     for tier in sorted(enabled):
-        _TIER_REGISTRARS[tier](mcp, get_token)
+        _TIER_REGISTRARS[tier](target, get_token)
+    if isinstance(target, ReadOnlyGate):
+        logger.info(
+            "Read-only mode: withheld %d mutating tool(s): %s",
+            len(target.withheld),
+            ", ".join(sorted(target.withheld)),
+        )
 
 
 __all__ = [
     "ALL_TIERS",
+    "READ_ONLY_TOOLS",
     "TIER_TITLES",
+    "WRITE_TOOLS",
     "register_tools",
     "resolve_enabled_tiers",
 ]
