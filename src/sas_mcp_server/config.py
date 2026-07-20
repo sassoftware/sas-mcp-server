@@ -10,7 +10,7 @@ from fastmcp.server.auth import OAuthProxy
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from mcp.server.auth.provider import AccessToken
 
-from .env import _FALSE, _TRUE, env_bool
+from .env import env_bool
 from .exceptions import ConfigError
 
 load_dotenv()
