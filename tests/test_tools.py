@@ -255,6 +255,15 @@ def test_make_client_preserves_bearer_prefix(mock_env_vars):
         assert call_kwargs["headers"]["Authorization"] == "Bearer my-token"
 
 
+def test_make_client_without_token_omits_auth_header(mock_env_vars):
+    """make_client(None) should send no Authorization header."""
+    with patch("sas_mcp_server.viya_client.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = MagicMock()
+        make_client(None)
+        call_kwargs = mock_cls.call_args[1]
+        assert call_kwargs["headers"] == {}
+
+
 # ---------------------------------------------------------------------------
 # return_items
 # ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ import json
 
 import httpx
 
-from .config import CONTEXT_NAME, VIYA_ENDPOINT
+from .config import COMPUTE_SESSION_ID, CONTEXT_NAME, VIYA_ENDPOINT
 from .viya_client import logger, make_client
 
 
@@ -196,12 +196,15 @@ class _ComputeSessionCache:
 
 
 _SESSION_CACHE = _ComputeSessionCache()
+_FIXED_SESSION_JOB_LOCK = asyncio.Lock()
 
 
 async def get_cached_session(
     client: httpx.AsyncClient, context_name: str, token: str
 ) -> str:
     """Return the reusable compute session id for the token's user + context."""
+    if COMPUTE_SESSION_ID:
+        return COMPUTE_SESSION_ID
     return await _SESSION_CACHE.get_or_create(
         client, context_name, _token_user_key(token), token
     )
@@ -214,6 +217,8 @@ async def reset_cached_session(
 
     Returns the deleted session id, or ``None`` if there was no cached session.
     """
+    if COMPUTE_SESSION_ID:
+        return None
     return await _SESSION_CACHE.reset(client, context_name, _token_user_key(token))
 
 
@@ -285,9 +290,17 @@ async def run_one_snippet(
     async with make_client(token) as client:
         sid = await get_cached_session(client, CONTEXT_NAME, token)
         try:
-            jid = await submit_job(client, sid, code)
-            logger.info("Job submitted: %s", jid)
-            state, log_text, listing_text = await wait_job(client, sid, jid)
+            # A fixed externally managed session (e.g. "0001") can be shared
+            # across callers; serialize job runs to avoid session-state races.
+            if COMPUTE_SESSION_ID:
+                async with _FIXED_SESSION_JOB_LOCK:
+                    jid = await submit_job(client, sid, code)
+                    logger.info("Job submitted: %s", jid)
+                    state, log_text, listing_text = await wait_job(client, sid, jid)
+            else:
+                jid = await submit_job(client, sid, code)
+                logger.info("Job submitted: %s", jid)
+                state, log_text, listing_text = await wait_job(client, sid, jid)
             logger.info("Job completed: %s", state)
             return {
                 "snippet_id": snippet_id,

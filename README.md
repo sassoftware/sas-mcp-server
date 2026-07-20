@@ -115,6 +115,10 @@ curl -H "Authorization: Bearer $VIYA_TOKEN" http://localhost:8134/mcp ...
 
 The server validates the token against Viya's JWKS and uses it upstream as-is, bypassing the MCP JWT swap. The default OAuth2 PKCE flow keeps working alongside — both client types share the same `/mcp` endpoint.
 
+If your Viya APIs are intentionally exposed without auth (for example, a local/dev Compute API endpoint), set `VIYA_AUTH=false` to bypass all SASLogon/OAuth flows in both HTTP and stdio modes. In this mode the server sends upstream requests without an `Authorization` header.
+
+If your compute deployment does not expose `/compute/contexts` and only supports a fixed session, set `COMPUTE_SESSION_ID=<session_id>`. The compute tools will use that session directly instead of creating context-backed sessions.
+
 ### Choosing a deployment mode
 
 | | **HTTP** | **Stdio** | **Docker** |

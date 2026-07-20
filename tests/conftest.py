@@ -41,6 +41,9 @@ def mock_env_vars(monkeypatch):
     monkeypatch.setenv("HOST_PORT", "8134")
     monkeypatch.setenv("MCP_SIGNING_KEY", "test-key")
     monkeypatch.setenv("COMPUTE_CONTEXT_NAME", "Test Context")
+    monkeypatch.setenv("VIYA_AUTH", "true")
+    monkeypatch.setenv("MCP_TIERS", "")
+    monkeypatch.setenv("COMPUTE_SESSION_ID", "")
 
 
 @pytest.fixture
@@ -200,7 +203,7 @@ def mcp_server_with_mock_client():
             return "test-token"
 
         from sas_mcp_server.tools import register_tools
-        register_tools(mcp, mock_get_token)
+        register_tools(mcp, mock_get_token, tiers="")
         yield mcp, mock_client
 
 

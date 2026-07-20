@@ -17,7 +17,7 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .config import VIYA_ENDPOINT, viya_auth
+from .config import AUTH_ENABLED, VIYA_ENDPOINT, viya_auth
 from .exceptions import AuthenticationError
 from .prompts import register_prompts
 from .telemetry import install_telemetry
@@ -66,12 +66,20 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict]:
 
 # Initialize the FastMCP server
 logger.info("Connecting to SAS Viya at %s", VIYA_ENDPOINT)
-mcp = FastMCP("SAS Viya Execution MCP Server", auth=viya_auth, lifespan=_lifespan)
+_mcp_kwargs: dict[str, Any] = {"lifespan": _lifespan}
+if AUTH_ENABLED:
+    _mcp_kwargs["auth"] = viya_auth
+else:
+    logger.warning(
+        "VIYA_AUTH=false: SASLogon authentication is disabled; Viya API calls are sent without Authorization headers"
+    )
+mcp = FastMCP("SAS Viya Execution MCP Server", **_mcp_kwargs)
 # Opt-in telemetry (no-op unless COLLECTION_MODE is enabled). Added FIRST so it
 # is the OUTERMOST middleware — it wraps AuthMiddleware and the tool, so an auth
 # failure is recorded as status="error" and re-raised unchanged.
 install_telemetry(mcp, "http")
-mcp.add_middleware(AuthMiddleware())
+if AUTH_ENABLED:
+    mcp.add_middleware(AuthMiddleware())
 
 
 @mcp.custom_route("/health", methods=["GET"])
@@ -82,6 +90,8 @@ async def health_check(request: Request) -> JSONResponse:
 
 # Token getter for HTTP mode: reads from context state set by AuthMiddleware
 async def _http_get_token(ctx: Context) -> str:
+    if not AUTH_ENABLED:
+        return ""
     token = await ctx.get_state("access_token")
     if not token:
         raise AuthenticationError("No auth header found. Cannot authenticate to Viya")

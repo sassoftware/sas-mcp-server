@@ -25,6 +25,13 @@ from sas_mcp_server.viya_utils import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _default_dynamic_compute_sessions():
+    """Keep tests on the context-backed session path unless overridden."""
+    with patch("sas_mcp_server.viya_utils.COMPUTE_SESSION_ID", ""):
+        yield
+
+
 def _resp(json_data=None, status_code=200):
     """Build a minimal sync mock HTTP response for compute-cache tests."""
     resp = MagicMock()
@@ -445,6 +452,18 @@ async def test_get_cached_session_is_per_user(mock_env_vars):
 
 
 @pytest.mark.asyncio
+async def test_get_cached_session_fixed_session_mode_skips_context_lookup(mock_env_vars):
+    """When COMPUTE_SESSION_ID is set, no context/session APIs are called."""
+    clear_session_cache()
+    client = AsyncMock()
+    with patch("sas_mcp_server.viya_utils.COMPUTE_SESSION_ID", "0001"):
+        sid = await get_cached_session(client, "Ctx", "tok-fixed")
+    assert sid == "0001"
+    client.get.assert_not_called()
+    client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_reset_cached_session_deletes_and_forgets(mock_env_vars):
     """Reset deletes the server-side session and clears the cache entry."""
     clear_session_cache()
@@ -471,6 +490,15 @@ async def test_reset_cached_session_noop_when_empty(mock_env_vars):
     client = AsyncMock()
 
     assert await reset_cached_session(client, "Ctx", "tok-ddd") is None
+    client.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reset_cached_session_fixed_session_mode_is_noop(mock_env_vars):
+    """Fixed-session mode leaves externally managed sessions untouched."""
+    client = AsyncMock()
+    with patch("sas_mcp_server.viya_utils.COMPUTE_SESSION_ID", "0001"):
+        assert await reset_cached_session(client, "Ctx", "tok-any") is None
     client.delete.assert_not_called()
 
 

@@ -36,6 +36,7 @@ def test_config_loading_with_env_vars(mock_env_vars):
     assert cfg.HOST_PORT == 8134
     assert cfg.MCP_SIGNING_KEY == "test-key"
     assert cfg.CONTEXT_NAME == "Test Context"
+    assert cfg.AUTH_ENABLED is True
 
     # Derived endpoints
     assert cfg.AUTHORIZATION_ENDPOINT == "https://test.viya.com/SASLogon/oauth/authorize"
@@ -74,6 +75,7 @@ def test_config_default_values(monkeypatch):
     monkeypatch.delenv("HOST_PORT", raising=False)
     monkeypatch.delenv("MCP_SIGNING_KEY", raising=False)
     monkeypatch.delenv("COMPUTE_CONTEXT_NAME", raising=False)
+    monkeypatch.delenv("VIYA_AUTH", raising=False)
     # Block module-level load_dotenv from repopulating from .env.
     with patch('dotenv.load_dotenv'):
         cfg = _reload_config()
@@ -81,3 +83,23 @@ def test_config_default_values(monkeypatch):
     assert cfg.HOST_PORT == 8134
     assert cfg.MCP_SIGNING_KEY == "default"
     assert cfg.CONTEXT_NAME == "SAS Job Execution compute context"
+    assert cfg.AUTH_ENABLED is True
+
+
+def test_config_viya_auth_enabled(monkeypatch):
+    """VIYA_AUTH env var is parsed as the auth toggle."""
+    monkeypatch.setenv("VIYA_ENDPOINT", "https://test.viya.com")
+    monkeypatch.setenv("VIYA_AUTH", "false")
+    with patch("dotenv.load_dotenv"):
+        cfg = _reload_config()
+    assert cfg.AUTH_ENABLED is False
+
+
+def test_config_mcp_base_url_comment_value_falls_back_to_default(monkeypatch):
+    """Comment-like MCP_BASE_URL values are ignored and defaulted."""
+    monkeypatch.setenv("VIYA_ENDPOINT", "https://test.viya.com")
+    monkeypatch.setenv("HOST_PORT", "8134")
+    monkeypatch.setenv("MCP_BASE_URL", "# invalid")
+    with patch("dotenv.load_dotenv"):
+        cfg = _reload_config()
+    assert cfg.MCP_BASE_URL == "http://localhost:8134"
