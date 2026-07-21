@@ -21,6 +21,7 @@ import base64
 import binascii
 import hashlib
 import json
+from contextlib import nullcontext
 
 import httpx
 
@@ -292,12 +293,8 @@ async def run_one_snippet(
         try:
             # A fixed externally managed session (e.g. "0001") can be shared
             # across callers; serialize job runs to avoid session-state races.
-            if COMPUTE_SESSION_ID:
-                async with _FIXED_SESSION_JOB_LOCK:
-                    jid = await submit_job(client, sid, code)
-                    logger.info("Job submitted: %s", jid)
-                    state, log_text, listing_text = await wait_job(client, sid, jid)
-            else:
+            job_lock = _FIXED_SESSION_JOB_LOCK if COMPUTE_SESSION_ID else nullcontext()
+            async with job_lock:
                 jid = await submit_job(client, sid, code)
                 logger.info("Job submitted: %s", jid)
                 state, log_text, listing_text = await wait_job(client, sid, jid)
