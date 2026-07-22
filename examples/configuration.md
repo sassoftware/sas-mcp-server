@@ -2,7 +2,7 @@
 
 ### Authentication modes — at a glance
 
-The server supports five authentication paths across HTTP and stdio modes. Pick one per deployment; HTTP mode lets PKCE and raw-bearer clients share the same endpoint.
+The server supports six authentication paths across HTTP and stdio modes. Pick one per deployment; HTTP mode lets PKCE and raw-bearer clients share the same endpoint.
 
 | Mode                              | Transport | What the client does                                      | What the server does                                                                                        | Admin client registration?                                                                        | External CLI?     | Best for                                                                                                                    |
 | --------------------------------- | --------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -11,11 +11,13 @@ The server supports five authentication paths across HTTP and stdio modes. Pick 
 | **`sas-viya` CLI cache**          | stdio     | Runs `sas-viya auth loginCode` once                       | Reads access token from `~/.sas/credentials.json` on each tool call                                         | ❌ Not needed (uses built-in `sas.cli` client)                                                    | ✅ `sas-viya` CLI | Operators who already use the SAS Viya CLI                                                                                  |
 | **`sas-mcp-login` cache**         | stdio     | Runs `uv run sas-mcp-login` once                          | Reads access token from `~/.sas-mcp-server/credentials.json` on each tool call                              | ❌ Not needed (uses built-in `vscode` client)                                                     | ❌ None           | Zero-prereq bootstrap; lowest friction on Viya 2022.11+                                                                     |
 | **Native device-code (fallback)** | stdio     | None — server prints a URL and code on first tool call    | RFC 8628 device-authorization flow against SAS Logon                                                        | ⚠️ Only if your registered client has the device-code grant type                                  | ❌ None           | Viya deployments that don't CSRF-protect `/SASLogon/oauth/device_authorization`                                             |
+| **No-auth mode**                  | HTTP/stdio | Sets `VIYA_AUTH=false`                                      | Skips SASLogon/OAuth entirely; forwards requests to Viya without an `Authorization` header                  | ❌ No                                                                                              | ❌ None           | Compute/API deployments that are already reachable without authentication                                                    |
 
 **Defaults and ordering**
 
 - **HTTP mode** always runs PKCE. The raw-bearer path is additive and opt-in via `ALLOW_RAW_BEARER=true`; when off, only PKCE clients can authenticate.
 - **stdio mode** tries the cache files in order: `sas-viya` CLI cache → `sas-mcp-login` cache → native device-code. The first hit wins.
+- **No-auth override**: set `VIYA_AUTH=false` to bypass all auth flows in both HTTP and stdio modes.
 
 **Removed**
 
@@ -113,6 +115,8 @@ The .env file used by the MCP Server allows for customizable options that the us
 | `COMPUTE_CONTEXT_NAME` | No | `SAS Job Execution compute context` | Viya compute context to use for code execution |
 | `SSL_VERIFY` | No | `true` | Set to `false` to disable SSL certificate verification (e.g. for self-signed Viya certificates) |
 | `ALLOW_RAW_BEARER` | No | `false` | When `true`, the HTTP-mode server also accepts a raw Viya access token in the `Authorization` header alongside the default OAuth2 PKCE flow. Useful for automation that already holds a Viya token. |
+| `VIYA_AUTH` | No | `true` | Master auth toggle. Set to `false` to disable SASLogon/OAuth handling (HTTP and stdio) and send Viya API calls without an `Authorization` header. |
+| `COMPUTE_SESSION_ID` | No | — | Fixed compute session id (for deployments without `/compute/contexts`). When set (e.g. `0001`), compute tools use that session directly. |
 | `SAS_CLI_CONFIG` | Stdio (optional) | `$HOME` | Parent directory for the SAS Viya CLI credential cache. The token is read from `$SAS_CLI_CONFIG/.sas/credentials.json`. |
 | `VIYA_USERNAME` | Tests only | — | Used by the integration test suite to acquire a token via the legacy `sas.cli` password grant. Not used by the MCP server itself. |
 | `VIYA_PASSWORD` | Tests only | — | See `VIYA_USERNAME`. |

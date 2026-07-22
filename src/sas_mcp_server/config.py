@@ -17,6 +17,7 @@ load_dotenv()
 
 SSL_VERIFY = env_bool("SSL_VERIFY", True)
 ALLOW_RAW_BEARER = env_bool("ALLOW_RAW_BEARER", False)
+AUTH_ENABLED = env_bool("VIYA_AUTH", True)
 
 # --- Opt-in collection mode (telemetry) -------------------------------------
 # Master switch. Default OFF; must be explicitly true/1/yes/on. When false,
@@ -117,10 +118,15 @@ CLIENT_ID = os.getenv("CLIENT_ID", "sas-mcp")
 HOST_PORT = int(os.getenv("HOST_PORT", "8134"))
 MCP_SIGNING_KEY = os.getenv("MCP_SIGNING_KEY", "default")
 CONTEXT_NAME = os.getenv("COMPUTE_CONTEXT_NAME", "SAS Job Execution compute context")
+COMPUTE_SESSION_ID = os.getenv("COMPUTE_SESSION_ID", "").strip()
 # Optional tool-tier selection, e.g. "0-4" or "0,1,7". Empty means all tiers.
 # Parsed by sas_mcp_server.tools.resolve_enabled_tiers.
 MCP_TIERS = os.getenv("MCP_TIERS", "")
-MCP_BASE_URL = os.getenv("MCP_BASE_URL", f"http://localhost:{HOST_PORT}")
+_mcp_base_url = os.getenv("MCP_BASE_URL", "").strip()
+# An empty value is the documented .env.sample default. Also ignore values
+# that are plainly placeholder comments instead of URLs.
+MCP_BASE_URL = _mcp_base_url if _mcp_base_url and not _mcp_base_url.startswith("#") else f"http://localhost:{HOST_PORT}"
+
 # Upper bound on binary export bytes returned inline as an embedded resource by
 # ``export_report``. Larger exports are refused with guidance rather than
 # streamed through the model context (default 25 MiB).

@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 68 tools across 8 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 68 tools across 9 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
 - HTTP-based MCP server compatible with MCP clients
@@ -115,6 +115,10 @@ curl -H "Authorization: Bearer $VIYA_TOKEN" http://localhost:8134/mcp ...
 
 The server validates the token against Viya's JWKS and uses it upstream as-is, bypassing the MCP JWT swap. The default OAuth2 PKCE flow keeps working alongside — both client types share the same `/mcp` endpoint.
 
+If your Viya APIs are intentionally exposed without auth (for example, a local/dev Compute API endpoint), set `VIYA_AUTH=false` to bypass all SASLogon/OAuth flows in both HTTP and stdio modes. In this mode the server sends upstream requests without an `Authorization` header.
+
+If your compute deployment does not expose `/compute/contexts` and only supports a fixed session, set `COMPUTE_SESSION_ID=<session_id>`. The compute tools will use that session directly instead of creating context-backed sessions.
+
 ### Choosing a deployment mode
 
 | | **HTTP** | **Stdio** | **Docker** |
@@ -146,6 +150,7 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 5 | Automated Machine Learning |
 | 6 | Model Management & Scoring |
 | 7 | Decisioning (SAS Intelligent Decisioning) |
+| 8 | Workbench (Execute Code Only) |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -237,6 +242,9 @@ Build and manage SAS Intelligent Decisioning rule sets and decision flows end to
 - **get_decision_flow_code**: Retrieve the generated DS2 execution code for a flow
 - **lock_decision_flow_revision** / **list_decision_flow_revisions** / **get_decision_flow_revision**: Lock, list, and fetch immutable decision revisions
 - **publish_decision_flow**: Publish a locked decision revision to a MAS destination, polling to completion and returning the server-generated MAS `moduleId` (directly usable with **get_mas_module_step_signature** / **score_data**)
+
+#### Tier 8 — Workbench (Execute Code Only)
+- **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls
 
 ### Prompt Templates
 

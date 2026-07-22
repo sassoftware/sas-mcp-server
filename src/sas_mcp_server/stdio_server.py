@@ -46,7 +46,7 @@ import httpx
 from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
 
-from .config import CLIENT_ID, SSL_VERIFY, VIYA_ENDPOINT
+from .config import AUTH_ENABLED, CLIENT_ID, SSL_VERIFY, VIYA_ENDPOINT
 from .exceptions import AuthenticationError
 from .prompts import register_prompts
 from .telemetry import install_telemetry
@@ -279,6 +279,8 @@ def _refresh_cached_token(path: Path, client_id: str) -> str | None:
 
 
 def _get_viya_token() -> str:
+    if not AUTH_ENABLED:
+        return ""
     for path, client_id in (
         (_sas_cli_credentials_path(), SAS_CLI_CLIENT_ID),
         (_helper_credentials_path(), HELPER_CLIENT_ID),
@@ -312,6 +314,11 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict]:
 
 
 logger.info("Connecting to SAS Viya at %s", VIYA_ENDPOINT)
+if not AUTH_ENABLED:
+    logger.warning(
+        "VIYA_AUTH=false: SASLogon authentication is disabled; "
+        "Viya API calls are sent without Authorization headers"
+    )
 mcp = FastMCP("SAS Viya Execution MCP Server", lifespan=_lifespan)
 register_tools(mcp, _stdio_get_token)
 # Opt-in telemetry (no-op unless COLLECTION_MODE is enabled).

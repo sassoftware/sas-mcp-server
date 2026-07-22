@@ -14,6 +14,12 @@ from sas_mcp_server import mcp_server
 from sas_mcp_server.mcp_server import AuthenticationError
 
 
+@pytest.fixture(autouse=True)
+def _force_auth_enabled():
+    with patch.object(mcp_server, "AUTH_ENABLED", True):
+        yield
+
+
 def test_authentication_error():
     """AuthenticationError carries its message and renders a prefixed string."""
     error = AuthenticationError("Test error message")

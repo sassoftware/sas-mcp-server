@@ -31,6 +31,7 @@ from . import (
     jobs,
     model_scoring,
     reports,
+    workbench,
 )
 
 Registrar = Callable[[FastMCP, Callable[[Context], Awaitable[str]]], None]
@@ -44,6 +45,7 @@ _TIER_REGISTRARS: dict[int, Registrar] = {
     5: automl.register,
     6: model_scoring.register,
     7: decisioning.register,
+    8: workbench.register,
 }
 
 TIER_TITLES: dict[int, str] = {
@@ -55,6 +57,7 @@ TIER_TITLES: dict[int, str] = {
     5: "Automated Machine Learning",
     6: "Model Management & Scoring",
     7: "Decisioning (SAS Intelligent Decisioning)",
+    8: "Workbench (Execute Code Only)",
 }
 
 ALL_TIERS: frozenset[int] = frozenset(_TIER_REGISTRARS)
@@ -124,6 +127,9 @@ def register_tools(
     enabled = resolve_enabled_tiers(tiers)
     logger.info("Registering tool tiers: %s", sorted(enabled))
     for tier in sorted(enabled):
+        # Tier 8's sole tool is already included when Tier 0 is enabled.
+        if tier == 8 and 0 in enabled:
+            continue
         _TIER_REGISTRARS[tier](mcp, get_token)
 
 

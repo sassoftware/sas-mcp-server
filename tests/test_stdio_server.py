@@ -15,6 +15,12 @@ from sas_mcp_server import stdio_server
 from sas_mcp_server.exceptions import AuthenticationError
 
 
+@pytest.fixture(autouse=True)
+def _force_auth_enabled():
+    with patch.object(stdio_server, "AUTH_ENABLED", True):
+        yield
+
+
 def _iso(minutes_from_now: float) -> str:
     """ISO-8601 timestamp offset from now, for building credential expiries."""
     return (datetime.now(UTC) + timedelta(minutes=minutes_from_now)).isoformat()
@@ -122,6 +128,14 @@ def test_get_viya_token_falls_back_to_device(tmp_path, monkeypatch):
     monkeypatch.setattr(stdio_server, "_helper_credentials_path", lambda: tmp_path / "b.json")
     monkeypatch.setattr(stdio_server, "_native_device_code_token", lambda: "DEVTOK")
     assert stdio_server._get_viya_token() == "DEVTOK"
+
+
+def test_get_viya_token_no_auth_mode_skips_all_auth(tmp_path, monkeypatch):
+    with patch.object(stdio_server, "AUTH_ENABLED", False), patch(
+        "sas_mcp_server.stdio_server.httpx.post"
+    ) as post:
+        assert stdio_server._get_viya_token() == ""
+        post.assert_not_called()
 
 
 @pytest.mark.asyncio

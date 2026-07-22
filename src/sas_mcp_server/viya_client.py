@@ -128,11 +128,13 @@ async def delete_resource(url: str, client: httpx.AsyncClient) -> None:
     resp.raise_for_status()
 
 
-def make_client(token: str) -> httpx.AsyncClient:
+def make_client(token: str | None) -> httpx.AsyncClient:
     """Create an :class:`httpx.AsyncClient` with auth headers for Viya API calls."""
-    if not token.startswith("Bearer "):
-        token = f"Bearer {token}"
-    headers = {"Authorization": token}
+    headers: dict[str, str] = {}
+    if token:
+        if not token.startswith("Bearer "):
+            token = f"Bearer {token}"
+        headers["Authorization"] = token
     return httpx.AsyncClient(
         headers=headers, verify=SSL_VERIFY, timeout=_CLIENT_TIMEOUT
     )

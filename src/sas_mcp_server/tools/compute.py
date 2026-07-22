@@ -8,7 +8,7 @@ from typing import Any
 
 from fastmcp import Context, FastMCP
 
-from ..config import CONTEXT_NAME
+from ..config import COMPUTE_SESSION_ID, CONTEXT_NAME
 from ..viya_client import contains_filter, get_paged_items, logger, make_client, return_items
 from ..viya_utils import reset_cached_session, run_one_snippet
 from ._common import make_session_helpers
@@ -50,6 +50,14 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         ctx: Context, limit: int = 50, start: int = 0, filter_name: str | None = None
     ) -> list[dict[str, Any]]:
         """List available compute contexts on the Viya environment."""
+        if COMPUTE_SESSION_ID:
+            return [{
+                "name": f"fixed-session:{COMPUTE_SESSION_ID}",
+                "description": (
+                    "Fixed compute session mode enabled via COMPUTE_SESSION_ID; "
+                    "context discovery is bypassed."
+                ),
+            }]
         async with viya_session("list_compute_contexts", ctx) as client:
             filters = contains_filter(filter_name)
             items, _ = await get_paged_items("/compute/contexts", client, limit=limit, start=start, filters=filters)
@@ -72,6 +80,15 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 ``execute_sas_code`` uses).
         """
         context_name = compute_context_name or CONTEXT_NAME
+        if COMPUTE_SESSION_ID:
+            return {
+                "status": "fixed_session_mode",
+                "compute_context": context_name,
+                "message": (
+                    "COMPUTE_SESSION_ID is configured; the session is externally "
+                    "managed and cannot be reset by this server."
+                ),
+            }
         logger.info("--- TOOL USED: reset_compute_session ---")
         token = await get_token(ctx)
         async with make_client(token) as client:
