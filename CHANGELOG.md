@@ -2,15 +2,20 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-22
+
+### Added
+- **No-auth mode** (#31) — set `VIYA_AUTH=false` to bypass all SASLogon/OAuth flows in both HTTP and stdio modes, for Viya deployments (e.g. a local/dev Compute API endpoint) that are already reachable without authentication. Upstream Viya requests are sent without an `Authorization` header in this mode.
+- **Fixed compute session id** (#31) — `COMPUTE_SESSION_ID` lets compute tools reuse a fixed session directly (e.g. `0001`), for deployments that don't expose `/compute/contexts` or context-based session creation.
+- **Tier 8 — Workbench (Execute Code Only)** (#31) — a minimal `execute_sas_code`-only tier for deployments that just need code execution against a reusable compute session. Brings the selectable tier count to 9.
+- **Tier selection via `MCP_TIERS`.** Start the server exposing only a subset of tool tiers, e.g. `MCP_TIERS=0-4` (ranges and comma lists like `0,1,7` both work); unset means all tiers. `register_tools` also accepts an explicit `tiers=` argument (spec string or iterable of tier numbers). Lets operators shrink the exposed tool surface to what a client actually needs.
+- **`put_json` Viya REST helper** — GET-for-ETag + `If-Match` PUT, mirroring `get_json`/`post_json`/`delete_resource`. `update_business_ruleset`, `update_business_rule`, and `update_decision_flow` now call it instead of each repeating the ETag-then-PUT boilerplate.
+
 ### Changed — BREAKING
 - **`list_models_and_decisions` renamed to `list_mas_modules`.** The tool lists Micro Analytic Score (MAS) modules (`/microanalyticScore/modules`); the new name matches what it returns and its sibling `get_mas_module_step_signature`. Update any client that called `list_models_and_decisions`. (`get_mas_module_step_signature` keeps its name — `get_` is correct for fetching a single step's signature.)
 
 ### Changed
-- **Tools reorganized into a tiered `tools/` package.** The single ~2.4k-line `tools.py` is now one module per tier under `sas_mcp_server/tools/`, each exposing `register(mcp, get_token)` and depending only on the shared lower layers (`viya_client`, `viya_utils`, `config`) plus `tools/_common.py` (the shared session helpers) — never on another tier, so any subset of tiers can load on its own. Tiers were regrouped: 0 Compute & Code Execution, 1 Data Discovery, 2 Data Operations & Files, 3 Reports & Visualization, 4 Batch Jobs & Async Execution, 5 Automated Machine Learning, 6 Model Management & Scoring, 7 Decisioning. Tool behavior and the `register_tools(mcp, get_token)` entry point are unchanged.
-
-### Added
-- **Tier selection via `MCP_TIERS`.** Start the server exposing only a subset of tool tiers, e.g. `MCP_TIERS=0-4` (ranges and comma lists like `0,1,7` both work); unset means all tiers. `register_tools` also accepts an explicit `tiers=` argument (spec string or iterable of tier numbers). Lets operators shrink the exposed tool surface to what a client actually needs.
-- **`put_json` Viya REST helper** — GET-for-ETag + `If-Match` PUT, mirroring `get_json`/`post_json`/`delete_resource`. `update_business_ruleset`, `update_business_rule`, and `update_decision_flow` now call it instead of each repeating the ETag-then-PUT boilerplate.
+- **Tools reorganized into a tiered `tools/` package.** The single ~2.4k-line `tools.py` is now one module per tier under `sas_mcp_server/tools/`, each exposing `register(mcp, get_token)` and depending only on the shared lower layers (`viya_client`, `viya_utils`, `config`) plus `tools/_common.py` (the shared session helpers) — never on another tier, so any subset of tiers can load on its own. Tiers were regrouped: 0 Compute & Code Execution, 1 Data Discovery, 2 Data Operations & Files, 3 Reports & Visualization, 4 Batch Jobs & Async Execution, 5 Automated Machine Learning, 6 Model Management & Scoring, 7 Decisioning, 8 Workbench. Tool behavior and the `register_tools(mcp, get_token)` entry point are unchanged.
 
 ### Fixed
 - **`publish_decision_flow` no longer 404s on a missing model id** — if the publish POST response carries no top-level `id`, it returns a graceful pending record instead of issuing `GET /modelPublish/models/None`.
