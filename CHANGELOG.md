@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Viya error messages are no longer swallowed.** `httpx`'s `raise_for_status` reports only the status code, so the `application/vnd.sas.error+json` body Viya returns — which names the actual problem — was discarded, leaving a caller with a bare `Client error '400'` and nothing to act on. A new `raise_for_viya_status` helper folds the service's `message`, `details`, `remediation`, and `errorCode` into the exception text (capped at 800 chars so a large error page can't flood the caller's context). The exception type is unchanged, so existing `except httpx.HTTPStatusError` handlers keep working. Applied to `get_json`/`post_json`/`put_json`/`delete_resource` and the decisioning tier's direct calls. A model that passed a rule set *name* where a UUID belongs now sees "The ID specified for use within the URI contains invalid characters." and can correct itself, instead of retrying the same failing call.
+- **Decisioning id arguments spell out that they take a UUID, not a name** — `ruleset_id` and `decision_id` docstrings now point at `list_business_rulesets`/`list_decision_flows` as the place to get one.
+
 ## [1.6.0] - 2026-07-22
 
 ### Added

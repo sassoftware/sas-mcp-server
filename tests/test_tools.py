@@ -21,6 +21,7 @@ from sas_mcp_server.viya_client import (
     make_client,
     post_json,
     put_json,
+    raise_for_viya_status,
     return_items,
 )
 
@@ -406,3 +407,89 @@ async def test_publish_ml_champion_model_tool_calls_helper(mcp_server_with_mock_
     assert args[0].project_id == "proj-123"
     assert args[0].destination_name == "MAS"
     assert args[1] is mock_client
+
+
+# ---------------------------------------------------------------------------
+# raise_for_viya_status
+# ---------------------------------------------------------------------------
+
+
+def _viya_response(status_code: int, body: str, content_type: str = "application/vnd.sas.error+json"):
+    """Build a real httpx.Response carrying a Viya-shaped error body."""
+    request = httpx.Request("POST", "https://viya.example.com/businessRules/ruleSets/bad-id/rules")
+    return httpx.Response(
+        status_code, request=request, content=body.encode(), headers={"Content-Type": content_type}
+    )
+
+
+def test_raise_for_viya_status_passes_on_success():
+    """A 2xx response must not raise."""
+    raise_for_viya_status(_viya_response(200, '{"id": "abc"}', "application/json"))
+
+
+def test_raise_for_viya_status_quotes_the_viya_message():
+    """The service's own message/details/errorCode must reach the caller."""
+    body = json.dumps(
+        {
+            "errorCode": 1006,
+            "message": "The ID specified for use within the URI contains invalid characters.",
+            "details": ["path: /businessRules/ruleSets/bad-id/rules"],
+            "httpStatusCode": 400,
+        }
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raise_for_viya_status(_viya_response(400, body))
+
+    message = str(exc_info.value)
+    assert "The ID specified for use within the URI contains invalid characters." in message
+    assert "path: /businessRules/ruleSets/bad-id/rules" in message
+    assert "errorCode 1006" in message
+    # Same exception type, so `except httpx.HTTPStatusError` handlers still work.
+    assert exc_info.value.response.status_code == 400
+
+
+def test_raise_for_viya_status_includes_remediation():
+    """Viya's remediation hint is worth surfacing alongside the message."""
+    body = json.dumps({"message": "Bad request.", "remediation": "Supply a valid signature."})
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raise_for_viya_status(_viya_response(400, body))
+
+    assert "Supply a valid signature." in str(exc_info.value)
+
+
+def test_raise_for_viya_status_falls_back_to_raw_text():
+    """A non-JSON error body (e.g. an HTML gateway page) is still reported."""
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raise_for_viya_status(_viya_response(502, "<html>Bad Gateway</html>", "text/html"))
+
+    assert "Bad Gateway" in str(exc_info.value)
+
+
+def test_raise_for_viya_status_truncates_huge_bodies():
+    """A large error body must not flood the caller's context."""
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raise_for_viya_status(_viya_response(500, "x" * 5000, "text/plain"))
+
+    assert len(str(exc_info.value)) < 1500
+
+
+def test_raise_for_viya_status_empty_body_keeps_default_message():
+    """With no body there is nothing to add, so httpx's own message stands."""
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raise_for_viya_status(_viya_response(404, "", "application/json"))
+
+    assert "Viya reported" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_post_json_surfaces_viya_error(mock_httpx_client, mock_env_vars):
+    """The detail must survive the trip through post_json, not just the helper."""
+    body = json.dumps({"errorCode": 1006, "message": "The action variable is not specified."})
+    mock_httpx_client.post.return_value = _viya_response(400, body)
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await post_json("/businessRules/ruleSets/bad-id/rules", mock_httpx_client, body={})
+
+    assert "The action variable is not specified." in str(exc_info.value)
