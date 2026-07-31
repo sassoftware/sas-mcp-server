@@ -13,11 +13,11 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 Here you can find getting articles on how to use and integrate the SAS MCP Server in different tools and what to build with it:
 
-- [Bring Your Own Key: SAS Viya MCP with GitHub Copilot CLI](https://communities.sas.com/t5/SAS-Communities-Library/Bring-Your-Own-Key-SAS-Viya-MCP-with-GitHub-Copilot-CLI/ta-p/991530)
-- [Connecting GitHub Copilot to SAS Viya with the SAS MCP Server](https://communities.sas.com/t5/SAS-Communities-Library/Connecting-GitHub-Copilot-to-SAS-Viya-with-the-SAS-MCP-Server/ta-p/987191)
-- [Putting the SAS MCP Server to Work in GitHub Copilot](https://communities.sas.com/t5/SAS-Communities-Library/Putting-the-SAS-MCP-Server-to-Work-in-GitHub-Copilot/ta-p/987193)
-- [Connecting Claude Code CLI to SAS Viya with the SAS MCP Server](https://communities.sas.com/t5/SAS-Communities-Library/Connecting-Claude-Code-CLI-to-SAS-Viya-with-the-SAS-MCP-Server/ta-p/988775)
-- [Putting the SAS MCP Server to Work in Claude Code CLI](https://communities.sas.com/t5/SAS-Communities-Library/Putting-the-SAS-MCP-Server-to-Work-in-Claude-Code-CLI/ta-p/988922)
+- [Connecting GitHub Copilot to SAS Viya with the SAS Viya MCP Server](https://communities.sas.com/t5/SAS-Communities-Library/Connecting-GitHub-Copilot-to-SAS-Viya-with-the-SAS-Viya-MCP/ta-p/987191)
+- [Bring Your Own Key: SAS Viya MCP Server with GitHub Copilot CLI](https://communities.sas.com/t5/SAS-Communities-Library/Bring-Your-Own-Key-SAS-Viya-MCP-with-GitHub-Copilot-CLI/ta-p/991530)
+- [Putting the SAS Viya MCP Server to Work in GitHub Copilot](https://communities.sas.com/t5/SAS-Communities-Library/Putting-the-SAS-Viya-MCP-Server-to-Work-in-GitHub-Copilot/ta-p/987193)
+- [Connecting Claude Code CLI to SAS Viya with the SAS Viya MCP Server](https://communities.sas.com/t5/SAS-Communities-Library/Connecting-Claude-Code-CLI-to-SAS-Viya-with-the-SAS-Viya-MCP/ta-p/988775)
+- [Putting the SAS Viya MCP Server to Work in Claude Code CLI](https://communities.sas.com/t5/SAS-Communities-Library/Putting-the-SAS-Viya-MCP-Server-to-Work-in-Claude-Code-CLI/ta-p/988922)
 - [Integration with SAS Retrieval Agent Manager (RAM)](https://github.com/sassoftware/sas-retrieval-agent-manager-examples/tree/main/examples/container_mcp_servers/sas_mcp_server)
 
 ## Getting Started
