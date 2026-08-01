@@ -12,7 +12,7 @@ from fastmcp import Context, FastMCP
 
 from ..config import VIYA_ENDPOINT
 from ..helpers import auto_ml_helpers
-from ..viya_client import get_json, get_paged_items, post_json, return_items
+from ..viya_client import get_json, get_paged_items, post_json, raise_for_viya_status, return_items
 from ._common import make_session_helpers
 
 
@@ -154,7 +154,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 f"{VIYA_ENDPOINT}/mlPipelineAutomation/projects/{project_id}",
                 headers={"Accept": mlpa_type},
             )
-            get_resp.raise_for_status()
+            raise_for_viya_status(get_resp)
             project_body = get_resp.json()
             etag = get_resp.headers.get("etag", "")
             resp = await client.put(
@@ -168,7 +168,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                     "Accept-Language": "en",
                 },
             )
-            resp.raise_for_status()
+            raise_for_viya_status(resp)
             if resp.status_code == 204 or not resp.content:
                 return {"status": "running", "projectId": project_id}
             return resp.json()

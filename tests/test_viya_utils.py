@@ -5,6 +5,7 @@
 Tests for viya_utils module (compute session/job orchestration).
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -551,3 +552,24 @@ async def test_shutdown_session_cache_swallows_delete_errors(mock_env_vars):
     del_client.delete.side_effect = httpx.HTTPError("boom")
     with patch("sas_mcp_server.viya_utils.make_client", return_value=del_client):
         await shutdown_session_cache()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_get_context_id_surfaces_viya_error(mock_httpx_client, mock_env_vars):
+    """A failed context lookup reports Viya's own message, not a bare status code.
+
+    This is the first call any compute tool makes, so it is where a misconfigured
+    COMPUTE_CONTEXT_NAME or a permissions problem surfaces first.
+    """
+    request = httpx.Request("GET", "https://viya.example.com/compute/contexts")
+    mock_httpx_client.get.return_value = httpx.Response(
+        403,
+        request=request,
+        content=json.dumps(
+            {"errorCode": 5, "message": "User is not authorized to list compute contexts."}
+        ).encode(),
+        headers={"Content-Type": "application/vnd.sas.error+json"},
+    )
+
+    with pytest.raises(httpx.HTTPStatusError, match="User is not authorized"):
+        await get_context_id(mock_httpx_client, "Test Context")

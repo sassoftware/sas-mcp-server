@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from sas_mcp_server.config import VIYA_ENDPOINT
+from sas_mcp_server.viya_client import raise_for_viya_status
 
 
 class ML_DEPLOYMENT_ACTION(StrEnum):
@@ -54,5 +55,5 @@ async def ml_register_publish(
         params=params,
         headers=headers,
     )
-    resp.raise_for_status()
+    raise_for_viya_status(resp)
     return resp.json()

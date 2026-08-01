@@ -51,7 +51,7 @@ from .exceptions import AuthenticationError
 from .prompts import register_prompts
 from .telemetry import install_telemetry
 from .tools import register_tools
-from .viya_client import logger
+from .viya_client import logger, raise_for_viya_status
 from .viya_utils import shutdown_session_cache
 
 load_dotenv()
@@ -152,7 +152,7 @@ def _native_device_code_token() -> str:
             "`uv run sas-mcp-login` (writes ~/.sas-mcp-server/credentials.json) "
             "and re-launch this server."
         )
-    init.raise_for_status()
+    raise_for_viya_status(init)
     flow = init.json()
 
     verification_uri = flow.get("verification_uri_complete") or flow["verification_uri"]

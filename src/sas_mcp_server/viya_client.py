@@ -31,6 +31,32 @@ JSONDict = dict[str, Any]
 # Cap on how much of a Viya error body is folded into an exception message, so a
 # large or HTML error page can't flood the caller's context.
 _MAX_ERROR_DETAIL = 800
+# How far to follow the nested "errors" chain in a vnd.sas.error+json body.
+_MAX_ERROR_DEPTH = 3
+
+
+def _error_parts(body: JSONDict, depth: int = 0) -> list[str]:
+    """Collect the human-readable fields of one vnd.sas.error+json object."""
+    parts = [str(body[key]) for key in ("message", "remediation") if body.get(key)]
+    details = body.get("details")
+    if isinstance(details, list):
+        parts.extend(str(item) for item in details if item)
+    elif details:
+        parts.append(str(details))
+    if body.get("errorCode"):
+        parts.append(f"(errorCode {body['errorCode']})")
+    # A multi-part failure (e.g. several invalid fields in one request) nests the
+    # actionable text under "errors" while the top-level message stays generic
+    # — "Validation failed" on its own gives the caller nothing to correct.
+    nested = body.get("errors")
+    if isinstance(nested, list) and depth < _MAX_ERROR_DEPTH:
+        for item in nested:
+            if not isinstance(item, dict):
+                continue
+            sub = " ".join(_error_parts(item, depth + 1))
+            if sub:
+                parts.append(f"[{sub}]")
+    return parts
 
 
 def _viya_error_detail(resp: httpx.Response) -> str:
@@ -44,15 +70,7 @@ def _viya_error_detail(resp: httpx.Response) -> str:
         return text.strip()[:_MAX_ERROR_DETAIL]
     if not isinstance(body, dict):
         return text.strip()[:_MAX_ERROR_DETAIL]
-    parts = [str(body[key]) for key in ("message", "remediation") if body.get(key)]
-    details = body.get("details")
-    if isinstance(details, list):
-        parts.extend(str(item) for item in details if item)
-    elif details:
-        parts.append(str(details))
-    if body.get("errorCode"):
-        parts.append(f"(errorCode {body['errorCode']})")
-    return " ".join(parts)[:_MAX_ERROR_DETAIL] or text.strip()[:_MAX_ERROR_DETAIL]
+    return " ".join(_error_parts(body))[:_MAX_ERROR_DETAIL] or text.strip()[:_MAX_ERROR_DETAIL]
 
 
 def raise_for_viya_status(resp: httpx.Response) -> None:

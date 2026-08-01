@@ -13,7 +13,13 @@ from fastmcp import Context, FastMCP
 
 from ..config import SSL_VERIFY, VIYA_ENDPOINT
 from ..env import env_bool
-from ..viya_client import contains_filter, get_json, get_paged_items, return_items
+from ..viya_client import (
+    contains_filter,
+    get_json,
+    get_paged_items,
+    raise_for_viya_status,
+    return_items,
+)
 from ._common import make_session_helpers
 
 
@@ -173,6 +179,9 @@ async def _resolve_source_bytes(file_path: str | None, url: str | None) -> tuple
     try:
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True, verify=SSL_VERIFY) as fetch_client:
             fetch_resp = await fetch_client.get(url)
+            # Plain raise_for_status on purpose: this is an arbitrary caller-supplied
+            # URL, not Viya, so there is no vnd.sas.error+json body worth quoting
+            # and folding a third-party page into the message adds only noise.
             fetch_resp.raise_for_status()
             return fetch_resp.content, None
     except httpx.HTTPError as exc:
@@ -432,7 +441,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 params={"value": "loaded", "scope": "global"},
                 headers={"Accept": "*/*"},
             )
-            resp.raise_for_status()
+            raise_for_viya_status(resp)
             return {
                 "status": "promoted",
                 "table": f"{caslib_name}.{table_name}",
@@ -474,7 +483,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                     "Accept": "application/json",
                 },
             )
-            resp.raise_for_status()
+            raise_for_viya_status(resp)
             return resp.json()
 
     @mcp.tool()
@@ -486,5 +495,5 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         """
         async with viya_session("download_file", ctx) as client:
             resp = await client.get(f"{VIYA_ENDPOINT}/files/files/{file_id}/content")
-            resp.raise_for_status()
+            raise_for_viya_status(resp)
             return resp.text

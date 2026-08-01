@@ -106,6 +106,9 @@ def _exchange(
         verify=verify_ssl,
         timeout=30.0,
     )
+    # Plain raise_for_status on purpose: importing raise_for_viya_status pulls in
+    # sas_mcp_server.config, which raises at import time when VIYA_ENDPOINT is
+    # unset — that would break `sas-mcp-login --endpoint ...` before argparse runs.
     resp.raise_for_status()
     return resp.json()
 

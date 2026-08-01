@@ -493,3 +493,57 @@ async def test_post_json_surfaces_viya_error(mock_httpx_client, mock_env_vars):
         await post_json("/businessRules/ruleSets/bad-id/rules", mock_httpx_client, body={})
 
     assert "The action variable is not specified." in str(exc_info.value)
+
+
+def test_raise_for_viya_status_surfaces_nested_errors():
+    """A multi-part failure must keep its per-item messages, not just the generic top one."""
+    body = json.dumps(
+        {
+            "errorCode": 1006,
+            "message": "Validation failed.",
+            "errors": [
+                {"message": "Rule set name exceeds 30 characters."},
+                {"message": "Signature is missing a required output variable."},
+            ],
+        }
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raise_for_viya_status(_viya_response(400, body))
+
+    message = str(exc_info.value)
+    assert "Validation failed." in message
+    assert "Rule set name exceeds 30 characters." in message
+    assert "Signature is missing a required output variable." in message
+
+
+def test_raise_for_viya_status_stops_descending_nested_errors():
+    """The nested walk is depth-capped so a pathological body cannot recurse without bound."""
+    body = {
+        "message": "depth0",
+        "errors": [
+            {
+                "message": "depth1",
+                "errors": [{"message": "depth2", "errors": [{"message": "depth3", "errors": [{"message": "depth4"}]}]}],
+            }
+        ],
+    }
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raise_for_viya_status(_viya_response(400, json.dumps(body)))
+
+    message = str(exc_info.value)
+    assert "depth3" in message
+    assert "depth4" not in message
+
+
+def test_raise_for_viya_status_ignores_non_dict_nested_errors():
+    """A malformed "errors" entry must be skipped, not crash the error path."""
+    body = json.dumps({"message": "Top level.", "errors": ["a bare string", None, {"message": "Real nested."}]})
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        raise_for_viya_status(_viya_response(400, body))
+
+    message = str(exc_info.value)
+    assert "Top level." in message
+    assert "Real nested." in message

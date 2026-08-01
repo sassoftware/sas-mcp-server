@@ -10,7 +10,14 @@ import httpx
 from fastmcp import Context, FastMCP
 
 from ..config import VIYA_ENDPOINT
-from ..viya_client import contains_filter, get_json, get_paged_items, post_json, return_items
+from ..viya_client import (
+    contains_filter,
+    get_json,
+    get_paged_items,
+    post_json,
+    raise_for_viya_status,
+    return_items,
+)
 from ._common import make_session_helpers
 
 
@@ -230,7 +237,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 params={"value": "running"},
                 headers={"Accept": "text/plain"},
             )
-            resp.raise_for_status()
+            raise_for_viya_status(resp)
             return {
                 "status": resp.text.strip() or "running",
                 "agent_id": agent_id,
@@ -511,7 +518,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 headers={"Accept": "text/csv"},
                 follow_redirects=True,
             )
-            resp.raise_for_status()
+            raise_for_viya_status(resp)
             return {
                 "status": "ok",
                 "instance_id": instance_id,
@@ -744,7 +751,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                     params={"start": col_start, "limit": col_limit},
                     follow_redirects=True,
                 )
-                col_resp.raise_for_status()
+                raise_for_viya_status(col_resp)
                 col_data = col_resp.json()
                 for item in col_data.get("items", []):
                     columns.append(
@@ -764,7 +771,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 params={"start": start, "limit": limit},
                 follow_redirects=True,
             )
-            row_resp.raise_for_status()
+            raise_for_viya_status(row_resp)
             row_data = row_resp.json()
 
             col_names = [c["name"] for c in columns]

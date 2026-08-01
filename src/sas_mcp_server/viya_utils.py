@@ -26,14 +26,14 @@ from contextlib import nullcontext
 import httpx
 
 from .config import COMPUTE_SESSION_ID, CONTEXT_NAME, VIYA_ENDPOINT
-from .viya_client import logger, make_client
+from .viya_client import logger, make_client, raise_for_viya_status
 
 
 async def get_context_id(client: httpx.AsyncClient, context_name: str) -> str:
     """Return the id of the named compute context, raising if it is absent."""
     url = f"{VIYA_ENDPOINT}/compute/contexts"
     resp = await client.get(url, params={"name": context_name})
-    resp.raise_for_status()
+    raise_for_viya_status(resp)
     coll = resp.json()
     items = coll.get("items", [])
     if not items:
@@ -47,7 +47,7 @@ async def create_session(
     """Create a compute session in *context_id* and return its id."""
     url = f"{VIYA_ENDPOINT}/compute/contexts/{context_id}/sessions"
     resp = await client.post(url, json={"name": name})
-    resp.raise_for_status()
+    raise_for_viya_status(resp)
     return resp.json()["id"]
 
 

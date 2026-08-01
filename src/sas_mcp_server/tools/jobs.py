@@ -9,7 +9,14 @@ from typing import Any
 from fastmcp import Context, FastMCP
 
 from ..config import CONTEXT_NAME, VIYA_ENDPOINT
-from ..viya_client import delete_resource, get_json, get_paged_items, post_json, return_items
+from ..viya_client import (
+    delete_resource,
+    get_json,
+    get_paged_items,
+    post_json,
+    raise_for_viya_status,
+    return_items,
+)
 from ._common import make_session_helpers
 
 
@@ -101,5 +108,5 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 return f"No log available. Job state: {state}"
 
             resp = await client.get(f"{VIYA_ENDPOINT}{log_uri}/content")
-            resp.raise_for_status()
+            raise_for_viya_status(resp)
             return resp.text
