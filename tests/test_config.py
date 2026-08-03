@@ -75,6 +75,7 @@ def test_config_default_values(monkeypatch):
     monkeypatch.delenv("HOST_PORT", raising=False)
     monkeypatch.delenv("MCP_SIGNING_KEY", raising=False)
     monkeypatch.delenv("COMPUTE_CONTEXT_NAME", raising=False)
+    monkeypatch.delenv("MCP_SERVER_NAME", raising=False)
     monkeypatch.delenv("VIYA_AUTH", raising=False)
     # Block module-level load_dotenv from repopulating from .env.
     with patch('dotenv.load_dotenv'):
@@ -83,7 +84,18 @@ def test_config_default_values(monkeypatch):
     assert cfg.HOST_PORT == 8134
     assert cfg.MCP_SIGNING_KEY == "default"
     assert cfg.CONTEXT_NAME == "SAS Job Execution compute context"
+    # Unset MCP_SERVER_NAME keeps the name deployments have always advertised.
+    assert cfg.SERVER_NAME == "SAS Viya Execution MCP Server"
     assert cfg.AUTH_ENABLED is True
+
+
+def test_config_server_name_override(monkeypatch):
+    """MCP_SERVER_NAME overrides the advertised server name."""
+    monkeypatch.setenv("VIYA_ENDPOINT", "https://test.viya.com")
+    monkeypatch.setenv("MCP_SERVER_NAME", "SAS Viya MCP (dev)")
+    with patch("dotenv.load_dotenv"):
+        cfg = _reload_config()
+    assert cfg.SERVER_NAME == "SAS Viya MCP (dev)"
 
 
 def test_config_viya_auth_enabled(monkeypatch):

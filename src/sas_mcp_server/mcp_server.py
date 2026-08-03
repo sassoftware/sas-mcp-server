@@ -17,7 +17,7 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .config import AUTH_ENABLED, VIYA_ENDPOINT, viya_auth
+from .config import AUTH_ENABLED, SERVER_NAME, VIYA_ENDPOINT, viya_auth
 from .exceptions import AuthenticationError
 from .prompts import register_prompts
 from .telemetry import install_telemetry
@@ -73,7 +73,7 @@ else:
     logger.warning(
         "VIYA_AUTH=false: SASLogon authentication is disabled; Viya API calls are sent without Authorization headers"
     )
-mcp = FastMCP("SAS Viya Execution MCP Server", **_mcp_kwargs)
+mcp = FastMCP(SERVER_NAME, **_mcp_kwargs)
 # Opt-in telemetry (no-op unless COLLECTION_MODE is enabled). Added FIRST so it
 # is the OUTERMOST middleware — it wraps AuthMiddleware and the tool, so an auth
 # failure is recorded as status="error" and re-raised unchanged.

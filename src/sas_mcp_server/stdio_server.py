@@ -46,7 +46,7 @@ import httpx
 from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
 
-from .config import AUTH_ENABLED, CLIENT_ID, SSL_VERIFY, VIYA_ENDPOINT
+from .config import AUTH_ENABLED, CLIENT_ID, SERVER_NAME, SSL_VERIFY, VIYA_ENDPOINT
 from .exceptions import AuthenticationError
 from .prompts import register_prompts
 from .telemetry import install_telemetry
@@ -319,7 +319,7 @@ if not AUTH_ENABLED:
         "VIYA_AUTH=false: SASLogon authentication is disabled; "
         "Viya API calls are sent without Authorization headers"
     )
-mcp = FastMCP("SAS Viya Execution MCP Server", lifespan=_lifespan)
+mcp = FastMCP(SERVER_NAME, lifespan=_lifespan)
 register_tools(mcp, _stdio_get_token)
 # Opt-in telemetry (no-op unless COLLECTION_MODE is enabled).
 install_telemetry(mcp, "stdio")

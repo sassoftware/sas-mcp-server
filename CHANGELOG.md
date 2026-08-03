@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Configurable server name** — `MCP_SERVER_NAME` sets the name the server advertises to MCP clients (`serverInfo.name`), defaulting to the previous hardcoded `SAS Viya Execution MCP Server`. Clients such as VS Code label servers with this value rather than the key in their own configuration, so operators running one server per Viya environment can now tell them apart. Applied to both the HTTP (`mcp_server.py`) and stdio (`stdio_server.py`) entry points, and read in `config.py` following the existing `COMPUTE_CONTEXT_NAME` pattern.
+
 ## [1.6.1] - 2026-08-01
 
 ### Fixed
