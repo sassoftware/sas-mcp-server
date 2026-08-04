@@ -113,6 +113,7 @@ The .env file used by the MCP Server allows for customizable options that the us
 | `MCP_SIGNING_KEY` | No | `default` | Secret key used to sign [FastMCP Proxy JWTs](https://gofastmcp.com/servers/auth/oauth-proxy#param-jwt-signing-key) |
 | `MCP_BASE_URL` | No | `http://localhost:{HOST_PORT}` | External URL of the MCP server (set for k8s/reverse proxy deployments) |
 | `COMPUTE_CONTEXT_NAME` | No | `SAS Job Execution compute context` | Viya compute context to use for code execution |
+| `MCP_SERVER_NAME` | No | `SAS Viya Execution MCP Server` | Name advertised to MCP clients (`serverInfo.name`); set a distinct name per deployment when running multiple servers |
 | `SSL_VERIFY` | No | `true` | Set to `false` to disable SSL certificate verification (e.g. for self-signed Viya certificates) |
 | `ALLOW_RAW_BEARER` | No | `false` | When `true`, the HTTP-mode server also accepts a raw Viya access token in the `Authorization` header alongside the default OAuth2 PKCE flow. Useful for automation that already holds a Viya token. |
 | `VIYA_AUTH` | No | `true` | Master auth toggle. Set to `false` to disable SASLogon/OAuth handling (HTTP and stdio) and send Viya API calls without an `Authorization` header. |
