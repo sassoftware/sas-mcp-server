@@ -92,6 +92,7 @@ EXPECTED_TOOLS = [
     "catalog_run_adhoc_analysis",
     "catalog_get_adhoc_analysis",
     "catalog_download_table_profile",
+    "generate_sas_code",
 ]
 
 
@@ -3127,3 +3128,61 @@ async def test_catalog_download_table_profile_not_found(mcp_server_with_mock_cli
 
     assert result["status"] == "not_found"
     assert result["instance_id"] == "missing"
+
+
+# -----------------------------------------------------------------------
+# Tier 9 — Code Generation (SAS RAG Assistant)
+# -----------------------------------------------------------------------
+
+
+async def test_generate_sas_code_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.post.return_value = _make_mock_response(
+        {"content": "data _null_; run;"}, status_code=200
+    )
+
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "generate_sas_code",
+                {"prompt": "read a csv and print summary stats"},
+            )
+        ).data
+
+    url = mock_client.post.call_args[0][0]
+    assert url.endswith("/genAiGateway/v1/copilotRequest")
+    body = mock_client.post.call_args[1]["json"]
+    assert body["copilot"] == {"id": "ragServer", "version": "v1"}
+    assert body["applicationName"] == "Code Assistance"
+    assert body["message"]["content"] == "read a csv and print summary stats"
+    assert body["message"]["context"]["filters"] == "pgmsascdc"
+    assert body["message"]["context"]["command"] == "generate_code"
+    assert result["content"] == "data _null_; run;"
+
+
+async def test_generate_sas_code_custom_filters(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.post.return_value = _make_mock_response(
+        {"content": "proc print;"}, status_code=200
+    )
+
+    async with Client(mcp) as client:
+        await client.call_tool(
+            "generate_sas_code",
+            {"prompt": "print a table", "filters": "custom-corpus"},
+        )
+
+    body = mock_client.post.call_args[1]["json"]
+    assert body["message"]["context"]["filters"] == "custom-corpus"
+
+
+async def test_generate_sas_code_empty_content_raises(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.post.return_value = _make_mock_response({}, status_code=200)
+
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "generate_sas_code", {"prompt": "do something"}, raise_on_error=False
+        )
+
+    assert result.is_error

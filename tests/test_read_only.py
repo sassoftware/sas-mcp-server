@@ -46,7 +46,7 @@ def test_read_and_write_sets_are_disjoint():
 async def test_read_only_registers_only_read_tools():
     names = await _register(read_only=True)
     assert names == set(READ_ONLY_TOOLS)
-    assert len(names) == 43
+    assert len(names) == 44
 
 
 async def test_read_only_withholds_every_mutating_tool():
@@ -78,14 +78,14 @@ async def test_named_dangerous_tools_are_absent(tool_name):
 
 @pytest.mark.parametrize(
     "tool_name",
-    ["get_report", "list_reports", "export_report", "catalog_search", "get_castable_data"],
+    ["get_report", "list_reports", "export_report", "catalog_search", "get_castable_data", "generate_sas_code"],
 )
 async def test_named_read_tools_survive(tool_name):
     assert tool_name in await _register(read_only=True)
 
 
 async def test_default_is_unfiltered():
-    assert len(await _register()) == 74
+    assert len(await _register()) == 75
 
 
 # --- composition with tier selection ------------------------------------------
@@ -100,6 +100,12 @@ async def test_composes_with_tier_selection():
         "describe_report_objects",
         "export_report",
     }
+
+
+async def test_composes_with_tier_9():
+    """Tier 9's sole tool is read-only, so the filter is a no-op here."""
+    names = await _register(tiers="9", read_only=True)
+    assert names == {"generate_sas_code"}
 
 
 async def test_composes_with_tier_range():
@@ -117,12 +123,12 @@ async def test_env_var_drives_default(monkeypatch):
     monkeypatch.setattr(tools, "MCP_READ_ONLY", True)
     assert await _register() == set(READ_ONLY_TOOLS)
     monkeypatch.setattr(tools, "MCP_READ_ONLY", False)
-    assert len(await _register()) == 74
+    assert len(await _register()) == 75
 
 
 async def test_explicit_argument_overrides_env_var(monkeypatch):
     monkeypatch.setattr(tools, "MCP_READ_ONLY", True)
-    assert len(await _register(read_only=False)) == 74
+    assert len(await _register(read_only=False)) == 75
     monkeypatch.setattr(tools, "MCP_READ_ONLY", False)
     assert await _register(read_only=True) == set(READ_ONLY_TOOLS)
 

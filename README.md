@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 74 tools across 9 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 75 tools across 10 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
 - HTTP-based MCP server compatible with MCP clients
@@ -152,6 +152,7 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 6 | Model Management & Scoring |
 | 7 | Decisioning (SAS Intelligent Decisioning) |
 | 8 | Workbench (Execute Code Only) |
+| 9 | Code Generation (SAS RAG Assistant) |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -160,7 +161,7 @@ MCP_TIERS=0-3 uv run app
 
 ### Read-only mode
 
-Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 43 of the 74 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 44 of the 75 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
 
 This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
 
@@ -277,6 +278,9 @@ Build and manage SAS Intelligent Decisioning rule sets and decision flows end to
 
 #### Tier 8 — Workbench (Execute Code Only)
 - **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls
+
+#### Tier 9 — Code Generation (SAS RAG Assistant)
+- **generate_sas_code**: Generate SAS code from a natural-language prompt via the Viya GenAI Gateway's `ragServer` copilot. Requires the GenAI Gateway service and the `ragServer` copilot to be deployed and licensed on the target Viya order.
 
 ### Prompt Templates
 
@@ -475,7 +479,7 @@ tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
 
-Every one of the 74 tools and 9 prompt templates has an integration test, enforced by the
+Every one of the 75 tools and 9 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most
@@ -511,7 +515,7 @@ gh gist create reports/integration.xml                          # full XML as a 
 
 | File | Description |
 |---|---|
-| `tests/test_tool_payloads.py` | Payload assertions for all 74 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
+| `tests/test_tool_payloads.py` | Payload assertions for all 75 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
 | `tests/test_integration.py` | End-to-end workflow tests against a real Viya instance |
 | `tests/test_tools.py` | Unit tests for the generic Viya REST helpers in `viya_client` (`get_json`, `post_json`, `make_client`, …) |
 | `tests/test_viya_utils.py` | Unit tests for Viya compute session and job orchestration |

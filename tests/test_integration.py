@@ -1519,6 +1519,31 @@ async def test_catalog_table_profile_loop(integration_mcp_server):
         assert last["status"] in ("ok", "not_profiled"), last
 
 
+async def test_codegen_workflow(integration_mcp_server):
+    """generate_sas_code — Tier 9's sole tool.
+
+    Requires the GenAI Gateway service and the ragServer copilot to be
+    deployed and licensed on the target Viya order, which not every instance
+    has. Skips cleanly rather than failing when the copilot rejects the
+    request, matching how the rest of this suite treats an unavailable
+    service (see test_decisioning_workflow's SAS Intelligent Decisioning
+    skip).
+    """
+    async with Client(integration_mcp_server) as client:
+        try:
+            result = (
+                await client.call_tool(
+                    "generate_sas_code",
+                    {"prompt": "Write a SAS program to read a CSV file and compute summary statistics"},
+                )
+            ).data
+        except Exception as e:
+            pytest.skip(f"GenAI Gateway / ragServer copilot not available on this instance: {e}")
+
+        assert isinstance(result, dict)
+        assert result.get("content", "").strip(), "ragServer copilot returned empty content"
+
+
 # -----------------------------------------------------------------------
 # Coverage guards — fail if a registered tool/prompt has no integration test
 # -----------------------------------------------------------------------
@@ -1601,6 +1626,7 @@ TOOL_COVERAGE = {
     "catalog_list_agents": "test_catalog_agents_workflow",
     "catalog_run_agent": "test_catalog_agents_workflow",
     "catalog_get_agent_history": "test_catalog_agents_workflow",
+    "generate_sas_code": "test_codegen_workflow",
 }
 
 

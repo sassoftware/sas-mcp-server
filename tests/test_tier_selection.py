@@ -33,7 +33,7 @@ def test_resolve_range_list_and_csv():
     assert tools.resolve_enabled_tiers([2, 3]) == {2, 3}
 
 
-@pytest.mark.parametrize("bad", ["0-99", "9", "abc", [42]])
+@pytest.mark.parametrize("bad", ["0-99", "10", "abc", [42]])
 def test_resolve_rejects_unknown_tiers(bad):
     with pytest.raises(ConfigError):
         tools.resolve_enabled_tiers(bad)
@@ -48,11 +48,12 @@ def test_env_var_drives_default(monkeypatch):
 
 async def test_register_all_tiers_registers_everything():
     names = await _register(None)
-    assert len(names) == 74
+    assert len(names) == 75
     assert "execute_sas_code" in names
     assert "publish_decision_flow" in names
     assert "apply_report_operations" in names
     assert "get_report_outline" in names
+    assert "generate_sas_code" in names
 
 
 async def test_register_subset_excludes_other_tiers():
@@ -68,4 +69,9 @@ async def test_register_single_tier():
     names = await _register("7")
     assert len(names) == 22
     assert "create_business_ruleset" in names
+
+
+async def test_register_tier_9_is_codegen_only():
+    names = await _register("9")
+    assert names == {"generate_sas_code"}
     assert "get_mas_module_step_signature" not in names  # tier 6, not 7

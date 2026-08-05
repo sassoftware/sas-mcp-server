@@ -88,6 +88,8 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "get_decision_flow_code",
         "list_decision_flow_revisions",
         "get_decision_flow_revision",
+        # Tier 9 — Code Generation (SAS RAG Assistant)
+        "generate_sas_code",
     }
 )
 
