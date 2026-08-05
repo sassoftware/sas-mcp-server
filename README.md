@@ -159,6 +159,13 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 MCP_TIERS=0-3 uv run app
 ```
 
+**Pairing tiers.** Tier 9 (Code Generation) on its own only *returns* SAS code — pair it with Tier 0 so the model can generate a snippet and then run it in the same session:
+
+```sh
+# Generate SAS code and execute it, without pulling in every other tier
+MCP_TIERS=0,9 uv run app
+```
+
 ### Read-only mode
 
 Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 44 of the 75 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
@@ -280,7 +287,7 @@ Build and manage SAS Intelligent Decisioning rule sets and decision flows end to
 - **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls
 
 #### Tier 9 — Code Generation (SAS RAG Assistant)
-- **generate_sas_code**: Generate SAS code from a natural-language prompt via the Viya GenAI Gateway's `ragServer` copilot. Requires the GenAI Gateway service and the `ragServer` copilot to be deployed and licensed on the target Viya order.
+- **generate_sas_code**: Generate SAS code from a natural-language prompt via the Viya GenAI Gateway's `ragServer` copilot. Requires SAS Viya Copilot to be activated on the target Viya order — a Viya administrator does this via SAS Environment Manager (*Manage Environment > Activate SAS Viya Copilot*), which also shows current activation status. If it isn't activated, the tool call fails with a Viya-surfaced HTTP error (rather than hanging or silently returning nothing) — that error is the signal to ask a Viya admin to check via Environment Manager.
 
 ### Prompt Templates
 

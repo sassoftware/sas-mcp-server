@@ -41,9 +41,13 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
     ) -> dict[str, Any]:
         """Generate SAS code from a natural-language prompt via the Viya GenAI Gateway.
 
-        Sends *prompt* to the ragServer copilot. Requires the GenAI Gateway
-        service and the ragServer copilot to be deployed and licensed on the
-        target Viya order.
+        Sends *prompt* to the ragServer copilot. Requires SAS Viya Copilot /
+        the GenAI Gateway service to be activated on the target Viya order —
+        a Viya administrator does this via SAS Environment Manager (Manage
+        Environment > Activate SAS Viya Copilot), which also shows current
+        activation status. An HTTP error from this call (e.g. 404/501) most
+        likely means Copilot isn't activated on this order, rather than a bug
+        in the request — ask a Viya admin to confirm via Environment Manager.
 
         Args:
             prompt: Natural language description of the SAS code to generate
