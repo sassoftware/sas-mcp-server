@@ -152,6 +152,7 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 6 | Model Management & Scoring |
 | 7 | Decisioning (SAS Intelligent Decisioning) |
 | 8 | Workbench (Execute Code Only) |
+| 9 | Code Generation (SAS RAG Assistant) |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -246,6 +247,9 @@ Build and manage SAS Intelligent Decisioning rule sets and decision flows end to
 
 #### Tier 8 — Workbench (Execute Code Only)
 - **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls
+
+#### Tier 9 — Code Generation (SAS RAG Assistant)
+- **generate_sas_code**: Generate SAS code from a natural-language prompt via the Viya GenAI Gateway's `ragServer` copilot. Requires the GenAI Gateway service and the `ragServer` copilot to be deployed and licensed on the target Viya order.
 
 ### Prompt Templates
 

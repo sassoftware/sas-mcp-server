@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Tier 9 — Code Generation (SAS RAG Assistant)** — `generate_sas_code` generates SAS code from a natural-language prompt via the Viya GenAI Gateway's `ragServer` copilot (`/genAiGateway/v1/copilotRequest`). Ported from the internal `tmp-sas-mcp-codegen` prototype's `sas-rag-generate-code` tool, which only ran behind a cluster-internal gateway that forwarded the caller's token; here the call goes through the same `viya_session` helper every other tier uses, needing only a normal Viya bearer token. Requires the GenAI Gateway service and `ragServer` copilot to be deployed and licensed on the target Viya order. Brings the selectable tier count to 10.
+
 ## [1.6.2] - 2026-08-04
 
 ### Added

@@ -24,6 +24,7 @@ from ..exceptions import ConfigError
 from ..viya_client import logger
 from . import (
     automl,
+    codegen,
     compute,
     data_ops,
     decisioning,
@@ -46,6 +47,7 @@ _TIER_REGISTRARS: dict[int, Registrar] = {
     6: model_scoring.register,
     7: decisioning.register,
     8: workbench.register,
+    9: codegen.register,
 }
 
 TIER_TITLES: dict[int, str] = {
@@ -58,6 +60,7 @@ TIER_TITLES: dict[int, str] = {
     6: "Model Management & Scoring",
     7: "Decisioning (SAS Intelligent Decisioning)",
     8: "Workbench (Execute Code Only)",
+    9: "Code Generation (SAS RAG Assistant)",
 }
 
 ALL_TIERS: frozenset[int] = frozenset(_TIER_REGISTRARS)
