@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 87 tools across 10 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 89 tools across 11 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
 - HTTP-based MCP server compatible with MCP clients
@@ -157,6 +157,7 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 7 | Decisioning (SAS Intelligent Decisioning) |
 | 8 | Workbench (Execute Code Only) |
 | 9 | Business Glossary (SAS Data Governance) |
+| 10 | Code Assistance & Documentation (SAS Code Assistant) |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -165,7 +166,7 @@ MCP_TIERS=0-3 uv run app
 
 ### Read-only mode
 
-Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 50 of the 87 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 52 of the 89 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
 
 This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
 
@@ -323,6 +324,22 @@ Two things about the glossary are worth knowing before you start, because both a
 - **assign_glossary_term** / **unassign_glossary_term**: Attach a term to a table column, or detach it. This is the step that makes a term govern data — a term with no assigned assets governs nothing
 
 Terms assigned this way also become searchable through Tier 1's **catalog_search** using the `Column.term:"<term name>"` facet on the `datasets` index, which returns the tables carrying a term without resolving individual columns.
+
+#### Tier 10 — Code Assistance & Documentation (SAS Code Assistant)
+Tier 10 calls the SAS Code Assistant copilot through Viya's own REST API, using
+the authenticated user's Viya bearer token — no separate GenAI/LLM API key or
+RAG URL is required. The server calls
+`<VIYA_ENDPOINT>/genAiGateway/v1/copilotRequest`; Viya owns model selection and
+routes code or documentation requests internally, so the tier needs the GenAI
+Gateway provisioned on the instance.
+
+Both tools are read-only — they return text and change nothing on the server —
+so both survive `MCP_READ_ONLY=true`. Tier 10 intentionally does **not** add a
+code-execution tool; use Tier 0 or Tier 8 `execute_sas_code` when execution is
+required.
+
+- **get_doc_answer**: Answer a SAS documentation question from the Code Assistant knowledge base. Optionally narrow the search with `product`
+- **generate_sas_code**: Generate code from natural-language requirements. `language` defaults to `sas` (`python` and `r` are also accepted); `use_rag_for_sas` grounds SAS generation in the documentation
 
 ### Prompt Templates
 
@@ -545,7 +562,7 @@ tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
 
-Every one of the 87 tools and 9 prompt templates has an integration test, enforced by the
+Every one of the 89 tools and 9 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most

@@ -109,6 +109,10 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "get_glossary_term",
         "list_term_assets",
         "list_table_terms",
+        # Tier 10 — Code Assistance & Documentation. Both return copilot text and change
+        # nothing server-side; generate_sas_code returns code without running it.
+        "get_doc_answer",
+        "generate_sas_code",
     }
 )
 
@@ -236,7 +240,8 @@ IDEMPOTENT_WRITE_TOOLS: frozenset[str] = frozenset(
 
 # Can reach beyond the one authenticated Viya deployment: arbitrary SAS code
 # (PROC HTTP, FILENAME URL, ...) and the upload tools' `url` source. Every
-# other tool talks only to Viya, so its world is closed.
+# other tool talks only to Viya, so its world is closed — the Tier 10 Code
+# Assistant tools included: they give the caller no URL, model or provider to steer.
 OPEN_WORLD_TOOLS: frozenset[str] = frozenset(
     {
         "execute_sas_code",

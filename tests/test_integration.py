@@ -1614,6 +1614,9 @@ TOOL_COVERAGE = {
     "delete_glossary_term": "test_glossary_workflow",
     "assign_glossary_term": "test_glossary_workflow",
     "unassign_glossary_term": "test_glossary_workflow",
+    # Tier 10
+    "get_doc_answer": "test_code_assistant_workflow",
+    "generate_sas_code": "test_code_assistant_workflow",
 }
 
 
@@ -2073,3 +2076,37 @@ async def test_glossary_workflow(integration_mcp_server):
                     await client.call_tool("delete_glossary_term", {"term_id": created_id})
                 ).data
                 assert deleted["status"] == "deleted"
+
+
+# -----------------------------------------------------------------------
+# Code Assistance & Documentation workflow (Tier 10)
+# -----------------------------------------------------------------------
+
+
+async def test_code_assistant_workflow(integration_mcp_server):
+    """Ask the copilot a doc question and have it generate code, against live Viya.
+
+    Covers both Tier 10 tools. The copilot's wording is not asserted — only that
+    it answers at all and that the reply is non-empty text — because the model
+    behind the GenAI Gateway is the deployment's choice, not this suite's.
+    """
+    async with Client(integration_mcp_server) as client:
+        try:
+            answer = (
+                await client.call_tool(
+                    "get_doc_answer",
+                    {"question": "What does the SAS PROC MEANS procedure do?"},
+                )
+            ).data
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"SAS GenAI Gateway not available on this Viya: {exc}")
+
+        assert answer["answer"].strip(), "the copilot returned an empty documentation answer"
+
+        generated = (
+            await client.call_tool(
+                "generate_sas_code",
+                {"prompt": "Write a DATA step that creates a table with one numeric column."},
+            )
+        ).data
+        assert generated["generated_code"].strip(), "the copilot returned no generated code"

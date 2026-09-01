@@ -33,7 +33,7 @@ def test_resolve_range_list_and_csv():
     assert tools.resolve_enabled_tiers([2, 3]) == {2, 3}
 
 
-@pytest.mark.parametrize("bad", ["0-99", "10", "abc", [42]])
+@pytest.mark.parametrize("bad", ["0-99", "11", "abc", [42]])
 def test_resolve_rejects_unknown_tiers(bad):
     with pytest.raises(ConfigError):
         tools.resolve_enabled_tiers(bad)
@@ -48,7 +48,7 @@ def test_env_var_drives_default(monkeypatch):
 
 async def test_register_all_tiers_registers_everything():
     names = await _register(None)
-    assert len(names) == 87
+    assert len(names) == 89
     assert "execute_sas_code" in names
     assert "publish_decision_flow" in names
     assert "apply_report_operations" in names
@@ -63,6 +63,7 @@ async def test_register_subset_excludes_other_tiers():
     assert "list_mas_modules" not in names  # tier 6
     assert "create_business_ruleset" not in names  # tier 7
     assert "search_glossary_terms" not in names  # tier 9
+    assert "generate_sas_code" not in names  # tier 10
 
 
 async def test_register_single_tier():
@@ -84,3 +85,16 @@ async def test_register_glossary_tier_alone():
     assert "search_glossary_terms" in names
     assert "assign_glossary_term" in names
     assert "catalog_search" not in names  # tier 1, not 9
+
+
+async def test_register_code_assistant_tier_alone():
+    """Tier 10 must stand up with no other tier registered.
+
+    Its two tools talk only to the GenAI Gateway, so nothing should have crept
+    in from a lower tier having registered first.
+    """
+    names = await _register("10")
+    assert len(names) == 2
+    assert "get_doc_answer" in names
+    assert "generate_sas_code" in names
+    assert "execute_sas_code" not in names  # tier 0, not 10

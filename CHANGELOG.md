@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Tier 10 — Code Assistance & Documentation: two read-only tools over the SAS Code Assistant copilot.** `get_doc_answer` answers a SAS documentation question from the copilot's knowledge base, optionally narrowed to named documentation sets; `generate_sas_code` generates code from natural-language requirements (`language` defaults to `sas`, with `python` and `r` also accepted, and `use_rag_for_sas` grounds SAS generation in the documentation). Both reach the copilot through Viya's own REST API (`/genAiGateway/v1/copilotRequest`) with the authenticated user's bearer token, so a deployment needs no separate GenAI or LLM API key and no RAG endpoint — Viya owns model selection and routing, and neither a credential nor the submitted source is persisted server-side. The gateway validates `UserRequest.content` as required and non-empty even where the copilot drives the action from `commandId`, so the generate command carries a short fixed instruction; it does not change what the copilot does. The tier deliberately ships no execution tool — `execute_sas_code` in Tier 0 or Tier 8 remains the only way to run what the assistant produces. Both are classified read-only in `tools/_access.py` (they return text and change nothing server-side), so they survive `MCP_READ_ONLY` and advertise `readOnlyHint` from the same table that enforces it; they stay closed-world, since the caller has no URL, model or provider parameter with which to steer where the gateway routes. The tier registers like any other — an unset `MCP_TIERS` includes it, and `MCP_TIERS=0-9` leaves it out — and needs the GenAI Gateway provisioned on the instance, in the same way Tier 7 needs SAS Intelligent Decisioning and Tier 9 needs SAS Data Governance.
+
 ## [1.13.0] - 2026-09-04
 
 ### Added
