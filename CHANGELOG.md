@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`execute_sas_code` reported every failed job submission as the single word `'id'`.** (#55) The submit was the one request in the compute path that never checked its HTTP status, so Viya's error body was parsed as though it were a job: `job["id"]` raised a `KeyError` whose entire message is `id`, and the caller got `Error calling tool 'execute_sas_code': 'id'` while the actual reason — "The session is not available.", an authorization message, whatever it was — was discarded. Reported from the field against GitHub Copilot, where the model then retried simpler and simpler SAS code against an error that had nothing to do with the code.
+- **A failed log fetch was reported as a job that produced no output.** (#55) The log and listing endpoints are paged, and the page reader took `items` off the response without checking it first — on an error body that yields `[]`, which the short-page test reads as "end of log". So a job whose log could not be read came back with a state and an empty log rather than an error, which for audit-style work silently loses the deliverable.
+- **A compute session dying mid-job left `execute_sas_code` polling forever.** (#55) The job state is read as plain text, so an unchecked error body became the "state" — never one of the terminal values, so the poll loop simply continued, every two seconds, for as long as the process lived. All three now check the response first; the poll deliberately has no wall-clock cap alongside that, since a legitimate SAS job can run for hours.
+
 ## [1.14.1] - 2026-09-09
 
 ### Fixed
