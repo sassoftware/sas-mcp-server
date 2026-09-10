@@ -87,3 +87,9 @@ def test_upstream_token_request_presents_no_client_password():
     )
     # RFC 6749 §2.3.1: a client without a secret identifies itself in the body.
     assert data.get("client_id") == config.CLIENT_ID
+
+def test_cimd_is_disabled_for_dynamic_localhost_callbacks():
+    """Local MCP callbacks must use normal dynamic client registration.
+    Works with enable_cimd=False to the PermissiveOAuthProxy(...) call in src/sas_mcp_server/config.py
+    """
+    assert config.viya_auth._cimd_manager is None
