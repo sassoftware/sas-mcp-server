@@ -3,12 +3,15 @@
 
 """
 Tests for the configured PermissiveOAuthProxy: the additive raw-bearer path
-gated by ALLOW_RAW_BEARER, and the credential the proxy presents to SAS Logon
-when it exchanges a code upstream.
+gated by ALLOW_RAW_BEARER, the credential the proxy presents to SAS Logon when
+it exchanges a code upstream, and the redirect URIs it will accept back from an
+MCP client.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp.shared.auth import OAuthClientInformationFull
+from pydantic import AnyUrl
 
 import sas_mcp_server.auth as auth_mod
 import sas_mcp_server.config as config
@@ -87,3 +90,45 @@ def test_upstream_token_request_presents_no_client_password():
     )
     # RFC 6749 §2.3.1: a client without a secret identifies itself in the body.
     assert data.get("client_id") == config.CLIENT_ID
+
+
+def test_cimd_is_disabled_so_url_client_ids_go_through_registration():
+    """No CIMD manager: a URL-shaped client_id must not be resolved as a document.
+
+    ``OAuthProxy.get_client`` gates the whole CIMD path on this attribute, so
+    ``None`` here is what routes a client like GitHub Copilot CLI — whose
+    client_id is an HTTPS URL — down the ordinary dynamic-registration path
+    instead. That matters because CIMD validates the callback against the
+    redirect_uris in the client's *published* document, with no exemption for
+    loopback ports, and an MCP client opens a fresh ``127.0.0.1:<port>`` every
+    run. The document check runs first and is fatal, so it cannot be widened
+    from this side — ``allowed_client_redirect_uris`` only narrows what the
+    document already permits. Disabling CIMD is the only lever the server
+    has (#58).
+    """
+    assert config.viya_auth._cimd_manager is None
+
+
+@pytest.mark.asyncio
+async def test_a_callback_may_come_back_on_a_different_loopback_port():
+    """The port an MCP client listens on changes every run; the callback must still work.
+
+    Companion to the test above, pinning the outcome rather than the mechanism:
+    whatever validates redirect URIs, a client that registered on one loopback
+    port has to be allowed back on another, or interactive sign-in only ever
+    works once. RFC 8252 §7.3 requires exactly this of an authorization server.
+    """
+    client_id = "https://example.invalid/copilot-cimd.json"
+    await config.viya_auth.register_client(
+        OAuthClientInformationFull(
+            client_id=client_id,
+            redirect_uris=[AnyUrl("http://127.0.0.1:8080/")],
+            grant_types=["authorization_code", "refresh_token"],
+            token_endpoint_auth_method="none",
+        )
+    )
+    stored = await config.viya_auth.get_client(client_id)
+    assert stored is not None, "the client we just registered should be retrievable"
+
+    # A different port than the one registered — what actually happens next run.
+    assert stored.validate_redirect_uri(AnyUrl("http://127.0.0.1:52505/"))
