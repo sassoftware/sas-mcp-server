@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Signing in from GitHub Copilot CLI failed before Viya was ever contacted.** (#58) The callback was refused with `Redirect URI 'http://127.0.0.1:52505/' does not match CIMD redirect_uris`. An MCP client opens a fresh loopback port for every sign-in, and FastMCP 4.0 enables CIMD (Client ID Metadata Document) by default: a client whose `client_id` is an HTTPS URL has its callback checked against the redirect URIs in its own published document, with no exemption for varying loopback ports — so the check could never pass. It cannot be widened from this side either, since the document check runs first and `allowed_client_redirect_uris` only narrows what the document already permits. The proxy now sets `enable_cimd=False`, putting URL-shaped client IDs on the ordinary dynamic-registration path, which does allow loopback ports to vary (RFC 8252 §7.3) and is the path every other MCP client already uses. Verified against GitHub Copilot CLI 1.0.83. Note the trade: the server no longer advertises `client_id_metadata_document_supported`, and `private_key_jwt` drops out of the advertised token-endpoint auth methods — both accurate, since neither is supported with CIMD off. Reported and fixed by @bteleuca.
+
 ## [1.14.1] - 2026-09-09
 
 ### Fixed

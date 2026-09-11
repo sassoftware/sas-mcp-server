@@ -157,6 +157,21 @@ viya_auth = PermissiveOAuthProxy(
     token_endpoint_auth_method="none",
     jwt_signing_key=MCP_SIGNING_KEY,
     base_url=MCP_BASE_URL,
+    # An MCP client opens a fresh loopback port for every sign-in. FastMCP 4.0
+    # turns CIMD on by default, and a client whose client_id is an HTTPS URL
+    # (GitHub Copilot CLI is one) then has its callback checked against the
+    # redirect URIs in its own published metadata document — which lists fixed
+    # ports and gets no loopback exemption, so the check can never pass. It
+    # cannot be widened from here either: the document check runs first, and
+    # allowed_client_redirect_uris only narrows what the document already
+    # permits. Off, those client IDs take the ordinary dynamic-registration
+    # path, which does let loopback ports vary (RFC 8252 §7.3) and is what every
+    # other MCP client already uses. The trade is that this server no longer
+    # advertises client_id_metadata_document_supported or private_key_jwt —
+    # correct, since with CIMD off it supports neither (#58). The underlying
+    # asymmetry is FastMCP's: its DCR path implements the loopback rule and its
+    # CIMD path does not; drop this line if that is ever reconciled.
+    enable_cimd=False,
     forward_pkce=True,
     token_verifier=token_verifier,
     valid_scopes=["openid"],
