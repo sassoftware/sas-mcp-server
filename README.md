@@ -151,6 +151,7 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 6 | Model Management & Scoring |
 | 7 | Decisioning (SAS Intelligent Decisioning) |
 | 8 | Workbench (Execute Code Only) |
+| 9 | Event Stream Processing |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -245,6 +246,17 @@ Build and manage SAS Intelligent Decisioning rule sets and decision flows end to
 
 #### Tier 8 — Workbench (Execute Code Only)
 - **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output). Runs in a reusable compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls
+
+#### Tier 9 — Event Stream Processing
+Wraps the SAS Event Stream Processing REST/XML layer (`/eventStreamProcessing/v1/...`). **Endpoint paths are not verified against a live environment** — ESP's REST API has historically lived directly on an ESP server process rather than uniformly behind the shared Viya gateway, so whether/where your deployment proxies it under `VIYA_ENDPOINT` depends on your specific setup. Always call `discover_esp_api` first to confirm the real base path before relying on the rest.
+- **discover_esp_api**: Probe a few candidate URLs under `VIYA_ENDPOINT` for the ESP API description/Swagger doc, to confirm (or correct) the base path the other tools assume
+- **list_esp_servers**: List ESP server instances known to this Viya environment
+- **list_esp_projects**: List deployed ESP projects, optionally scoped to one server
+- **get_esp_project**: Get a deployed project's model and status
+- **deploy_esp_project**: Deploy (load and start) a project from its XML model definition
+- **undeploy_esp_project**: Stop and remove a deployed project
+- **get_esp_window_schema**: Get a window's field schema within a running project
+- **publish_esp_events**: Publish a batch of events into a source window
 
 ### Prompt Templates
 
