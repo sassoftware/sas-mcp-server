@@ -238,6 +238,12 @@ async def submit_job(client: httpx.AsyncClient, session_id: str, code: str) -> s
     body = {"code": code.splitlines()}
     url = f"{VIYA_ENDPOINT}/compute/sessions/{session_id}/jobs"
     resp = await client.post(url, json=body)
+    # Unchecked, a refused submit is parsed as though it were a job: the error
+    # body has no ``id``, so ``job["id"]`` raises ``KeyError`` and the whole
+    # failure reaches the caller as the single word ``'id'`` while Viya's own
+    # explanation — "The session is not available.", an authorization message —
+    # is thrown away (#55).
+    raise_for_viya_status(resp)
     job = resp.json()
     return job["id"]
 
@@ -260,6 +266,11 @@ async def _fetch_all_lines(client: httpx.AsyncClient, url: str) -> list[str]:
     start = 0
     for _ in range(_LINES_MAX_PAGES):
         resp = await client.get(url, params={"start": start, "limit": _LINES_PAGE_LIMIT})
+        # A failed page must not read as "no more lines": ``.get("items", [])``
+        # on an error body yields ``[]``, the short-page test below ends the
+        # loop, and the caller gets an empty log back with nothing to say the
+        # fetch failed at all — for audit work the log IS the deliverable (#55).
+        raise_for_viya_status(resp)
         items = resp.json().get("items", [])
         lines.extend(item.get("line", "") for item in items)
         if len(items) < _LINES_PAGE_LIMIT:
@@ -276,6 +287,13 @@ async def wait_job(
     while True:
         state_url = f"{VIYA_ENDPOINT}/compute/sessions/{session_id}/jobs/{job_id}/state"
         resp = await client.get(state_url)
+        # The state is read as plain text, so an error body would be treated as
+        # a state name — never a terminal one, leaving this loop polling a
+        # session that will never answer, forever. Deliberately no wall-clock
+        # cap alongside it: a legitimate job can run for hours (the usage log
+        # holds multi-hour durations), and this check already ends the only case
+        # where the poll cannot terminate on its own (#55).
+        raise_for_viya_status(resp)
         state = resp.text.strip()
         if state in ("completed", "error", "warning", "canceled"):
             log_url = f"{VIYA_ENDPOINT}/compute/sessions/{session_id}/jobs/{job_id}/log"

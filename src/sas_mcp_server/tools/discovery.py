@@ -24,6 +24,45 @@ from ..viya_client import (
 from ..viya_utils import submit_job, wait_job
 from ._common import make_session_helpers
 
+#: Appended to a 409 raised while *reading* a caslib's tables. casManagement
+#: answers that with 409 when CAS cannot connect to the caslib's underlying data
+#: source — the caslib exists and the caller may be perfectly entitled to it.
+#: Confirmed against two database caslibs on one deployment: postgres
+#: ("password authentication failed for user ...") and Oracle ("ORA-00257:
+#: archiver error") both arrive as this same 409 behind the same "connection to
+#: the data source driver failed" prefix. Worth spelling out because the status
+#: alone reads as an authorization problem, so the obvious next step — checking
+#: caslib permissions in Viya — looks fine and explains nothing (#56).
+_CASLIB_READ_409_HINT = (
+    "This is CAS reporting that it could not reach the data source behind caslib "
+    "'{caslib}', not a Viya authorization failure — checking caslib or folder "
+    "permissions will not explain it. Confirm you can open '{caslib}' directly in "
+    "SAS Viya (Environment Manager > Data, or Explore and Visualize): if it fails "
+    "there too, the caslib's data source connection or its stored credentials need "
+    "an administrator; if it works there, retry, since the connection may just have "
+    "been briefly down."
+)
+
+
+@contextlib.contextmanager
+def _caslib_read_errors(caslib_name: str):
+    """Explain a 409 raised while reading *caslib_name*'s tables.
+
+    Reads only. A ``POST`` to the same collection answers 409 for "that table
+    already exists" (see the upload flow in :mod:`~sas_mcp_server.tools.data_ops`),
+    which is a different condition and must not get this hint.
+    """
+    try:
+        yield
+    except httpx.HTTPStatusError as exc:
+        if exc.response is None or exc.response.status_code != 409:
+            raise
+        raise httpx.HTTPStatusError(
+            f"{exc} — {_CASLIB_READ_409_HINT.format(caslib=caslib_name)}",
+            request=exc.request,
+            response=exc.response,
+        ) from exc
+
 
 def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
     """Register Tier 1 (Data Discovery) tools on *mcp*."""
@@ -656,11 +695,12 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             limit: Maximum number of tables to return (default 50).
         """
         async with viya_session("list_castables", ctx) as client:
-            items, _ = await get_paged_items(
-                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables",
-                client,
-                limit=limit,
-            )
+            with _caslib_read_errors(caslib_name):
+                items, _ = await get_paged_items(
+                    f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables",
+                    client,
+                    limit=limit,
+                )
             return return_items(items, ["name", "rowCount", "columnCount"])
 
     @mcp.tool()
@@ -678,12 +718,13 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             limit: Maximum number of tables to return (default 50).
         """
         async with viya_session("list_source_tables", ctx) as client:
-            items, _ = await get_paged_items(
-                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables",
-                client,
-                limit=limit,
-                extra_params={"state": "unloaded"},
-            )
+            with _caslib_read_errors(caslib_name):
+                items, _ = await get_paged_items(
+                    f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables",
+                    client,
+                    limit=limit,
+                    extra_params={"state": "unloaded"},
+                )
             return return_items(items, ["name", "sourceTableName", "scope", "state"])
 
     @mcp.tool()
@@ -696,10 +737,11 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             table_name: Name of the table.
         """
         async with viya_session("get_castable_info", ctx) as client:
-            return await get_json(
-                f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
-                client,
-            )
+            with _caslib_read_errors(caslib_name):
+                return await get_json(
+                    f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
+                    client,
+                )
 
     @mcp.tool()
     async def get_castable_columns(
@@ -723,11 +765,12 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         """
         async with viya_session("get_castable_columns", ctx) as client:
             try:
-                items, _ = await get_paged_items(
-                    f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}/columns",
-                    client,
-                    limit=limit,
-                )
+                with _caslib_read_errors(caslib_name):
+                    items, _ = await get_paged_items(
+                        f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}/columns",
+                        client,
+                        limit=limit,
+                    )
             except httpx.HTTPStatusError as exc:
                 if exc.response is not None and exc.response.status_code == 404:
                     return {

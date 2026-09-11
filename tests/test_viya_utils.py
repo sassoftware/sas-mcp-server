@@ -5,6 +5,7 @@
 Tests for viya_utils module (compute session/job orchestration).
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -113,6 +114,7 @@ async def test_submit_job(
 ):
     """Test job submission."""
     mock_response = AsyncMock()
+    mock_response.raise_for_status = MagicMock()
     mock_response.json = MagicMock(return_value=mock_job_response)
     mock_httpx_client.post.return_value = mock_response
 
@@ -132,14 +134,17 @@ async def test_wait_job_completed(
     """Test waiting for job completion."""
     # Mock state response
     mock_state_response = AsyncMock()
+    mock_state_response.raise_for_status = MagicMock()
     mock_state_response.text = "completed"
 
     # Mock log response
     mock_log_response = AsyncMock()
+    mock_log_response.raise_for_status = MagicMock()
     mock_log_response.json = MagicMock(return_value=mock_job_log)
 
     # Mock listing response
     mock_listing_response = AsyncMock()
+    mock_listing_response.raise_for_status = MagicMock()
     mock_listing_response.json = MagicMock(return_value=mock_job_listing)
 
     # Set up the client to return different responses
@@ -164,14 +169,17 @@ async def test_wait_job_error_state(
 ):
     """Test waiting for job that ends in error state."""
     mock_state_response = AsyncMock()
+    mock_state_response.raise_for_status = MagicMock()
     mock_state_response.text = "error"
 
     mock_log_response = AsyncMock()
+    mock_log_response.raise_for_status = MagicMock()
     mock_log_response.json = MagicMock(
         return_value={"items": [{"line": "ERROR: Something went wrong"}]}
     )
 
     mock_listing_response = AsyncMock()
+    mock_listing_response.raise_for_status = MagicMock()
     mock_listing_response.json = MagicMock(return_value={"items": []})
 
     mock_httpx_client.get.side_effect = [
@@ -197,15 +205,19 @@ async def test_wait_job_fetches_all_log_pages(mock_httpx_client, mock_env_vars):
     exactly the trailing PASS/ERROR lines audit-style callers need.
     """
     mock_state = AsyncMock()
+    mock_state.raise_for_status = MagicMock()
     mock_state.text = "completed"
 
     full_page = AsyncMock()
+    full_page.raise_for_status = MagicMock()
     full_page.json = MagicMock(
         return_value={"items": [{"line": f"NOTE: line {i}"} for i in range(1000)]}
     )
     tail_page = AsyncMock()
+    tail_page.raise_for_status = MagicMock()
     tail_page.json = MagicMock(return_value={"items": [{"line": "NOTE: the PASS line"}]})
     empty_listing = AsyncMock()
+    empty_listing.raise_for_status = MagicMock()
     empty_listing.json = MagicMock(return_value={"items": []})
 
     mock_httpx_client.get.side_effect = [mock_state, full_page, tail_page, empty_listing]
@@ -243,22 +255,27 @@ async def test_run_one_snippet_success(
         mock_session_response.json = MagicMock(return_value={"id": "sess-id"})
 
         mock_job_response = AsyncMock()
+        mock_job_response.raise_for_status = MagicMock()
         mock_job_response.json = MagicMock(return_value={"id": "job-id"})
 
         mock_state_response = AsyncMock()
+        mock_state_response.raise_for_status = MagicMock()
         mock_state_response.text = "completed"
 
         mock_log_response = AsyncMock()
+        mock_log_response.raise_for_status = MagicMock()
         mock_log_response.json = MagicMock(
             return_value={"items": [{"line": "Log output"}]}
         )
 
         mock_listing_response = AsyncMock()
+        mock_listing_response.raise_for_status = MagicMock()
         mock_listing_response.json = MagicMock(
             return_value={"items": [{"line": "Listing output"}]}
         )
 
         mock_delete_response = AsyncMock()
+        mock_delete_response.raise_for_status = MagicMock()
 
         mock_client.get.side_effect = [
             mock_context_response,
@@ -298,18 +315,23 @@ async def test_run_one_snippet_with_bearer_prefix(sample_sas_code, mock_env_vars
         mock_session_response.json = MagicMock(return_value={"id": "sess-id"})
 
         mock_job_response = AsyncMock()
+        mock_job_response.raise_for_status = MagicMock()
         mock_job_response.json = MagicMock(return_value={"id": "job-id"})
 
         mock_state_response = AsyncMock()
+        mock_state_response.raise_for_status = MagicMock()
         mock_state_response.text = "completed"
 
         mock_log_response = AsyncMock()
+        mock_log_response.raise_for_status = MagicMock()
         mock_log_response.json = MagicMock(return_value={"items": []})
 
         mock_listing_response = AsyncMock()
+        mock_listing_response.raise_for_status = MagicMock()
         mock_listing_response.json = MagicMock(return_value={"items": []})
 
         mock_delete_response = AsyncMock()
+        mock_delete_response.raise_for_status = MagicMock()
 
         mock_client.get.side_effect = [
             mock_context_response,
@@ -333,12 +355,16 @@ async def test_run_one_snippet_with_bearer_prefix(sample_sas_code, mock_env_vars
 async def test_wait_job_polls_until_terminal(mock_httpx_client, mock_env_vars):
     """wait_job keeps polling while the state is non-terminal."""
     running = AsyncMock()
+    running.raise_for_status = MagicMock()
     running.text = "running"
     completed = AsyncMock()
+    completed.raise_for_status = MagicMock()
     completed.text = "completed"
     log_resp = AsyncMock()
+    log_resp.raise_for_status = MagicMock()
     log_resp.json = MagicMock(return_value={"items": [{"line": "L"}]})
     listing_resp = AsyncMock()
+    listing_resp.raise_for_status = MagicMock()
     listing_resp.json = MagicMock(return_value={"items": [{"line": "O"}]})
     mock_httpx_client.get.side_effect = [running, completed, log_resp, listing_resp]
 
@@ -607,3 +633,84 @@ async def test_get_context_id_surfaces_viya_error(mock_httpx_client, mock_env_va
 
     with pytest.raises(httpx.HTTPStatusError, match="User is not authorized"):
         await get_context_id(mock_httpx_client, "Test Context")
+
+
+def _viya_error(status: int, message: str, url: str, method: str = "GET") -> httpx.Response:
+    """A Viya error response of the shape these endpoints really return."""
+    return httpx.Response(
+        status,
+        request=httpx.Request(method, url),
+        content=json.dumps({"errorCode": 5113, "message": message}).encode(),
+        headers={"Content-Type": "application/vnd.sas.error+json"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_job_names_the_failure_instead_of_raising_bare_id(
+    mock_httpx_client, sample_sas_code, mock_env_vars
+):
+    """A refused job submit must report Viya's reason, not ``KeyError('id')``.
+
+    Unchecked, the error body was parsed as though it were a job and
+    ``job["id"]`` raised a KeyError whose whole message is the word ``id`` — so
+    ``execute_sas_code`` failed with "Error calling tool 'execute_sas_code':
+    'id'" and Viya's actual explanation was discarded (#55).
+    """
+    mock_httpx_client.post.return_value = _viya_error(
+        404,
+        "The session is not available.",
+        "https://viya.example.com/compute/sessions/DEAD/jobs",
+        method="POST",
+    )
+
+    with pytest.raises(httpx.HTTPStatusError, match="The session is not available"):
+        await submit_job(mock_httpx_client, "DEAD", sample_sas_code)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_log_fetch_is_not_reported_as_an_empty_log(
+    mock_httpx_client, mock_env_vars
+):
+    """A log page that fails must raise, not silently read as "no more lines".
+
+    ``.get("items", [])`` on an error body yields ``[]``, which the short-page
+    test treats as the end of the log — so the job looked like it had simply
+    produced no output (#55).
+    """
+    state = httpx.Response(
+        200, request=httpx.Request("GET", "https://viya.example.com/state"), text="completed"
+    )
+    log_failure = _viya_error(
+        403,
+        "User is not authorized to read this job log.",
+        "https://viya.example.com/compute/sessions/s/jobs/j/log",
+    )
+    mock_httpx_client.get.side_effect = [state, log_failure]
+
+    with pytest.raises(httpx.HTTPStatusError, match="not authorized to read this job log"):
+        await wait_job(mock_httpx_client, "s", "j", poll=0.001)
+
+
+@pytest.mark.asyncio
+async def test_wait_job_stops_when_the_session_dies_under_it(
+    mock_httpx_client, mock_env_vars
+):
+    """A dead session must end the poll, not spin on it forever.
+
+    The state is read as plain text, so an unchecked error body became the
+    "state" — never a terminal one, leaving the loop polling every two seconds
+    for as long as the process lived (#55).
+    """
+    mock_httpx_client.get.return_value = _viya_error(
+        404,
+        "The session is not available.",
+        "https://viya.example.com/compute/sessions/s/jobs/j/state",
+    )
+
+    with pytest.raises(httpx.HTTPStatusError, match="The session is not available"):
+        # Bounded on purpose: the defect this pins is an *unbounded* poll loop,
+        # so without the fix the call never returns. wait_for turns that into a
+        # failing test rather than a suite that hangs until CI times out.
+        await asyncio.wait_for(
+            wait_job(mock_httpx_client, "s", "j", poll=0.001), timeout=5
+        )

@@ -206,6 +206,50 @@ async def test_list_castables_request(mcp_server_with_mock_client):
     assert params["limit"] == 10
 
 
+async def test_caslib_read_409_points_at_the_data_source_not_permissions(
+    mcp_server_with_mock_client,
+):
+    """A 409 listing a caslib's tables must say it is the data source, not access rights.
+
+    casManagement answers a caslib read with 409 when CAS cannot connect to the
+    library's underlying data source. Verified against two database caslibs on
+    one deployment -- postgres ("password authentication failed") and Oracle
+    ("ORA-00257: archiver error") -- both arriving as this same 409. The status
+    on its own reads as an authorization problem, so the reporter of #56 checked
+    caslib permissions, found them fine, and was left with nowhere to go.
+    """
+    mcp, mock_client = mcp_server_with_mock_client
+    url = "https://viya.example.com/casManagement/servers/cas1/caslibs/ALMReporting/tables"
+    mock_client.get.return_value = httpx.Response(
+        409,
+        request=httpx.Request("GET", url),
+        content=json.dumps(
+            {
+                "errorCode": 310002,
+                "message": (
+                    "Function failed. The connection to the data source driver failed."
+                ),
+            }
+        ).encode(),
+        headers={"Content-Type": "application/vnd.sas.error+json"},
+    )
+
+    async with Client(mcp) as client:
+        with pytest.raises(Exception) as excinfo:
+            await client.call_tool(
+                "list_castables",
+                {"server_id": "cas1", "caslib_name": "ALMReporting"},
+            )
+
+    text = str(excinfo.value)
+    # Viya's own reason still comes through -- the hint adds to it, never replaces it.
+    assert "connection to the data source driver failed" in text
+    assert "not a Viya authorization failure" in text
+    assert "ALMReporting" in text
+    # The one concrete next step: prove it independently of MCP.
+    assert "directly in SAS Viya" in text
+
+
 async def test_list_source_tables_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
     async with Client(mcp) as client:
