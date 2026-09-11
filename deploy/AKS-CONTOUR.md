@@ -18,8 +18,8 @@ does it server-side — nothing transits your laptop:
 
 ```sh
 az acr import --name aomdk \
-  --source ghcr.io/sassoftware/sas-mcp-server:1.14.1 \
-  --image sas-mcp-server:1.14.1
+  --source ghcr.io/sassoftware/sas-mcp-server:1.14.2 \
+  --image sas-mcp-server:1.14.2
 ```
 
 Give the cluster pull rights once (this grants `AcrPull` to the kubelet identity):
@@ -34,7 +34,7 @@ is a moving target that nobody outside your org can audit:
 ```yaml
 image:
   repository: aomdk.azurecr.io/sas-mcp-server
-  tag: 1.14.1
+  tag: 1.14.2
 ```
 
 If the registry is not attached to the cluster, use `imagePullSecrets` instead:
