@@ -49,6 +49,7 @@ from fastmcp import Context, FastMCP
 from .config import AUTH_ENABLED, CLIENT_ID, SERVER_NAME, SSL_VERIFY, VIYA_ENDPOINT
 from .exceptions import AuthenticationError
 from .helpers.telemetry_helpers import server_version
+from .http_debug import install_http_debug
 from .prompts import register_prompts
 from .telemetry import install_telemetry
 from .tools import register_tools
@@ -325,6 +326,7 @@ mcp = FastMCP(SERVER_NAME, version=SERVER_VERSION, lifespan=_lifespan)
 register_tools(mcp, _stdio_get_token)
 # Opt-in telemetry (no-op unless COLLECTION_MODE is enabled).
 install_telemetry(mcp, "stdio")
+install_http_debug()
 register_prompts(mcp)
 
 
