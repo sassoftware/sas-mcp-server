@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`HTTP_DEBUG` traces every SAS Viya API request to a separate file.** A tool failure reached the person as the model's summary of an error, with the request behind it — path, media type, body — nowhere to be seen, and a single tool call can make several requests. With `HTTP_DEBUG=true` in `.env`, each request sent through `make_client` and its response are appended as JSON lines to `HTTP_DEBUG_LOG_PATH` (default `~/.sas-mcp-server/http-debug.log`), never to the server log, so stdio's protocol stream is untouched. Request and response are separate records sharing an `id`, so a request that failed in transit still appears. Credential-shaped headers, query parameters and body keys and inline Bearer/JWT strings are redacted with the collection log's rules; bodies are capped at `HTTP_DEBUG_MAX_BODY_BYTES` (default 4096, `0` for none), binary bodies are described rather than recorded, multipart uploads are not buffered, and the file rotates (`HTTP_DEBUG_MAX_LOG_BYTES`, `HTTP_DEBUG_LOG_BACKUPS`). Off by default; the server warns at startup while it is on. An unusable path turns tracing off with a warning rather than stopping the server.
+
 ## [1.16.1] - 2026-09-24
 
 ### Changed

@@ -19,6 +19,7 @@ import fastmcp
 import httpx
 from fastmcp.utilities.logging import get_logger
 
+from . import http_debug
 from .config import SSL_VERIFY, VIYA_ENDPOINT
 
 logger = get_logger(__name__)
@@ -224,14 +225,22 @@ async def delete_resource(url: str, client: httpx.AsyncClient) -> None:
 
 
 def make_client(token: str | None) -> httpx.AsyncClient:
-    """Create an :class:`httpx.AsyncClient` with auth headers for Viya API calls."""
+    """Create an :class:`httpx.AsyncClient` with auth headers for Viya API calls.
+
+    With ``HTTP_DEBUG`` on, the client carries the trace hooks of
+    :mod:`sas_mcp_server.http_debug`; otherwise ``event_hooks`` is ``None`` and
+    the client is exactly what it always was.
+    """
     headers: dict[str, str] = {}
     if token:
         if not token.startswith("Bearer "):
             token = f"Bearer {token}"
         headers["Authorization"] = token
     return httpx.AsyncClient(
-        headers=headers, verify=SSL_VERIFY, timeout=_CLIENT_TIMEOUT
+        headers=headers,
+        verify=SSL_VERIFY,
+        timeout=_CLIENT_TIMEOUT,
+        event_hooks=http_debug.event_hooks(),
     )
 
 

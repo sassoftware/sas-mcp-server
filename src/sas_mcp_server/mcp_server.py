@@ -32,6 +32,7 @@ from .config import (
 )
 from .exceptions import AuthenticationError
 from .helpers.telemetry_helpers import server_version
+from .http_debug import install_http_debug
 from .landing import LandingPageMiddleware, ServerFacts, collect_facts
 from .prompts import register_prompts
 from .telemetry import install_telemetry
@@ -93,6 +94,7 @@ mcp = FastMCP(SERVER_NAME, **_mcp_kwargs)
 # is the OUTERMOST middleware — it wraps AuthMiddleware and the tool, so an auth
 # failure is recorded as status="error" and re-raised unchanged.
 install_telemetry(mcp, "http")
+install_http_debug()
 if AUTH_ENABLED:
     mcp.add_middleware(AuthMiddleware())
 

@@ -161,6 +161,10 @@ The .env file used by the MCP Server allows for customizable options that the us
 | `COMPUTE_SESSION_ID` | No | — | Fixed compute session id (for deployments without `/compute/contexts`). When set (e.g. `0001`), compute tools use that session directly. |
 | `MAX_UPLOAD_BYTES` | No | `104857600` (100 MiB) | Upper bound for the server-side upload sources (`upload_data`/`upload_file` with `file_path` or `url`). The default matches SAS Viya's 100 MB file-upload limit — if your administrator raises the Viya-side limit, raise this with it (see [deploy/SCALING.md](../deploy/SCALING.md)). |
 | `MAX_EXPORT_INLINE_BYTES` | No | `26214400` (25 MiB) | Upper bound for binary report exports returned inline by `export_report`; larger exports are refused with guidance. |
+| `HTTP_DEBUG` | No | `false` | Trace every SAS Viya API request and response to a separate JSONL file (see `HTTP_DEBUG_LOG_PATH`). Credentials are redacted; data values in bodies are not. For troubleshooting only. |
+| `HTTP_DEBUG_LOG_PATH` | No | `~/.sas-mcp-server/http-debug.log` | File the HTTP debug trace is written to; created with owner-only permissions. |
+| `HTTP_DEBUG_MAX_BODY_BYTES` | No | `4096` | Cap on each recorded request/response body; `0` records no bodies. |
+| `HTTP_DEBUG_MAX_LOG_BYTES` / `HTTP_DEBUG_LOG_BACKUPS` | No | `10485760` / `3` | Rotation size of the trace file and number of rotated files kept. |
 | `SAS_CLI_CONFIG` | Stdio (optional) | `$HOME` | Parent directory for the SAS Viya CLI credential cache. The token is read from `$SAS_CLI_CONFIG/.sas/credentials.json`. |
 | `VIYA_USERNAME` | Tests only | — | Used by the integration test suite to acquire a token via the legacy `sas.cli` password grant. Not used by the MCP server itself. |
 | `VIYA_PASSWORD` | Tests only | — | See `VIYA_USERNAME`. |
