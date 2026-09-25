@@ -33,6 +33,8 @@ Only clients built by :func:`sas_mcp_server.viya_client.make_client` are traced
 Like :func:`sas_mcp_server.telemetry.install_telemetry`, the tracer is
 installed once at startup by the server entry points; when ``HTTP_DEBUG`` is off
 :func:`event_hooks` returns ``None`` and clients are built exactly as before.
+As in telemetry, the disk write is offloaded with ``anyio.to_thread`` so the
+file I/O and any rollover never run on the event loop.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qsl
 
+import anyio.to_thread
 import httpx
 
 from .usage_logger import REDACT_KEY_RE, UsageLogger, bounded_redact
@@ -71,6 +74,13 @@ _EXT_KEY = "sas_mcp_http_debug"
 # exports, uploads) is recorded as its size and type only.
 _TEXT_MARKERS = ("json", "text/", "xml", "x-www-form-urlencoded", "javascript", "csv")
 
+# Above this size a body is neither decoded whole nor parsed as JSON: a prefix
+# a few times the cap is decoded and clipped as text. Decoding 100 MiB of CSV
+# (an upload) or parsing a million-row JSON result on the event loop, to keep
+# 4 KiB of it, is the stall the collection log's bounded redaction exists to
+# avoid. Below it, JSON is parsed so secret-shaped KEYS are masked.
+_PARSE_CEILING = 1 << 20
+
 
 def _is_text(content_type: str) -> bool:
     ct = content_type.lower()
@@ -91,12 +101,20 @@ def redact_headers(headers: httpx.Headers) -> dict[str, str]:
 
 
 def redact_url(url: httpx.URL) -> str:
-    """The URL with any credential-shaped query parameter's value masked."""
+    """The URL with any credential-shaped query parameter's value masked.
+
+    Left byte-for-byte as sent unless something is masked: rebuilding the
+    query percent-encodes characters httpx sends raw (``filter=eq(name,'x')``
+    would become ``eq%28name%2C%27x%27%29``), and a trace whose URL differs
+    from the wire cannot be pasted into curl to reproduce the failure.
+    """
     if not url.query:
         return str(url)
+    items = url.params.multi_items()
+    if not any(REDACT_KEY_RE.search(key) for key, _ in items):
+        return str(url)
     params = [
-        (key, _REDACTED if REDACT_KEY_RE.search(key) else value)
-        for key, value in url.params.multi_items()
+        (key, _REDACTED if REDACT_KEY_RE.search(key) else value) for key, value in items
     ]
     return str(url.copy_with(params=params))
 
@@ -115,6 +133,12 @@ def body_preview(content: bytes, content_type: str, max_bytes: int) -> tuple[Any
         return f"<{len(content)} bytes, not recorded: HTTP_DEBUG_MAX_BODY_BYTES=0>", False
     if not _is_text(content_type):
         return f"<{len(content)} bytes of {content_type or 'unknown type'}>", False
+    if len(content) > _PARSE_CEILING:
+        # Decode only what can survive the cap (a UTF-8 char is at most 4
+        # bytes), clip it, and say so; the rest is never touched.
+        head = content[: max_bytes * 4].decode("utf-8", errors="replace")
+        value, _ = bounded_redact(head, max_bytes)
+        return value, True
     text = content.decode("utf-8", errors="replace")
     ct = content_type.lower()
     if "json" in ct:
@@ -136,8 +160,9 @@ class HttpDebugTracer:
 
     One tracer serves every client (``make_client`` builds one per tool call),
     so ids are unique for the life of the process and concurrent tool calls
-    stay separable. The hooks never raise: a tracing fault must not fail the
-    Viya call it was watching.
+    stay separable. A tracing fault never fails the Viya call it was watching;
+    the one exception the response hook lets through is the call's own
+    transport error (see :meth:`on_response`).
     """
 
     def __init__(self, writer: UsageLogger, *, max_body_bytes: int) -> None:
@@ -147,6 +172,19 @@ class HttpDebugTracer:
 
     def event_hooks(self) -> dict[str, list[Any]]:
         return {"request": [self.on_request], "response": [self.on_response]}
+
+    def close(self) -> None:
+        """Release the trace file (rotation on Windows needs the handle gone)."""
+        close = getattr(self.writer, "close", None)
+        if close is not None:
+            close()
+
+    async def _write(self, record: dict[str, Any]) -> None:
+        """Append one record off the event loop; never raises."""
+        try:
+            await anyio.to_thread.run_sync(self.writer.write, record)
+        except Exception as exc:  # noqa: BLE001 - tracing must never break a call
+            module_logger.debug("HTTP debug write failed: %s", exc)
 
     def _request_body(self, request: httpx.Request) -> tuple[Any, bool]:
         try:
@@ -175,41 +213,64 @@ class HttpDebugTracer:
             }
             if truncated:
                 record["body_truncated"] = True
-            self.writer.write(record)
         except Exception as exc:  # noqa: BLE001 - tracing must never break a call
             module_logger.debug("HTTP debug request hook failed: %s", exc)
+            return
+        await self._write(record)
+
+    def _response_record(
+        self, response: httpx.Response, *, error: BaseException | None = None
+    ) -> dict[str, Any]:
+        request = response.request
+        trace_id, started = request.extensions.get(_EXT_KEY, (None, None))
+        record: dict[str, Any] = {
+            "ts": _now(),
+            "event": "response",
+            "id": trace_id,
+            "method": request.method,
+            "url": redact_url(request.url),
+            "status": response.status_code,
+            "elapsed_ms": (
+                round((time.perf_counter() - started) * 1000, 1)
+                if started is not None
+                else None
+            ),
+            "headers": redact_headers(response.headers),
+        }
+        if error is not None:
+            record["error"] = f"{type(error).__name__}: {error}"
+            record["body"] = "<body not received>"
+            return record
+        content_type = response.headers.get("content-type", "")
+        body, truncated = body_preview(response.content, content_type, self.max_body_bytes)
+        record["body"] = body
+        if truncated:
+            record["body_truncated"] = True
+        return record
 
     async def on_response(self, response: httpx.Response) -> None:
+        # Reading here is safe: make_client's callers never stream, and every
+        # one of them reads the whole body anyway. It is NOT inside the
+        # catch-all: a read that fails mid-body (a stalled or dropped
+        # connection) marks the stream consumed, so swallowing the error would
+        # hand the caller a StreamConsumed in place of the ReadTimeout it was
+        # debugging. The failure is recorded, then re-raised unchanged.
         try:
-            request = response.request
-            trace_id, started = request.extensions.get(_EXT_KEY, (None, None))
-            # Safe to read here: make_client's callers never stream, and every
-            # one of them reads the whole body anyway.
             await response.aread()
-            content_type = response.headers.get("content-type", "")
-            body, truncated = body_preview(
-                response.content, content_type, self.max_body_bytes
-            )
-            record: dict[str, Any] = {
-                "ts": _now(),
-                "event": "response",
-                "id": trace_id,
-                "method": request.method,
-                "url": redact_url(request.url),
-                "status": response.status_code,
-                "elapsed_ms": (
-                    round((time.perf_counter() - started) * 1000, 1)
-                    if started is not None
-                    else None
-                ),
-                "headers": redact_headers(response.headers),
-                "body": body,
-            }
-            if truncated:
-                record["body_truncated"] = True
-            self.writer.write(record)
+        except Exception as exc:
+            try:
+                record = self._response_record(response, error=exc)
+            except Exception as inner:  # noqa: BLE001 - tracing must never break a call
+                module_logger.debug("HTTP debug response hook failed: %s", inner)
+                raise exc from None
+            await self._write(record)
+            raise
+        try:
+            record = self._response_record(response)
         except Exception as exc:  # noqa: BLE001 - tracing must never break a call
             module_logger.debug("HTTP debug response hook failed: %s", exc)
+            return
+        await self._write(record)
 
 
 _tracer: HttpDebugTracer | None = None
@@ -226,8 +287,12 @@ def install_http_debug() -> HttpDebugTracer | None:
     from . import config
 
     if not config.HTTP_DEBUG:
-        _tracer = None
+        uninstall_http_debug()
         return None
+    if _tracer is not None:
+        # Idempotent: a second install must not open a second handle on the
+        # same file — two handlers rotating independently break rollover.
+        return _tracer
     try:
         writer = UsageLogger(
             path=os.path.expanduser(config.HTTP_DEBUG_LOG_PATH),
@@ -255,8 +320,11 @@ def install_http_debug() -> HttpDebugTracer | None:
 
 
 def uninstall_http_debug() -> None:
-    """Stop tracing. For tests; the servers never turn it off once on."""
+    """Stop tracing and close the file. For tests; the servers never turn it
+    off once on."""
     global _tracer
+    if _tracer is not None:
+        _tracer.close()
     _tracer = None
 
 

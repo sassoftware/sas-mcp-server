@@ -302,3 +302,10 @@ class UsageLogger:
             self._logger.info(line)
         except Exception as exc:  # noqa: BLE001 - logging must NEVER propagate
             module_logger.debug("usage log write failed: %s", exc)
+
+    def close(self) -> None:
+        """Flush and release the file handle. Idempotent; never raises."""
+        for handler in self._logger.handlers:
+            with contextlib.suppress(Exception):
+                handler.close()
+        self._logger.handlers = []

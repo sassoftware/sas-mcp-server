@@ -375,3 +375,83 @@ def test_redact_url_without_query_is_unchanged():
 def test_body_preview_empty_and_invalid_json():
     assert body_preview(b"", "application/json", 100) == (None, False)
     assert body_preview(b"not json", "application/json", 100) == ("not json", False)
+
+
+# ------------------------- review findings on PR #64 ------------------------ #
+
+
+async def test_a_read_that_fails_mid_body_raises_the_real_error(tmp_path):
+    """httpx runs the response hook before its own read. A hook that swallowed
+    a mid-body failure would leave the stream consumed and the caller with a
+    StreamConsumed instead of the timeout it is debugging."""
+    tracer, log = _tracer(tmp_path)
+
+    class Stalls(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"partial":'
+            raise httpx.ReadTimeout("stalled mid-body")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=Stalls())
+
+    async with _client(tracer, handler) as client:
+        with pytest.raises(httpx.ReadTimeout):
+            await client.get("https://viya.example.com/compute/sessions/s1/jobs/j1/log")
+    req, res = _records(log)
+    assert req["event"] == "request" and res["event"] == "response"
+    assert res["status"] == 200
+    assert res["error"].startswith("ReadTimeout")
+    assert res["body"] == "<body not received>"
+
+
+async def test_url_is_recorded_as_sent_when_nothing_is_masked(tmp_path):
+    """Rebuilding the query would percent-encode what httpx sends raw, and a
+    traced URL that differs from the wire cannot reproduce the failure."""
+    tracer, log = _tracer(tmp_path)
+    url = "https://viya.example.com/reports/reports?filter=eq(name,'Sales')&limit=5"
+    async with _client(tracer, lambda r: httpx.Response(200)) as client:
+        await client.get(url)
+    assert _records(log)[0]["url"] == url
+    # Masking still rebuilds, and masks only the credential-shaped key.
+    masked = redact_url(httpx.URL(url + "&access_token=abc"))
+    assert "abc" not in masked and "limit=5" in masked
+
+
+def test_oversized_body_is_clipped_without_being_parsed():
+    """A 100 MiB CSV upload or a million-row JSON result is not decoded or
+    parsed whole on the event loop to keep 4 KiB of it."""
+    big = b'{"rows": [' + b'"x",' * (2 * 1024 * 1024 // 4) + b'"x"]}'
+    with patch("sas_mcp_server.http_debug.json.loads") as loads:
+        value, truncated = body_preview(big, "application/json", 64)
+    loads.assert_not_called()
+    assert truncated is True
+    assert isinstance(value, str) and value.startswith('{"rows": [')
+    assert len(value) < 200
+
+
+async def test_writes_are_offloaded_from_the_event_loop(tmp_path):
+    tracer, _ = _tracer(tmp_path)
+    with patch("sas_mcp_server.http_debug.anyio.to_thread.run_sync") as run_sync:
+        async with _client(tracer, lambda r: httpx.Response(204)) as client:
+            await client.get("https://viya.example.com/a")
+    assert run_sync.call_count == 2
+    assert all(call.args[0] == tracer.writer.write for call in run_sync.call_args_list)
+
+
+def test_install_is_idempotent_and_uninstall_releases_the_file(monkeypatch, tmp_path):
+    """A second install must not open a second handle on the same file, and
+    uninstall must close it: two live handles break rollover on Windows, and
+    a test's tmp_path could not be removed."""
+    import sas_mcp_server.config as config
+
+    log = tmp_path / "http-debug.log"
+    monkeypatch.setattr(config, "HTTP_DEBUG", True)
+    monkeypatch.setattr(config, "HTTP_DEBUG_LOG_PATH", str(log))
+    first = install_http_debug()
+    assert install_http_debug() is first
+    assert first is not None
+    assert len(first.writer._logger.handlers) == 1
+    uninstall_http_debug()
+    assert first.writer._logger.handlers == []
+    assert http_debug.event_hooks() is None
+    log.unlink()  # closed: removable on Windows too

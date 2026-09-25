@@ -520,8 +520,10 @@ When a tool fails, the model's summary of the error rarely shows the request tha
 
 ```sh
 HTTP_DEBUG=true
-HTTP_DEBUG_LOG_PATH=~/.sas-mcp-server/http-debug.log   # default
-# HTTP_DEBUG_MAX_BODY_BYTES=4096                        # 0 = no bodies
+# The defaults; `docker --env-file` keeps a trailing comment as part of the value, so none here.
+HTTP_DEBUG_LOG_PATH=~/.sas-mcp-server/http-debug.log
+# Cap per recorded body in bytes; 0 records no bodies.
+HTTP_DEBUG_MAX_BODY_BYTES=4096
 ```
 
 Each exchange is two JSON lines with the same `id`: a `request` record (method, URL, headers, body) and a `response` record (status, `elapsed_ms`, headers, body). A request with no matching response failed in transit — a timeout, a refused connection, a TLS error. The trace never goes to the server log, so it is safe in stdio mode, where stdout carries the protocol.
