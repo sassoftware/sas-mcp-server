@@ -1,6 +1,9 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# CHANGE NOTE (Visual Investigator / AML integration): adds bound_text(), which
+# caps long SAS logs/listings returned by the Tier 10 tools (tools/_vi_*.py).
+
 """Generic SAS Viya REST helpers.
 
 These functions wrap the common request shapes used by the MCP tools (GET a
@@ -23,6 +26,32 @@ from . import http_debug
 from .config import SSL_VERIFY, VIYA_CLIENT_TIMEOUT, VIYA_ENDPOINT
 
 logger = get_logger(__name__)
+
+
+def bound_text(text: str, head: int = 200, tail: int = 200, max_errors: int = 60) -> str:
+    """Cap a large SAS log/listing so it doesn't blow the MCP response budget.
+
+    Returns the text unchanged when it fits. Otherwise keeps the first *head*
+    and last *tail* lines, drops the middle (with a marker giving the omitted
+    count), and — because the omitted middle often hides the real failure —
+    prepends up to *max_errors* ERROR/WARNING lines pulled from the whole text.
+    """
+    lines = text.splitlines()
+    if len(lines) <= head + tail:
+        return text
+
+    omitted = len(lines) - head - tail
+    problems = [ln for ln in lines if ln.lstrip().startswith(("ERROR", "WARNING"))]
+    parts: list[str] = []
+    if problems:
+        shown = problems[:max_errors]
+        parts.append(f"===== {len(problems)} ERROR/WARNING line(s) (showing {len(shown)}) =====")
+        parts.extend(shown)
+        parts.append("=" * 40)
+    parts.extend(lines[:head])
+    parts.append(f"\n... [{omitted} lines omitted of {len(lines)} total] ...\n")
+    parts.extend(lines[-tail:])
+    return "\n".join(parts)
 
 
 def announce_startup(transport: str, version: str | None) -> str:

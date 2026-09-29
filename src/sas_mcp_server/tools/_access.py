@@ -1,6 +1,12 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# CHANGE NOTE (Visual Investigator / AML integration): adds the Tier 10 tools
+# (tools/_vi_*.py, lineage.py, audit.py) to READ_ONLY_TOOLS / WRITE_TOOLS and
+# to the destructive / idempotent / open-world hint sets. Under the strict
+# definition below, VI tools that run fixed SAS queries in a compute session
+# (monitoring stats, backtests, confusion matrix) are classified as WRITE.
+
 """Read/write classification of every tool, and the read-only registration gate.
 
 Read-only mode is a *filter*, not a tier: the read/write split cuts across every
@@ -110,6 +116,37 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "get_glossary_term",
         "list_term_assets",
         "list_table_terms",
+        # Tier 10 — Visual Investigator & AML (REST GETs, plus two POST searches)
+        "list_alerts",
+        "get_alert",
+        "get_alert_scorecard",
+        "get_scenario_fired_events",
+        "list_alert_queues",
+        "list_routing_rules",
+        "is_entity_document_locked",
+        "filter_entity_documents",  # POST, but a query — creates nothing
+        "list_entities",
+        "get_entity",
+        "get_related_entities",
+        "list_relationships",
+        "list_entity_types",
+        "list_entity_types_detailed",
+        "get_entity_type",
+        "get_entity_type_by_id",
+        "list_vsd_flows",
+        "get_vsd_flow",
+        "list_flow_deployments",
+        "check_flow_approval",
+        "get_model",
+        "get_ml_project_status",
+        "list_domains",
+        "list_strategies",
+        "get_strategy",
+        "list_scenarios",
+        "get_strategy_queue_metrics",
+        # External news APIs (no Viya access, no customer data sent).
+        "currents_news",
+        "gdelt_trends",
     }
 )
 
@@ -178,6 +215,48 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         # Creates/removes a catalog relationship between a term and a column.
         "assign_glossary_term",
         "unassign_glossary_term",
+        # Tier 10 — Visual Investigator & AML
+        # Fixed read queries, but each runs SAS in a compute session (server-side
+        # work), the same reason query_data is on this side.
+        "list_scenario_parameters",
+        "get_model_confusion_matrix",
+        "get_scenario_effectiveness",
+        "get_scenario_thresholds",
+        "get_alert_disposition_stats",
+        "get_transaction_trends",
+        "get_party_summary",
+        "get_customer_risk",
+        "detect_transaction_anomalies",
+        # Run SAS and save/promote result tables in CAS.
+        "backtest_scenario",
+        "train_alert_scoring_model",
+        "backtest_model",
+        # Detection authoring (dry_run by default / approval-gated).
+        "set_scenario_parameter",
+        "create_scenario",
+        "activate_scenario",
+        "create_strategy",
+        "create_routing_rule",
+        "transition_routing_rule",
+        "delete_routing_rule",
+        "create_flow_from_template",
+        "deploy_flow",
+        "tune_flow_scenario",
+        "submit_flow_change_for_approval",  # creates a VI inquiry document
+        "create_studio_flow",  # creates or replaces a .flw in SAS Content
+        # Data Hub documents
+        "create_entity_document",
+        "update_entity_document",
+        "bulk_upsert_entity_documents",
+        "lock_entity_document",
+        "unlock_entity_document",
+        # Models
+        "register_champion_model",
+        "publish_model",
+        "publish_champion_model",
+        # Lineage / audit
+        "record_data_lineage",  # writes Relationships-service edges
+        "flush_audit_log",  # replaces the CAS audit table, writes to SAS Content
     }
 )
 
@@ -219,6 +298,23 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "update_glossary_term_type",
         # update_existing=true overwrites a term already at that path.
         "import_glossary_terms",
+        # Tier 10 — Visual Investigator & AML
+        "delete_routing_rule",
+        "deploy_flow",  # replaces what production runs
+        "tune_flow_scenario",  # PUT replaces the flow definition
+        "transition_routing_rule",  # can take an ACTIVE rule out of production
+        "activate_scenario",  # can deactivate a production scenario
+        "set_scenario_parameter",  # overwrites a threshold
+        "update_entity_document",  # overwrites field values
+        "bulk_upsert_entity_documents",  # upsert overwrites existing documents
+        "create_studio_flow",  # replaces an existing flow of the same name
+        "publish_model",  # re-publish replaces the destination module
+        "publish_champion_model",  # likewise
+        # Save result tables with replace=, overwriting the previous run's.
+        "backtest_scenario",
+        "train_alert_scoring_model",
+        "backtest_model",
+        "flush_audit_log",  # unloads and re-uploads the audit mirror table
     }
 )
 
@@ -247,6 +343,16 @@ IDEMPOTENT_WRITE_TOOLS: frozenset[str] = frozenset(
         # creating a duplicate or failing on an absent one.
         "assign_glossary_term",
         "unassign_glossary_term",
+        # Tier 10 — PUT/state transitions and deletes that settle to one state.
+        "delete_routing_rule",
+        "transition_routing_rule",
+        "activate_scenario",
+        "set_scenario_parameter",
+        "tune_flow_scenario",
+        "update_entity_document",
+        "unlock_entity_document",  # succeeds even if no lock is held
+        "create_studio_flow",  # create-or-replace by name
+        "record_data_lineage",  # an existing edge is reported, not duplicated
     }
 )
 
@@ -259,6 +365,9 @@ OPEN_WORLD_TOOLS: frozenset[str] = frozenset(
         "submit_batch_job",
         "upload_data",
         "upload_file",
+        # Tier 10 — call public news APIs outside Viya.
+        "currents_news",
+        "gdelt_trends",
     }
 )
 

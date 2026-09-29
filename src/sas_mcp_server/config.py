@@ -1,8 +1,15 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# CHANGE NOTE (Visual Investigator / AML integration): adds the "Live-build
+# demo settings" block at the end of this file — DEMO_FOLDER_PATH,
+# LINEAGE_BACKEND and AUDIT_* — used by tools/_vi_*.py,
+# lineage.py and audit.py. Also imports tempfile/Path for the audit default.
+
 import logging
 import os
+import tempfile
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -232,3 +239,33 @@ viya_auth = PermissiveOAuthProxy(
     valid_scopes=["openid"],
     allow_raw_bearer=ALLOW_RAW_BEARER,
 )
+
+# ---------------------------------------------------------------------------
+# Live-build demo settings (SAS Content mirror / lineage / audit trail)
+# ---------------------------------------------------------------------------
+# SAS Content folder that receives saved .sas programs, job logs, and audit
+# exports so they surface in SAS Studio's Explorer tree. Date-stamped
+# subfolders are created underneath per session/day.
+DEMO_FOLDER_PATH = os.getenv("DEMO_FOLDER_PATH", "/Public/Claude Demo")
+
+# Where lineage edges are written: "relationships" (Viya Relationships
+# service — confirmed writable by scripts/probe_lineage.py), "catalog"
+# (Information Catalog instances), or "off".
+LINEAGE_BACKEND = os.getenv("LINEAGE_BACKEND", "relationships")
+
+# Audit trail sinks. JSONL is always written locally; the CAS mirror keeps a
+# global-scope table that SAS Studio / Data Explorer can display live.
+# Default is the OS temp dir (/tmp on Linux), not derived from this file's
+# install location or $HOME: a pip install puts config.py under site-packages
+# and $HOME is /app in the published image, both of which sit on the
+# container's read-only root filesystem, silently breaking the JSONL sink
+# (see audit.py's fail-soft OSError handling in record_action). /tmp is the
+# one path every deployment in deploy/ already mounts read-write specifically
+# so this kind of write survives readOnlyRootFilesystem, with no manifest
+# changes required.
+AUDIT_JSONL_DIR = os.path.expanduser(
+    os.getenv("AUDIT_JSONL_DIR", str(Path(tempfile.gettempdir()) / "sas-mcp-audit"))
+)
+AUDIT_CAS_MIRROR = env_bool("AUDIT_CAS_MIRROR", True)
+AUDIT_CASLIB = os.getenv("AUDIT_CASLIB", "Public")
+AUDIT_CAS_TABLE = os.getenv("AUDIT_CAS_TABLE", "AGENT_AUDIT_LOG")

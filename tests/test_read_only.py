@@ -1,5 +1,7 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+# CHANGE NOTE (Visual Investigator / AML integration): tool counts / tier range
+# updated for the new Tier 10 (VI & AML) tools.
 
 """Tests for read-only mode (MCP_READ_ONLY / register_tools read_only=)."""
 
@@ -46,7 +48,7 @@ def test_read_and_write_sets_are_disjoint():
 async def test_read_only_registers_only_read_tools():
     names = await _register(read_only=True)
     assert names == set(READ_ONLY_TOOLS)
-    assert len(names) == 51
+    assert len(names) == 80
 
 
 async def test_read_only_withholds_every_mutating_tool():
@@ -85,7 +87,7 @@ async def test_named_read_tools_survive(tool_name):
 
 
 async def test_default_is_unfiltered():
-    assert len(await _register()) == 92
+    assert len(await _register()) == 155
 
 
 # --- composition with tier selection ------------------------------------------
@@ -117,12 +119,12 @@ async def test_env_var_drives_default(monkeypatch):
     monkeypatch.setattr(tools, "MCP_READ_ONLY", True)
     assert await _register() == set(READ_ONLY_TOOLS)
     monkeypatch.setattr(tools, "MCP_READ_ONLY", False)
-    assert len(await _register()) == 92
+    assert len(await _register()) == 155
 
 
 async def test_explicit_argument_overrides_env_var(monkeypatch):
     monkeypatch.setattr(tools, "MCP_READ_ONLY", True)
-    assert len(await _register(read_only=False)) == 92
+    assert len(await _register(read_only=False)) == 155
     monkeypatch.setattr(tools, "MCP_READ_ONLY", False)
     assert await _register(read_only=True) == set(READ_ONLY_TOOLS)
 

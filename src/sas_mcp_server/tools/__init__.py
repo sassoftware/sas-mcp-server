@@ -1,6 +1,10 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# CHANGE NOTE (Visual Investigator / AML integration): registers the new
+# Tier 10 ``vi`` module (tools/vi.py + tools/_vi_*.py) in _TIER_REGISTRARS and
+# TIER_TITLES so it is enabled by default and selectable via MCP_TIERS=10.
+
 """Tiered SAS Viya MCP tools.
 
 Tools are grouped into numbered tiers (see :data:`TIER_TITLES`). Each tier lives
@@ -40,6 +44,7 @@ from . import (
     jobs,
     model_scoring,
     reports,
+    vi,
     workbench,
 )
 from ._access import (
@@ -65,6 +70,7 @@ _TIER_REGISTRARS: dict[int, Registrar] = {
     7: decisioning.register,
     8: workbench.register,
     9: glossary.register,
+    10: vi.register,
 }
 
 TIER_TITLES: dict[int, str] = {
@@ -78,6 +84,7 @@ TIER_TITLES: dict[int, str] = {
     7: "Decisioning (SAS Intelligent Decisioning)",
     8: "Workbench (Execute Code Only)",
     9: "Business Glossary (SAS Data Governance)",
+    10: "Visual Investigator & AML",
 }
 
 ALL_TIERS: frozenset[int] = frozenset(_TIER_REGISTRARS)
