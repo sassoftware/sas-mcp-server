@@ -1,5 +1,7 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+# CHANGE NOTE (Visual Investigator / AML integration): tool counts / tier range
+# updated for the new Tier 10 (VI & AML) tools.
 
 """Tests for the browser landing page served on the MCP endpoint
 (``sas_mcp_server.landing`` and its wiring in ``mcp_server``)."""
@@ -196,7 +198,7 @@ def test_render_page_read_only_and_partial_tiers_are_called_out():
     page = render_page(_facts(read_only=True, enabled_tiers=frozenset({0, 1, 2, 3, 7})), nonce="n")
     assert "Read-only mode" in page
     assert "Read-only mode is on." in page
-    assert "Tiers 0–3, 7 of 0–9" in page
+    assert "Tiers 0–3, 7 of 0–10" in page
     assert "limited this deployment to tool tiers" in page
 
 
