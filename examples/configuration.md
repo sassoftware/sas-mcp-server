@@ -306,7 +306,7 @@ Add to `~/.gemini/settings.json` or your project's `.gemini/settings.json`:
     "mcpServers": {
         "sas-viya-mcp": {
             "command": "uv",
-            "args": ["run", "app-stdio"],
+            "args": ["run", "--no-sync", "app-stdio"],
             "cwd": "/path/to/sas-mcp-server",
             "timeout": 60000
         }
@@ -314,7 +314,7 @@ Add to `~/.gemini/settings.json` or your project's `.gemini/settings.json`:
 }
 ```
 
-Set `cwd` to the absolute path where `sas-mcp-server` is cloned.
+Set `cwd` to the absolute path where `sas-mcp-server` is cloned. `--no-sync` starts the server from `.venv` as it is, so run `uv sync` yourself after each `git pull`, with Gemini CLI closed; on Windows a client-triggered sync can fail on the running server's locked `.exe` (see [TROUBLESHOOTING.md](../TROUBLESHOOTING.md#stdio-server-fails-to-start-with-failed-to-remove-file-venvscriptsapp-stdioexe--os-error-32)).
 
 A pre-built example is available at [`examples/gemini-settings.json`](gemini-settings.json).
 
