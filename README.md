@@ -29,6 +29,7 @@ Here you can find getting articles on how to use and integrate the SAS MCP Serve
     - [Python 3.12+](https://www.python.org/downloads)
     - [uv 0.8+](https://github.com/astral-sh/uv)
     - [SAS Viya environment](https://www.sas.com/en_us/software/viya.html) with compute service
+        - Which tools work on which Viya release (LTS 2024.09 to Stable 2026.10): see [COMPATIBILITY.md](COMPATIBILITY.md)
     - Setup the Viya environment for MCP
         - See [configuration.md](/examples/configuration.md)
 

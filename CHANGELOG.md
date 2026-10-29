@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.19.1] - 2026-10-29
+
+### Added
+- **`COMPATIBILITY.md`: which tools work on which SAS Viya release**, for all 115 tools of 1.19.0 across the supported releases, LTS 2024.09, 2025.03, 2025.09 and 2026.03 and Stable 2026.07 to 2026.10, checked against the API specifications developer.sas.com publishes for each. 109 tools make no call that differs anywhere in that range. Report authoring and management is limited on LTS 2024.09, the `summary` report export needs 2026.03 or later, and publishing a glossary term needs 2025.03 or later; every decisioning tool, the new ones included, works on every release. The README links it from the prerequisites.
+
 ## [1.19.0] - 2026-10-23
 
 ### Changed
