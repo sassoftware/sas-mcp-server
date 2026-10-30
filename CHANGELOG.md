@@ -2,6 +2,9 @@
 
 ## [1.19.1] - 2026-10-29
 
+### Changed
+- **Stdio client configurations start the server with `uv run --no-sync`.** (#70, #67) On Windows, plain `uv run app-stdio` syncs `.venv` first whenever it no longer matches `uv.lock` — as after a `git pull` — and that sync fails with `os error 32` on the launcher `.exe` of any copy of the server that is still running (a second client entry, Claude Code and Claude Desktop side by side, a test run), so the server does not start at all. The README, `examples/configuration.md`, `examples/mcp-stdio.json` and `examples/gemini-settings.json` now use `--no-sync`, the README adds the Claude Code CLI command and says to run `uv sync` after each `git pull` with the clients closed, and TROUBLESHOOTING.md has an entry for the error, including how to check an environment a failed sync left half-installed.
+
 ### Added
 - **`COMPATIBILITY.md`: which tools work on which SAS Viya release** (#71), for all 115 tools of 1.19.0 across the supported releases, LTS 2024.09, 2025.03, 2025.09 and 2026.03 and Stable 2026.07 to 2026.10, checked against the API specifications developer.sas.com publishes for each. 109 tools make no call that differs anywhere in that range. Report authoring and management is limited on LTS 2024.09, the `summary` report export needs 2026.03 or later, and publishing a glossary term needs 2025.03 or later; every decisioning tool, the new ones included, works on every release. The README links it from the prerequisites.
 
