@@ -158,6 +158,58 @@ Use one of the two cache-based paths instead (`sas-viya auth loginCode` or `uv r
 
 ---
 
+## Stdio: server fails to start with `failed to remove file ...\.venv\Scripts\app-stdio.exe ... (os error 32)`
+
+Windows only. The MCP client shows the server as failed or disconnected, typically right after an update (`git pull`, a new release), and the server's stderr ends with uv failing before Python starts:
+
+```
+error: failed to remove file `...\.venv\Scripts\app-stdio.exe`: The process cannot access the file because it is being used by another process. (os error 32)
+```
+
+In Claude Desktop that stderr is in `%LOCALAPPDATA%\Claude\logs\mcp-server-<name>.log`.
+
+### Why this happens
+
+Plain `uv run app-stdio` first checks `.venv` against `pyproject.toml` and `uv.lock` and syncs it when they differ. After an update they usually do (a version bump is enough), so uv reinstalls the project and rewrites its launchers in `.venv\Scripts\` (`app.exe`, `app-stdio.exe`, `sas-mcp-login.exe`). Windows does not let a running `.exe` be replaced, so the sync fails, and the server never starts, whenever another process is running from that `.venv`:
+
+- a second client entry on the same checkout, for example one per Viya environment;
+- Claude Code and Claude Desktop both configured with the server;
+- an old server process that is still exiting;
+- `uv run sas-mcp-login`, or a test run.
+
+### Fix
+
+1. Close every MCP client that uses this checkout and any `sas-mcp-login` or test run, or end the processes in Task Manager (`app-stdio.exe`, `app.exe`, and the `python.exe` under this `.venv`).
+2. Sync once:
+   ```powershell
+   uv sync
+   ```
+3. If a sync failed partway before, check that the environment is whole. Both commands should report nothing to do and no problems; if not, run `uv sync` again with everything still closed.
+   ```powershell
+   uv sync --frozen --check
+   uv pip check
+   ```
+4. Start the clients again.
+
+### Avoiding it next time
+
+Have clients start the server with `--no-sync`, which uses `.venv` as it is and never rewrites a launcher:
+
+```json
+"command": "uv",
+"args": ["run", "--no-sync", "app-stdio"]
+```
+
+The Claude Code CLI takes no working directory, so pass the checkout with `--directory`:
+
+```sh
+claude mcp add --scope user sas-viya -- uv run --no-sync --directory C:\path\to\sas-mcp-server app-stdio
+```
+
+The install is editable, so code changes from `git pull` still apply on the next start. What `--no-sync` skips is new dependencies and launchers: run `uv sync` yourself after each `git pull`, with the clients closed. If you forget and a release added a dependency, the server stops with a `ModuleNotFoundError`, and `uv sync` fixes it.
+
+---
+
 ## sas-mcp-login: command exits immediately with `Aborted.` in non-TTY shells
 
 You run `uv run sas-mcp-login` inside a wrapper that does not provide an interactive stdin (CI runners, the Claude Code `!` prefix, `nohup ... &`, etc.) and the helper prints the URL then aborts at the `Authorization code:` prompt.

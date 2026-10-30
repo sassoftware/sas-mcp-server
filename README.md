@@ -53,6 +53,8 @@ NOTE: This will by default create a virtual environment called .venv in the proj
 
 If for some reason the virtual environment is not created, please run `uv venv` and then re-run `uv sync`.
 
+Run `uv sync` again after each `git pull`, with every MCP client that uses this checkout closed. The stdio client configurations below start the server with `uv run --no-sync`, so they never sync `.venv` themselves: on Windows, a sync while another copy of the server is running fails on its locked `.exe` and the server does not start (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#stdio-server-fails-to-start-with-failed-to-remove-file-venvscriptsapp-stdioexe--os-error-32)).
+
 ### Usage
 
 1. Configure environment variables:
@@ -442,12 +444,19 @@ Example configurations are provided in the `examples/` folder. Below are quick-s
     "servers": {
         "sas-execution-mcp": {
             "command": "uv",
-            "args": ["run", "app-stdio"],
+            "args": ["run", "--no-sync", "app-stdio"],
             "cwd": "${workspaceFolder}"
         }
     }
 }
 ```
+
+With the Claude Code CLI, pass the checkout with `--directory`:
+```sh
+claude mcp add --scope user sas-viya -- uv run --no-sync --directory /path/to/sas-mcp-server app-stdio
+```
+
+`--no-sync` makes the client start the server from `.venv` as it is; run `uv sync` yourself after updating (see [Installation](#installation)).
 
 ### Gemini CLI (`.gemini/settings.json`)
 
@@ -458,7 +467,7 @@ Gemini CLI only supports stdio mode. Add to your `~/.gemini/settings.json` or pr
     "mcpServers": {
         "sas-viya-mcp": {
             "command": "uv",
-            "args": ["run", "app-stdio"],
+            "args": ["run", "--no-sync", "app-stdio"],
             "cwd": "/path/to/sas-mcp-server",
             "timeout": 60000
         }
