@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.19.1] - 2026-10-29
+## [1.19.1] - 2026-10-30
 
 ### Changed
 - **Stdio client configurations start the server with `uv run --no-sync`.** (#70, #67) On Windows, plain `uv run app-stdio` syncs `.venv` first whenever it no longer matches `uv.lock` — as after a `git pull` — and that sync fails with `os error 32` on the launcher `.exe` of any copy of the server that is still running (a second client entry, Claude Code and Claude Desktop side by side, a test run), so the server does not start at all. The README, `examples/configuration.md`, `examples/mcp-stdio.json` and `examples/gemini-settings.json` now use `--no-sync`, the README adds the Claude Code CLI command and says to run `uv sync` after each `git pull` with the clients closed, and TROUBLESHOOTING.md has an entry for the error, including how to check an environment a failed sync left half-installed.

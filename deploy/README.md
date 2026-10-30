@@ -133,14 +133,14 @@ https://your-viya-server.com/auth/callback
 Without it the browser sign-in dead-ends after the Viya login page. This is a
 Viya-side change; the deployment cannot do it for you.
 
-**3. Image pull.** The manifests use `ghcr.io/sassoftware/sas-mcp-server:1.19.0`.
+**3. Image pull.** The manifests use `ghcr.io/sassoftware/sas-mcp-server:1.19.1`.
 If the cluster cannot pull from ghcr.io, mirror it first:
 
 ```sh
-podman pull ghcr.io/sassoftware/sas-mcp-server:1.19.0
-podman tag ghcr.io/sassoftware/sas-mcp-server:1.19.0 \
-  registry.example.com/library/sas-mcp-server:1.19.0
-podman push registry.example.com/library/sas-mcp-server:1.19.0
+podman pull ghcr.io/sassoftware/sas-mcp-server:1.19.1
+podman tag ghcr.io/sassoftware/sas-mcp-server:1.19.1 \
+  registry.example.com/library/sas-mcp-server:1.19.1
+podman push registry.example.com/library/sas-mcp-server:1.19.1
 ```
 
 then set `image.repository` accordingly.
