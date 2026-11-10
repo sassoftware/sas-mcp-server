@@ -83,12 +83,15 @@ for name in "${FORWARDED_VARS[@]}"; do
   fi
 done
 
-# Defaults first so the caller's own flags (later on the line) win.
+# Defaults first so the caller's own flags (later on the line) win. No
+# --requirements-file: rsconnect picks up the bundle's requirements.txt by
+# itself, while an absolute path is copied verbatim into manifest.json as
+# package_file (and the file left out of the bundle), which Connect then
+# refuses ("package_file must be a file inside the bundle").
 rsconnect deploy fastapi \
   --entrypoint "$ENTRYPOINT" \
   --title "SAS MCP Server" \
   --override-python-version "$python_version" \
-  --requirements-file "$bundle/requirements.txt" \
   "${env_args[@]}" \
   "$@" \
   "$bundle"
