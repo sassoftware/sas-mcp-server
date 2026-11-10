@@ -20,6 +20,7 @@ content's environment.
 
 import logging
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastmcp import Context
@@ -30,25 +31,66 @@ from .exceptions import AuthenticationError
 logger = logging.getLogger(__name__)
 
 SESSION_TOKEN_HEADER = "Posit-Connect-User-Session-Token"
+# The URL the client asked for, as Connect received it (public scheme, host and
+# path). CONNECT_SERVER is Connect's *internal* address (e.g.
+# http://localhost:3939), fine for API calls but useless as a link for a user.
+ORIGINAL_URL_HEADER = "X-RSC-Request"
 CREDENTIALS_PATH = "/__api__/v1/oauth/integrations/credentials"
 GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange"
 USER_SESSION_TOKEN_TYPE = "urn:posit:connect:user-session-token"
 _TIMEOUT = httpx.Timeout(30.0)
 
 
-def _content_hint() -> str:
-    """Where the user can authorize the SAS Logon integration, when known."""
-    server = os.getenv("CONNECT_SERVER", "").rstrip("/")
-    guid = os.getenv("CONNECT_CONTENT_GUID", "").strip()
-    if server and guid:
-        return f" Open {server}/connect/#/apps/{guid} in a browser and authorize SAS Logon there, then retry."
-    return " Open this MCP server's page on Posit Connect in a browser and authorize SAS Logon there, then retry."
+def public_content_url(original_url: str | None, request_path: str) -> str | None:
+    """The content's public root URL, from Connect's ``X-RSC-Request`` header.
+
+    The header holds the full public URL of the request (``…/sas-mcp/mcp``);
+    dropping the query and the app-relative *request_path* (``/mcp``) leaves
+    the content's own URL, which is where a viewer authorizes integrations.
+    """
+    if not original_url:
+        return None
+    parts = urlsplit(original_url)
+    if not parts.scheme or not parts.netloc:
+        return None
+    path = parts.path
+    if request_path and request_path != "/" and path.endswith(request_path):
+        path = path[: -len(request_path)]
+    return urlunsplit((parts.scheme, parts.netloc, path.rstrip("/") + "/", "", ""))
+
+
+def _content_hint(content_url: str | None) -> str:
+    """Where the user can authorize the SAS Logon integration."""
+    where = content_url or "this MCP server's content URL on Posit Connect"
+    return f" To authorize SAS Logon, open {where} in a browser while signed in to Connect, then retry the tool."
+
+
+def _connect_reason(resp: httpx.Response) -> str:
+    """Connect's own explanation of a refused exchange.
+
+    Connect API errors are ``{"code": <n>, "error": "<message>", ...}``. The
+    message names the actual problem, e.g. "No OAuth session found. Log in to
+    the Integration before requesting credentials." or "No OAuth integrations
+    have been associated with this content item."
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        message = body.get("error") or body.get("message") or body.get("error_description")
+        if isinstance(message, str) and message.strip():
+            code = body.get("code")
+            return f"Connect API error {code}: {message.strip()}" if code is not None else message.strip()
+    text = resp.text.strip()
+    return text[:300] if text else ""
 
 
 async def exchange_session_token(
     session_token: str,
     *,
     audience: str | None = None,
+    content_url: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> str:
     """Trade a Connect user session token for the user's SAS Viya access token."""
@@ -80,13 +122,17 @@ async def exchange_session_token(
 
     if resp.status_code >= 400:
         # Connect answers 4xx when the viewer has not authorized the
-        # integration yet, or when no (or more than one) integration matches.
-        logger.warning("Posit Connect credential exchange failed: HTTP %s %s", resp.status_code, resp.text[:500])
+        # integration yet, when no (or more than one) integration matches, or
+        # when the viewer's stored grant can no longer be refreshed.
+        reason = _connect_reason(resp)
+        logger.warning("Posit Connect credential exchange failed: HTTP %s %s", resp.status_code, reason)
         raise AuthenticationError(
-            f"Posit Connect could not provide a SAS Viya token (HTTP {resp.status_code}). "
-            "Either you have not yet authorized the SAS Logon integration for this content, or "
-            "the content has no SAS Logon integration attached (or several, and "
-            "POSIT_CONNECT_INTEGRATION_GUID is not set)." + _content_hint()
+            f"Posit Connect could not provide a SAS Viya token (HTTP {resp.status_code})"
+            + (f": {reason}" if reason else ".")
+            + " Usual causes: you have not authorized the SAS Logon integration for this content yet; "
+            "the integration is not attached to this content item (or several are, and "
+            "POSIT_CONNECT_INTEGRATION_GUID is not set); or your SAS Logon grant expired."
+            + _content_hint(content_url)
         )
     try:
         token = resp.json().get("access_token")
@@ -101,12 +147,14 @@ def make_token_getter(audience: str | None = None):
     """The token getter tools are registered with in Posit Connect mode."""
 
     async def connect_viya_token(ctx: Context) -> str:
-        session_token = get_http_request().headers.get(SESSION_TOKEN_HEADER)
+        request = get_http_request()
+        session_token = request.headers.get(SESSION_TOKEN_HEADER)
         if not session_token:
             raise AuthenticationError(
                 f"No {SESSION_TOKEN_HEADER} header on this request. POSIT_CONNECT_OAUTH=true only works "
                 "for content deployed on Posit Connect, which adds that header for signed-in users."
             )
-        return await exchange_session_token(session_token, audience=audience)
+        content_url = public_content_url(request.headers.get(ORIGINAL_URL_HEADER), request.url.path)
+        return await exchange_session_token(session_token, audience=audience, content_url=content_url)
 
     return connect_viya_token

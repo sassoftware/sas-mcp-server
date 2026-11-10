@@ -75,13 +75,41 @@ async def test_exchange_sends_audience_when_given(connect_env):
 
 
 @pytest.mark.asyncio
-async def test_exchange_refusal_points_user_at_content_page(connect_env):
-    async with _client(lambda r: httpx.Response(400, json={"error": "invalid_request"})) as client:
+async def test_exchange_refusal_quotes_connects_reason_and_public_url(connect_env):
+    body = {"code": 212, "error": "No OAuth session found. Log in to the Integration before requesting credentials."}
+    async with _client(lambda r: httpx.Response(403, json=body)) as client:
         with pytest.raises(AuthenticationError) as exc:
-            await posit_connect.exchange_session_token("S", client=client)
+            await posit_connect.exchange_session_token(
+                "S", content_url="https://posit.example.com/connect/sas-mcp/", client=client
+            )
     message = str(exc.value)
-    assert "HTTP 400" in message
-    assert f"{CONNECT}/connect/#/apps/abc-123" in message
+    assert "HTTP 403" in message
+    assert "Connect API error 212: No OAuth session found" in message
+    assert "open https://posit.example.com/connect/sas-mcp/ in a browser" in message
+    # CONNECT_SERVER is Connect's internal address; it must never be offered as a link
+    assert "connect.example.com" not in message
+
+
+@pytest.mark.asyncio
+async def test_exchange_refusal_without_json_body_still_reports(connect_env):
+    async with _client(lambda r: httpx.Response(403, text="Forbidden")) as client:
+        with pytest.raises(AuthenticationError, match=r"HTTP 403\): Forbidden") as exc:
+            await posit_connect.exchange_session_token("S", client=client)
+    assert "content URL on Posit Connect" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("header", "path", "expected"),
+    [
+        ("https://posit.example.com/connect/sas-mcp/mcp", "/mcp", "https://posit.example.com/connect/sas-mcp/"),
+        ("https://posit.example.com/connect/content/abc/mcp/?x=1", "/mcp/", "https://posit.example.com/connect/content/abc/"),
+        ("https://connect.example.org/mcp", "/mcp", "https://connect.example.org/"),
+        (None, "/mcp", None),
+        ("not a url", "/mcp", None),
+    ],
+)
+def test_public_content_url(header, path, expected):
+    assert posit_connect.public_content_url(header, path) == expected
 
 
 @pytest.mark.asyncio
@@ -112,19 +140,24 @@ async def test_exchange_outside_connect_says_so(monkeypatch):
 # --- token getter -------------------------------------------------------------
 
 
-def _request_with(headers: dict[str, str]):
-    return SimpleNamespace(headers=httpx.Headers(headers))
+def _request_with(headers: dict[str, str], path: str = "/mcp"):
+    return SimpleNamespace(headers=httpx.Headers(headers), url=SimpleNamespace(path=path))
 
 
 @pytest.mark.asyncio
 async def test_getter_exchanges_the_forwarded_session_token():
     getter = posit_connect.make_token_getter("integ-guid")
     exchange = AsyncMock(return_value="VIYA")
-    with patch.object(posit_connect, "get_http_request",
-                      return_value=_request_with({"posit-connect-user-session-token": "SESSION"})), \
+    headers = {
+        "posit-connect-user-session-token": "SESSION",
+        "x-rsc-request": "https://posit.example.com/connect/sas-mcp/mcp",
+    }
+    with patch.object(posit_connect, "get_http_request", return_value=_request_with(headers)), \
          patch.object(posit_connect, "exchange_session_token", exchange):
         assert await getter(AsyncMock()) == "VIYA"
-    exchange.assert_awaited_once_with("SESSION", audience="integ-guid")
+    exchange.assert_awaited_once_with(
+        "SESSION", audience="integ-guid", content_url="https://posit.example.com/connect/sas-mcp/"
+    )
 
 
 @pytest.mark.asyncio
