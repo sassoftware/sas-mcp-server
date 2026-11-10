@@ -227,6 +227,8 @@ def server_version() -> str | None:
     useless for correlating behaviour to a version. A source checkout's
     ``pyproject.toml`` is authoritative when present, so it wins; installed
     deployments (no pyproject alongside the package) fall through to metadata.
+    A source bundle with neither (Posit Connect deploys the package directory
+    without installing it) names its version in ``SAS_MCP_VERSION``.
     """
     try:
         import tomllib
@@ -246,4 +248,6 @@ def server_version() -> str | None:
 
         return version("sas-mcp-server")
     except Exception:  # noqa: BLE001
-        return None
+        import os
+
+        return os.getenv("SAS_MCP_VERSION", "").strip() or None

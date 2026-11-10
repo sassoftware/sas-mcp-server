@@ -26,6 +26,8 @@ from .config import (
     MCP_LANDING_PAGE,
     MCP_READ_ONLY,
     MCP_STATELESS_HTTP,
+    POSIT_CONNECT_INTEGRATION_GUID,
+    POSIT_CONNECT_OAUTH,
     SERVER_NAME,
     VIYA_ENDPOINT,
     viya_auth,
@@ -34,6 +36,7 @@ from .exceptions import AuthenticationError
 from .helpers.telemetry_helpers import server_version
 from .http_debug import install_http_debug
 from .landing import LandingPageMiddleware, ServerFacts, collect_facts
+from .posit_connect import make_token_getter
 from .prompts import register_prompts
 from .telemetry import install_telemetry
 from .tool_rename import install_tool_rename
@@ -61,6 +64,8 @@ class AuthMiddleware(Middleware):
             else bearer_token
         )
         logger.info("Client auth header found, Swapping for upstream token")
+        if viya_auth is None:  # only installed when the proxy exists
+            raise AuthenticationError("SAS Logon sign-in is not configured on this server")
         viya_access_info = await viya_auth.load_access_token(jwt)
         if viya_access_info:
             logger.info("Viya access info retrieved successfully!")
@@ -85,8 +90,16 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[dict]:
 SERVER_VERSION = server_version()
 announce_startup("http", SERVER_VERSION)
 _mcp_kwargs: dict[str, Any] = {"lifespan": _lifespan, "version": SERVER_VERSION}
-if AUTH_ENABLED:
+# The server's own SAS Logon sign-in (OAuth proxy). Off when VIYA_AUTH=false,
+# and in Posit Connect mode, where Connect signs clients in instead.
+PROXY_AUTH = AUTH_ENABLED and viya_auth is not None
+if PROXY_AUTH:
     _mcp_kwargs["auth"] = viya_auth
+elif POSIT_CONNECT_OAUTH:
+    logger.info(
+        "POSIT_CONNECT_OAUTH=true: Posit Connect signs clients in; SAS Viya tokens come from "
+        "the content's SAS Logon OAuth integration"
+    )
 else:
     logger.warning(
         "VIYA_AUTH=false: SASLogon authentication is disabled; Viya API calls are sent without Authorization headers"
@@ -101,7 +114,7 @@ _tool_rename = install_tool_rename(mcp)
 # status="error" and re-raised unchanged.
 install_telemetry(mcp, "http")
 install_http_debug()
-if AUTH_ENABLED:
+if PROXY_AUTH:
     mcp.add_middleware(AuthMiddleware())
 
 
@@ -123,7 +136,8 @@ async def _http_get_token(ctx: Context) -> str:
 
 # Register all tools and prompts. Each tool call logs the Viya user it runs
 # as (see user_log).
-register_tools(mcp, install_user_log(mcp, _http_get_token))
+_get_token = make_token_getter(POSIT_CONNECT_INTEGRATION_GUID) if POSIT_CONNECT_OAUTH else _http_get_token
+register_tools(mcp, install_user_log(mcp, _get_token))
 if _tool_rename is not None:
     # Now that the names exist: stop here if the rename cannot work.
     _tool_rename.bind(TOOL_TIERS)
@@ -144,6 +158,7 @@ async def _landing_facts() -> ServerFacts:
         viya_endpoint=VIYA_ENDPOINT,
         auth_enabled=AUTH_ENABLED,
         allow_raw_bearer=ALLOW_RAW_BEARER,
+        posit_connect=POSIT_CONNECT_OAUTH,
         read_only=MCP_READ_ONLY,
         public_name=_tool_rename.public_name if _tool_rename is not None else None,
     )
