@@ -143,9 +143,23 @@ the tool list.
 
 | Symptom | Cause |
 |---|---|
+| Client sign-in fails before any browser opens, e.g. *expected string, received undefined* for `authorization_endpoint` / `token_endpoint` | Connect is served under a path prefix (`https://host/connect/`). Its OAuth issuer then has a path, and MCP clients look for its metadata at the **host root**: `/.well-known/oauth-authorization-server/connect`, then `/.well-known/openid-configuration/connect`, then `/connect/.well-known/openid-configuration`. Whatever owns the root (Workbench, say) answers the first two, and the last is Connect's OIDC document, which has no `authorization_endpoint`. The fix is in the reverse proxy, not this server: route `/.well-known/oauth-authorization-server/connect` to Connect's `/connect/.well-known/oauth-authorization-server` (see the note below the table). Or serve Connect on its own hostname. |
 | Tool result: *Posit Connect could not provide a SAS Viya token (HTTP 4xx)* | The user has not authorized the SAS Logon integration yet (open the content in a browser), the integration is not attached to the content, or several are attached and `POSIT_CONNECT_INTEGRATION_GUID` is unset. The Connect log line says which. |
 | Tool result: *No Posit-Connect-User-Session-Token header* | `POSIT_CONNECT_OAUTH=true` on a server that is not running behind Connect. |
 | Browser stuck on SAS Logon after the password | `form-action` in SAS Logon's CSP does not include the Connect origin (step 1). |
 | SAS Logon: *Invalid redirect* | The client's `redirect_uri` is not exactly `https://<connect>/__oauth__/integrations/callback`. |
 | Content fails to start: *ALLOW_RAW_BEARER cannot be combined…* / *needs VIYA_AUTH left on* | Remove `ALLOW_RAW_BEARER` / `VIYA_AUTH=false` from the content's Vars. Neither applies on Connect. |
 | TLS errors reaching Viya | Connect does not trust the Viya certificate. Add the CA to the Connect host's trust store, or as a last resort set `SSL_VERIFY=false`. |
+
+**Connect under a path prefix.** With nginx in front, an internal rewrite into
+the location that already proxies `/connect/` is enough (adjust the prefix):
+
+```nginx
+location = /.well-known/oauth-authorization-server/connect {
+    rewrite ^ /connect/.well-known/oauth-authorization-server last;
+}
+```
+
+Check it with
+`curl https://host/.well-known/oauth-authorization-server/connect`, which must
+return JSON that includes `authorization_endpoint`.
