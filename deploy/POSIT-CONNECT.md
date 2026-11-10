@@ -163,3 +163,25 @@ location = /.well-known/oauth-authorization-server/connect {
 Check it with
 `curl https://host/.well-known/oauth-authorization-server/connect`, which must
 return JSON that includes `authorization_endpoint`.
+
+*Optional: protected-resource metadata.* MCP clients don't need a rewrite for
+this lookup. Connect's 401 names the protected-resource metadata URL in
+`WWW-Authenticate: Bearer resource_metadata="…"`, and that URL is inside the
+prefix (`https://host/connect/.well-known/oauth-protected-resource/<content-path>`),
+so it already works. The MCP spec tells clients to use that URL and to build
+the RFC 9728 URL themselves only when the header is missing. A client that
+builds it anyway asks the host root
+(`https://host/.well-known/oauth-protected-resource/connect/<content-path>`)
+and gets whatever owns the root. To cover such clients, map that prefix onto
+Connect as well. The path varies per content item, so use a prefix match:
+
+```nginx
+location ^~ /.well-known/oauth-protected-resource/connect/ {
+    rewrite ^/.well-known/oauth-protected-resource/connect/(.*)$
+            /connect/.well-known/oauth-protected-resource/$1 last;
+}
+```
+
+`curl https://host/.well-known/oauth-protected-resource/connect/<content-path>/mcp`
+must then return the same JSON as the URL in the `WWW-Authenticate` header,
+with `resource` equal to the MCP endpoint URL.
