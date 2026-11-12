@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.19.2] - 2026-11-12
+
+### Fixed
+- **`sas-mcp-login` signs in where SAS Logon wants the `vscode` client as HTTP Basic.** (#72) Exchanging the authorization code failed with `401 invalid_client` "Bad credentials" on deployments whose built-in `vscode` client is not registered as a public client (reported on LTS 2025.09): the helper sent the client in the form body only. When SAS Logon refuses the client, the helper now retries once as HTTP Basic with the client's empty secret, the way the stdio server's token refresh and device flow already send it. SAS Logon checks the client before the code, so the refused request has not used the code up and the retry reuses it; any other error fails as before, and a deployment that accepts the first request sees no change (Viya 2026.10 accepts both). Reported and diagnosed by @brksours.
+
 ## [1.19.1] - 2026-10-30
 
 ### Changed

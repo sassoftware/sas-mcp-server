@@ -83,6 +83,33 @@ def _authorize_url(
     return f"{endpoint.rstrip('/')}/SASLogon/oauth/authorize?{urlencode(params)}"
 
 
+def _post_token(
+    url: str,
+    data: dict,
+    verify_ssl: bool,
+    auth: tuple[str, str] | None = None,
+) -> httpx.Response:
+    return httpx.post(
+        url,
+        auth=auth,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        verify=verify_ssl,
+        timeout=30.0,
+    )
+
+
+def _client_auth_rejected(resp: httpx.Response) -> bool:
+    """True when SAS Logon refused the client itself (401 ``invalid_client``)."""
+    if resp.status_code != 401:
+        return False
+    try:
+        body = resp.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("error") == "invalid_client"
+
+
 def _exchange(
     endpoint: str,
     client_id: str,
@@ -99,13 +126,14 @@ def _exchange(
     }
     if redirect_uri:
         data["redirect_uri"] = redirect_uri
-    resp = httpx.post(
-        f"{endpoint.rstrip('/')}/SASLogon/oauth/token",
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        verify=verify_ssl,
-        timeout=30.0,
-    )
+    url = f"{endpoint.rstrip('/')}/SASLogon/oauth/token"
+    resp = _post_token(url, data, verify_ssl)
+    if _client_auth_rejected(resp):
+        # Where the client is not registered as public, SAS Logon accepts it only
+        # as HTTP Basic with its empty secret (#72), the way the stdio server's
+        # token refresh already sends it. Client authentication is checked before
+        # the code, so the rejected request has not used the code up.
+        resp = _post_token(url, data, verify_ssl, auth=(client_id, ""))
     # Plain raise_for_status on purpose: importing raise_for_viya_status pulls in
     # sas_mcp_server.config, which raises at import time when VIYA_ENDPOINT is
     # unset — that would break `sas-mcp-login --endpoint ...` before argparse runs.
