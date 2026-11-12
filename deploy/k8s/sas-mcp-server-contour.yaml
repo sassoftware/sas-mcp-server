@@ -174,14 +174,17 @@ spec:
           # that inline, base64-encoded (x1.33) and JSON-serialized on top, so
           # one large export can transiently need several hundred MiB against a
           # 152Mi idle baseline. An OOM is SIGKILL, so the lifespan never runs
-          # and every warm compute session leaks. No CPU limit on purpose — the
-          # workload is bursty and single-threaded, and a limit throttles the
-          # event loop. See SCALING.md.
+          # and every warm compute session leaks. CPU is limited to one core:
+          # the server is one Python event loop and cannot use more, so the
+          # limit caps the pod without slowing it. Below one core, startup, many
+          # clients listing tools at once and large exports are throttled, and
+          # every other request waits behind them. See SCALING.md.
           resources:
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
+              cpu: "1"
               memory: 1Gi
       volumes:
         # emptyDir keeps registrations only for the pod's lifetime; swap for a

@@ -302,7 +302,7 @@ spec:
             httpGet: { path: /health, port: 8134 }
           resources:
             requests: { cpu: 100m, memory: 256Mi }
-            limits:   { memory: 1Gi }   # headroom for transient result buffers, see SCALING.md
+            limits:   { cpu: "1", memory: 1Gi }   # one core: one event loop; memory: result buffers. See SCALING.md
       volumes:
         - name: fastmcp-state
           emptyDir: {}                # PVC instead, to survive restarts

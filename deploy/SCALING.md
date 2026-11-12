@@ -127,16 +127,31 @@ line. Size the compute node pool on requests, but keep headroom for bursts.
 Barely moves with user count. The binding term is **transient result buffers**,
 not connections:
 
-| Peak active users | CPU requests | Memory requests | Memory limit |
-|---|---|---|---|
-| ≤ 10 | 100m | 256Mi | **1Gi** |
-| 10–50 | 250m | 384Mi | **1Gi** |
-| 50–200 | 500m | 512Mi | **2Gi** |
+| Peak active users | CPU requests | CPU limit | Memory requests | Memory limit |
+|---|---|---|---|---|
+| ≤ 10 | 100m | **1** | 256Mi | **1Gi** |
+| 10–50 | 250m | **1** | 384Mi | **1Gi** |
+| 50–200 | 500m | **1** | 512Mi | **2Gi** |
 
-**Do not set a CPU limit.** The workload is bursty and single-threaded; a limit
-throttles the event loop and inflates exactly the p99 shown above. Requests
-alone give it scheduling priority without a ceiling. The current deployment
-already has no CPU limit — keep it that way.
+**Limit CPU to one core, not less.** The chart and the manifests do so since
+1.19.2; earlier versions set no CPU limit. The server is one Python process with
+one event loop, so it cannot use much more than a core: a one-core limit caps the
+pod if something goes wrong and never slows a request down. A live deployment
+averaged 13m of CPU over 58 days, but its work comes in single-threaded bursts,
+measured on 1.19.1 (2026-11-12):
+
+| Burst | CPU time | Wall time under a 500m limit |
+|---|---|---|
+| Startup: imports, 115 tools and the views registered | 4.7 s | ~9.5 s |
+| 40 clients listing tools at once | 1.6 s | ~3.2 s |
+| A 25 MiB inline export, base64 and JSON only | 0.2 s | ~0.45 s |
+
+Under a limit below one core, the kernel stops the process for the rest of each
+100 ms period once its share is used up, so each burst takes proportionally
+longer and every other request waits behind it — the p99 shown above, made
+worse. For a busier pod raise the CPU request, as in the table; the limit stays
+at one core. The bursts were measured on a workstation; a cluster vCPU is usually
+slower, which makes them longer, not shorter.
 
 ---
 
