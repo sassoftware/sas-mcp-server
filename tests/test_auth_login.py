@@ -83,6 +83,59 @@ def test_exchange_posts_expected_body():
     assert kwargs["data"]["client_id"] == "vscode"
     assert "redirect_uri" not in kwargs["data"]
     assert kwargs["verify"] is True
+    assert kwargs["auth"] is None
+    assert mock_post.call_count == 1
+
+
+def _token_response(status: int, body) -> httpx.Response:
+    request = httpx.Request("POST", "https://v/SASLogon/oauth/token")
+    if isinstance(body, str):
+        return httpx.Response(status, text=body, request=request)
+    return httpx.Response(status, json=body, request=request)
+
+
+def test_exchange_retries_with_basic_auth_on_invalid_client():
+    # #72: a deployment whose vscode client is not public refuses the body-only
+    # request; HTTP Basic with the empty secret is accepted and gets the token.
+    rejected = _token_response(
+        401, {"error": "invalid_client", "error_description": "Bad credentials"}
+    )
+    ok = _token_response(200, {"access_token": "tok"})
+    with patch("sas_mcp_server.auth_login.httpx.post",
+               side_effect=[rejected, ok]) as mock_post:
+        out = auth_login._exchange("https://v", "vscode", "code123", "ver", None, True)
+
+    assert out == {"access_token": "tok"}
+    assert mock_post.call_count == 2
+    first, second = mock_post.call_args_list
+    assert first.kwargs["auth"] is None
+    assert second.kwargs["auth"] == ("vscode", "")
+    assert second.kwargs["data"] == first.kwargs["data"]
+
+
+def test_exchange_raises_when_basic_auth_retry_also_fails():
+    rejected = _token_response(401, {"error": "invalid_client"})
+    with patch("sas_mcp_server.auth_login.httpx.post",
+               side_effect=[rejected, rejected]) as mock_post, \
+            pytest.raises(httpx.HTTPStatusError):
+        auth_login._exchange("https://v", "vscode", "c", "v", None, True)
+    assert mock_post.call_count == 2
+
+
+@pytest.mark.parametrize("status, body", [
+    (400, {"error": "invalid_grant", "error_description": "Invalid authorization code"}),
+    (401, {"error": "unauthorized"}),
+    (401, "Bad credentials"),
+    (401, ["invalid_client"]),
+])
+def test_exchange_does_not_retry_other_errors(status, body):
+    # Only a refused client is retried: a bad code, another 401 or a body that
+    # is not an OAuth error object fails at once.
+    with patch("sas_mcp_server.auth_login.httpx.post",
+               return_value=_token_response(status, body)) as mock_post, \
+            pytest.raises(httpx.HTTPStatusError):
+        auth_login._exchange("https://v", "vscode", "c", "v", None, True)
+    assert mock_post.call_count == 1
 
 
 def test_exchange_includes_redirect_uri():

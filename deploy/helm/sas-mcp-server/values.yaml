@@ -321,14 +321,19 @@ telemetry:
 # An OOM is SIGKILL, so the lifespan never runs and every warm compute session
 # leaks. See SCALING.md.
 #
-# Deliberately NO CPU limit: the workload is bursty and single-threaded, so a
-# limit throttles the event loop and inflates tail latency. Requests alone give
-# it scheduling priority without a ceiling.
+# CPU is limited to one core. The server is a single Python process with one
+# event loop, so it cannot use much more than a core: the limit caps the pod if
+# something goes wrong without ever slowing a request down. Do not go below 1.
+# Startup (~4.7 s of CPU), 40 clients listing tools at once (~1.6 s) and a large
+# inline export are single-threaded bursts; under a smaller limit each one takes
+# proportionally longer, and every other request waits behind it. Typical use is
+# a few tens of millicores, so the request stays at 100m. See SCALING.md.
 resources:
   requests:
     cpu: 100m
     memory: 256Mi
   limits:
+    cpu: "1"
     memory: 1Gi
 
 # The lifespan issues one DELETE per warm compute session on shutdown; allow

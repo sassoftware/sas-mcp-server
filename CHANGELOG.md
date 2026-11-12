@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.19.2] - 2026-11-12
+
+### Changed
+- **The Helm chart and the Kubernetes manifests limit the server to one CPU core.** (#73) They set a CPU request only, so nothing capped the pod. The limit is one core and should not go lower: the server is one Python process with one event loop and cannot use more than about a core, so the limit never slows a request down, but below a core its single-threaded bursts are throttled — about 4.7 s of CPU at startup, 1.6 s when 40 clients list the tools at once — and every other request waits behind them. The request stays at 100m; a live deployment averaged 13m over 58 days. `deploy/SCALING.md` has the measurements, and its sizing table gains a CPU limit column. Chart 0.7.0. To run without a CPU limit as before, set `resources.limits.cpu=null`.
+
+### Fixed
+- **`sas-mcp-login` signs in where SAS Logon wants the `vscode` client as HTTP Basic.** (#73, #72) Exchanging the authorization code failed with `401 invalid_client` "Bad credentials" on deployments whose built-in `vscode` client is not registered as a public client (reported on LTS 2025.09): the helper sent the client in the form body only. When SAS Logon refuses the client, the helper now retries once as HTTP Basic with the client's empty secret, the way the stdio server's token refresh and device flow already send it. SAS Logon checks the client before the code, so the refused request has not used the code up and the retry reuses it; any other error fails as before, and a deployment that accepts the first request sees no change (Viya 2026.10 accepts both). Reported and diagnosed by @brksours.
+
 ## [1.19.1] - 2026-10-30
 
 ### Changed
