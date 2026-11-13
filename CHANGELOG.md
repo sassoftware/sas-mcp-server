@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.20.1] - 2026-11-13
+
+### Changed
+- **`COMPATIBILITY.md` covers the 22 tools new in 1.20.0.** (#76) They were checked against the API specifications developer.sas.com publishes for LTS 2024.09, 2025.03, 2025.09 and 2026.03 and Stable 2026.07 to 2026.10, like the rest: 130 of the 137 tools now make no call that differs anywhere in that range. The one new difference is `set_kpi_alert_rule`, which cannot change an existing alert rule on the LTS releases, because the Model Management API has no `PUT` for alert rules before Stable 2026.07; there, delete the rule with `delete_kpi_alert_rule` and set it again. PROC REGISTERMODEL (2024.04) and PROC ASTORE are older than every release checked. Stable 2026.11 is not published yet, so the release columns are unchanged.
+
 ## [1.20.0] - 2026-11-12
 
 ### Added

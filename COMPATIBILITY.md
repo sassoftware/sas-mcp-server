@@ -1,20 +1,21 @@
 # SAS Viya MCP Server: Viya compatibility by tool
 
-_SAS Viya MCP Server 1.19.0. Checked 2026-10-29 against the public API specifications on developer.sas.com._
+_SAS Viya MCP Server 1.20.0. Checked against the public API specifications on developer.sas.com: the 22 tools new in 1.20.0 on 2026-11-13, the others on 2026-10-29._
 
 Tools are grouped by the tiers used for `MCP_TIERS` in the [README](README.md#limiting-exposed-tools-tiers).
 
 ## Summary
 
-**109 of the 115 tools make no call that differs between LTS 2024.09 and Stable 2026.10.** Every endpoint, method, query parameter and media type they use exists unchanged in every release checked. No release requires a parameter that the current release does not.
+**130 of the 137 tools make no call that differs between LTS 2024.09 and Stable 2026.10.** Every endpoint, method, query parameter and media type they use exists unchanged in every release checked. No release requires a parameter that the current release does not.
 
-The six tools that differ are in Tier 3 (Reports & Visualization) and Tier 9 (Business Glossary):
+The seven tools that differ are in Tier 3 (Reports & Visualization), Tier 9 (Business Glossary) and Tier 11 (Model Lifecycle):
 
 - **Report authoring and management** (`create_report`, `apply_report_operations`, `copy_report`, `delete_report`) is limited on LTS 2024.09.
 - **`export_report` with `format=summary`** needs 2026.03 or later.
 - **Publishing a glossary term** (`update_glossary_term` with a state change) needs 2025.03 or later.
+- **Changing an existing KPI alert rule** (`set_kpi_alert_rule`) needs Stable 2026.07 or later. On the LTS releases, alert rules can be created, read and deleted.
 
-All 44 decisioning tools (Tier 7 and Tier 10) work the same on every release checked, including the lookup table, segmentation tree, code file, value list and custom function tools that are new in 1.19.0.
+All 44 decisioning tools (Tier 7 and Tier 10) work the same on every release checked. So do the other 21 tools new in 1.20.0: the rest of Tier 11 (Model Lifecycle) and the additions to Tier 6 and Tier 2.
 
 Legend: ✓ no difference from the current release · ⚠ works with gaps · ✗ the call does not exist in that release
 
@@ -65,6 +66,9 @@ Tools whose release columns are all ✓ also carry spec-versus-code gaps. Those 
 | `upload_file`             | files         | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
 | `download_file`           | files         | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
 | `find_folder`             | folders       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `create_folder`           | folders       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `save_castable`           | casManagement | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `drop_castable`           | casManagement | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 3 — Reports & Visualization
 
@@ -106,13 +110,19 @@ Tools whose release columns are all ✓ also carry spec-versus-code gaps. Those 
 
 ## Tier 6 — Model Management & Scoring
 
-| Tool                            | Viya services      | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ------------------------------- | ------------------ | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `list_registered_models`        | modelRepository    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_publishing_destinations`  | modelPublish       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_mas_modules`              | microanalyticScore | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_mas_module_step_signature` | microanalyticScore | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `score_data`                    | microanalyticScore | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                            | Viya services                                                                                         | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
+| `list_registered_models`        | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `list_publishing_destinations`  | modelPublish                                                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `list_mas_modules`              | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `get_mas_module_step_signature` | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `score_data`                    | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `get_model`                     | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `list_model_versions`           | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `test_score_model`              | casManagement, compute, dataTables, files, modelRepository, rowSets, scoreDefinitions, scoreExecution | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `score_table`                   | modelRepository, scoreDefinitions, scoreExecution                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `get_score_execution`           | dataTables, files, rowSets, scoreExecution                                                            | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `list_published_models`         | modelPublish                                                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 7 — Decisioning Foundation (SAS Intelligent Decisioning)
 
@@ -203,6 +213,28 @@ Same tool as in Tier 0. This tier exposes it on its own.
 
 Tier 10 is meant to run with Tier 7, which puts this content into decisions and reads, locks, copies and deletes it.
 
+## Tier 11 — Model Lifecycle (SAS Model Manager)
+
+| Tool                            | Viya services                                                                                                       | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
+| `list_model_repositories`       | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `list_model_projects`           | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `create_model_project`          | folders, modelRepository                                                                                            | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `set_project_champion`          | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `describe_analytic_store`       | compute                                                                                                             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `register_model`                | compute, modelRepository                                                                                            | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `publish_model`                 | modelManagement, modelPublish, modelRepository                                                                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `validate_published_model`      | casManagement, compute, dataTables, files, modelPublish, modelRepository, rowSets, scoreDefinitions, scoreExecution | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `create_performance_definition` | casManagement, modelManagement, modelRepository                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `run_performance_definition`    | modelManagement, modelRepository                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `get_project_kpis`              | modelManagement, modelRepository                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| `set_kpi_alert_rule`            | modelManagement, modelRepository                                                                                    | ⚠ D         | ⚠ D         | ⚠ D         | ⚠ D         | ✓       | ✓       | ✓       | ✓       |
+| `delete_kpi_alert_rule`         | modelManagement                                                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+
+- **D:** Sets new alert rules, but cannot change an existing one: the Model Management API has no `PUT` for alert rules before v13 (2026.07). A change is a call for a KPI, variable and direction that already have a rule, or a call with `alert_rule_id`. On these releases, remove the rule with `delete_kpi_alert_rule` and set it again.
+- `register_model` and `describe_analytic_store` run PROC REGISTERMODEL and PROC ASTORE in a compute session. PROC REGISTERMODEL arrived in 2024.04 and PROC ASTORE before it, so both are in every release here.
+- Python models are not supported by these tools in any release.
+
 ---
 
 ## What the differences are, by API
@@ -233,31 +265,30 @@ It also spells the forecasting object `forcasting`, so a `forecasting` object is
 
 **LTS 2024.09** has no `PUT /terms/{id}/draft/state`, so a term cannot be published through the tool.
 
+### Model Management API (Tier 11)
+
+**LTS 2024.09 to 2026.03** (Model Management API v11 and v12) have no `PUT /projects/{projectId}/alertRules/{alertRuleId}`, so an existing alert rule cannot be changed. Creating, listing and deleting rules, and the health check that reports which rules a model breaks, are the same in every release.
+
 ---
 
-## Changes since the 1.18.0 matrix (2026-09-29)
+## Changes since the 1.19.0 matrix (2026-10-29)
 
-- **23 new tools, all ✓ in every release:**
-    - `find_folder` (Tier 2);
-    - in Tier 7: `validate_decision_expression`, the seven decisioning life-cycle tools, and the four lookup table tools;
-    - all ten tools of the new Tier 10.
-- **Tier 7 is split.** It is now Decisioning Foundation, with 34 tools. Trees, value lists, code files and custom functions form the new Tier 10, Decisioning Advanced.
-- **Changed calls in existing tools, all ✓:**
-    - Rule set and decision creates and updates file the asset in a folder (folders service).
-    - Rule tools resolve lookup tables (reference data service).
-    - Decision flows read every kind of step they wire: model repository, files and code files.
-    - `publish_decision_flow` asks for MAS code (`codeTarget=microAnalyticService`).
-    - `score_data` retries with renamed inputs after reading the step signature.
-- **New release 2026.10.** The only API version that moves from 2026.09 is the catalog API, from v8 to v9. No tool's calls are affected.
-- **2026.06 left support.** Stable is supported for the four most recent releases, so 2026.06 went out of support when 2026.10 came out. It is no longer in the matrix. In the 1.18.0 matrix every tool was ✓ there.
+- **22 new tools, 21 of them ✓ in every release:**
+    - all thirteen tools of the new Tier 11, Model Lifecycle (SAS Model Manager);
+    - in Tier 6: `get_model`, `list_model_versions`, `test_score_model`, `score_table`, `get_score_execution` and `list_published_models`;
+    - in Tier 2: `create_folder`, `save_castable` and `drop_castable`.
+- **`set_kpi_alert_rule`** cannot change an existing alert rule on the four LTS releases, which have no `PUT` for alert rules (note D under Tier 11).
+- **No changed calls in existing tools.** `publish_ml_champion_model` and `publish_decision_flow` now take their default destination from the `MCP_DEFAULT_PUBLISH_DESTINATION` setting. The calls they make are the same.
+- **No new release.** Stable 2026.11 is not on developer.sas.com yet, so the release columns are unchanged. The API version listed for each release was read again for every service in the matrix. The versions behind the differences above have not changed.
 
 ## How this was checked
 
-- **Inventory:** every Viya REST call each tool can make was listed from the source code. That includes conditional branches, retries, polling and rollback calls: 564 calls across 114 tools. `describe_report_objects` makes no call.
+- **Inventory:** every Viya REST call each tool can make was listed from the source code. That includes conditional branches, retries, polling and rollback calls: 564 calls across 114 tools for 1.19.0, and 138 more for the 22 tools new in 1.20.0. `describe_report_objects` makes no call.
 - **Spec match:** each call's path, method, query parameters, request media type and Accept type was checked against the API version that developer.sas.com lists for each release.
-- **Request bodies:** for Visual Analytics, the operation names, object types and data-item properties the tools send were also compared. For decisions, the step types and other enumerated values were compared too.
+- **Request bodies:** for Visual Analytics, the operation names, object types and data-item properties the tools send were also compared. For decisions, the step types and other enumerated values were compared too. For the tools new in 1.20.0, the top-level properties and enumerated values of every request body were compared. Where an older release lacks a property, the tools were checked not to send it.
 - **Verdicts:** a cell is ✓ when a call's result in that release is the same as in 2026.10.
 - **Limits:**
     - Response fields were not compared, apart from the validation summary noted under Tier 7.
-    - Behaviour was tested live on one release (2026.03 and later), not on every release in the matrix.
+    - Behaviour was tested live on one release (2026.03 and later; 2026.10 for the tools new in 1.20.0), not on every release in the matrix.
+    - The SAS procedures that tools run in a compute session (PROC REGISTERMODEL, from 2024.04, and PROC ASTORE, from earlier) predate every release in the matrix. Their options were not compared per release.
     - Identities calls are excluded.
