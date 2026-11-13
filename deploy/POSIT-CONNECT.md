@@ -29,7 +29,10 @@ The server's own OAuth proxy, `MCP_SIGNING_KEY`, `MCP_BASE_URL` callback and
 ## Requirements
 
 - Posit Connect with MCP content support and **custom OAuth integrations**
-  (Enhanced or Advanced tier), Python 3.12 available on the server.
+  (Enhanced or Advanced tier), and a Python version on the server that the
+  package supports (3.12 or later). The deploy script requests the version in
+  `.python-version`; set `CONNECT_PYTHON_VERSION` (for example `3.13.13`) to
+  request another one.
 - Connect can reach your SAS Viya endpoint over HTTPS.
 - The content can reach Connect's API, because the server calls Connect's
   credentials endpoint for every tool call. It uses `CONNECT_SERVER`, which

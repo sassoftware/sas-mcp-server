@@ -20,6 +20,10 @@
 #   COMPUTE_CONTEXT_NAME, MCP_SERVER_NAME, MCP_TIERS, MCP_READ_ONLY,
 #   MCP_DEFAULT_FOLDER, MCP_APPS, MCP_TOOL_RENAME, SSL_VERIFY,
 #   VIYA_CLIENT_TIMEOUT, MAX_UPLOAD_BYTES, MAX_EXPORT_INLINE_BYTES
+#
+# CONNECT_PYTHON_VERSION picks the Python version Connect runs the content
+# with (default: the one in .python-version). Set it when the Connect server
+# does not offer that version, e.g. CONNECT_PYTHON_VERSION=3.13.13.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,7 +43,7 @@ fi
 command -v uv >/dev/null || { echo "error: uv is required (https://docs.astral.sh/uv/)" >&2; exit 1; }
 
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/pyproject.toml" | head -1)"
-python_version="$(tr -d '[:space:]' < "$REPO_ROOT/.python-version")"
+python_version="${CONNECT_PYTHON_VERSION:-$(tr -d '[:space:]' < "$REPO_ROOT/.python-version")}"
 
 if [[ -n "$bundle_only" ]]; then
   mkdir -p "$bundle_only"
