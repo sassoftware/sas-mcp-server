@@ -647,7 +647,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                         ),
                         "existing_model_id": same[0].get("id"),
                     }
-                replaced = [m.get("id") for m in same]
+                replaced = [str(m["id"]) for m in same if m.get("id")]
             try:
                 code = registration_code(
                     name=name,
@@ -1194,7 +1194,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             jobs, _ = await get_paged_items(f"{base}/performanceJobs", client, limit=200)
             latest: dict[str, dict[str, Any]] = {}
             for job in jobs:
-                key = job.get("modelId") or job.get("id")
+                key = str(job.get("modelId") or job.get("id") or "")
                 if key not in latest or (job.get("startTime") or "") > (latest[key].get("startTime") or ""):
                     latest[key] = job
             run_jobs = list(latest.values())
