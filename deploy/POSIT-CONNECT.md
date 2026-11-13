@@ -31,6 +31,24 @@ The server's own OAuth proxy, `MCP_SIGNING_KEY`, `MCP_BASE_URL` callback and
 - Posit Connect with MCP content support and **custom OAuth integrations**
   (Enhanced or Advanced tier), Python 3.12 available on the server.
 - Connect can reach your SAS Viya endpoint over HTTPS.
+- The content can reach Connect's API, because the server calls Connect's
+  credentials endpoint for every tool call. It uses `CONNECT_SERVER`, which
+  Connect sets from
+  [`Server.EnvAddress`](https://docs.posit.co/connect/admin/appendix/configuration/#Server.EnvAddress)
+  (default: `Server.Address`) unless the content's Vars override it. With
+  off-host execution (Kubernetes) that address must work **from inside the
+  content pod**:
+  - `http://localhost:3939` is the pod itself, not Connect.
+  - The public URL may not be reachable from inside the cluster (no hairpin
+    through the load balancer, or egress blocked).
+  - Connect's in-cluster service address
+    (`http://<connect-service>.<namespace>.svc.cluster.local:<port>`, see
+    `kubectl get svc -n <namespace>`) is the reliable choice.
+
+  Set it for all content with `Server.EnvAddress`, or for this server only
+  with `POSIT_CONNECT_API_URL` in the content's Vars (it takes precedence over
+  `CONNECT_SERVER`). Do not leave a stale `CONNECT_SERVER` in the content's
+  Vars: it overrides Connect's value.
 - A SAS Viya administrator (step 1) and a Connect administrator (step 2).
 - Locally: [`uv`](https://docs.astral.sh/uv/) and `rsconnect-python`
   (`uv tool install rsconnect-python`), with `rsconnect add` already run for
@@ -95,16 +113,14 @@ Note the returned `guid`. Make sure MCP OAuth sign-in is enabled on the server
 ```sh
 export VIYA_ENDPOINT=https://viya.example.com
 deploy/posit-connect/deploy.sh -n <connect-server-nickname>
-```
-
-The script bundles `src/sas_mcp_server` with a `requirements.txt` pinned from
+```._mcp_server` with a `requirements.txt` pinned from
 `uv.lock` and runs `rsconnect deploy fastapi` with entrypoint
 `sas_mcp_server.mcp_server:app`. It sets `POSIT_CONNECT_OAUTH=true`,
 `MCP_STATELESS_HTTP=true` (Connect requires stateless Streamable HTTP) and
 `SAS_MCP_VERSION`, and forwards `VIYA_ENDPOINT` plus any optional settings set
 in your shell (`MCP_TIERS`, `MCP_READ_ONLY`, `COMPUTE_CONTEXT_NAME`, … — the
 list is at the top of the script). Extra arguments go to `rsconnect`
-unchanged. Pass `--guid <content-guid>` to redeploy over existing content.
+unchanged. Pass `--app-id <content-guid>` to redeploy over existing content.
 `--bundle-only <dir>` only builds the bundle.
 
 Then, in the content's settings on Connect:
@@ -145,6 +161,8 @@ the tool list.
 |---|---|
 | Client sign-in fails before any browser opens, e.g. *expected string, received undefined* for `authorization_endpoint` / `token_endpoint` | Connect is served under a path prefix (`https://host/connect/`). Its OAuth issuer then has a path, and MCP clients look for its metadata at the **host root**: `/.well-known/oauth-authorization-server/connect`, then `/.well-known/openid-configuration/connect`, then `/connect/.well-known/openid-configuration`. Whatever owns the root (Workbench, say) answers the first two, and the last is Connect's OIDC document, which has no `authorization_endpoint`. The fix is in the reverse proxy, not this server: route `/.well-known/oauth-authorization-server/connect` to Connect's `/connect/.well-known/oauth-authorization-server` (see the note below the table). Or serve Connect on its own hostname. |
 | Tool result: *Posit Connect could not provide a SAS Viya token (HTTP 4xx): …* | The text after the colon is Connect's own reason. *No OAuth session found…*: this user has not authorized SAS Logon for this content, so open the content URL in a browser and authorize it. *No OAuth integrations have been associated…*: attach the integration to this content item, because attaching it to other content does not count. *Refresh token is invalid* (error 219): the SAS Logon grant expired, so log out and back in to the integration (content settings, *Runtime* tab). Several integrations attached: set `POSIT_CONNECT_INTEGRATION_GUID`. The link in the message is the public content URL Connect reports in `X-RSC-Request`; `CONNECT_SERVER` is Connect's internal address and is only used for the server's own call to Connect. |
+| Tool result: *… (HTTP 403): Direct access to this content is not permitted* | The token exchange reached the content itself, not Connect: `CONNECT_SERVER` is `http://localhost:3939` and the content runs off-host, so `localhost` is its own pod. Check the content's Vars first: a `CONNECT_SERVER` set there overrides Connect's value. Authorizing SAS Logon again does not help, and Connect's log shows no `/__api__/v1/oauth/integrations/credentials` request. Use Connect's in-cluster address (see Requirements). |
+| Tool result: *Could not reach Posit Connect at https://… to get a SAS Viya token: ConnectTimeout* | The pod cannot open a connection to that address, typically the public URL from inside the cluster. Use Connect's in-cluster service address via `Server.EnvAddress` or `POSIT_CONNECT_API_URL` (see Requirements). |
 | Tool result: *No Posit-Connect-User-Session-Token header* | `POSIT_CONNECT_OAUTH=true` on a server that is not running behind Connect. |
 | Browser stuck on SAS Logon after the password | `form-action` in SAS Logon's CSP does not include the Connect origin (step 1). |
 | SAS Logon: *Invalid redirect* | The client's `redirect_uri` is not exactly `https://<connect>/__oauth__/integrations/callback`. |

@@ -39,6 +39,21 @@ def _client(handler) -> httpx.AsyncClient:
 
 
 @pytest.mark.asyncio
+async def test_exchange_uses_api_url_override(connect_env, monkeypatch):
+    monkeypatch.setenv("CONNECT_SERVER", "http://localhost:3939")
+    monkeypatch.setenv("POSIT_CONNECT_API_URL", "https://posit.example.com/connect/")
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"access_token": "VIYA"})
+
+    async with _client(handler) as client:
+        assert await posit_connect.exchange_session_token("S", client=client) == "VIYA"
+    assert str(seen[0].url) == "https://posit.example.com/connect/__api__/v1/oauth/integrations/credentials"
+
+
+@pytest.mark.asyncio
 async def test_exchange_posts_rfc8693_request_with_content_key(connect_env):
     seen: list[httpx.Request] = []
 
@@ -102,7 +117,11 @@ async def test_exchange_refusal_without_json_body_still_reports(connect_env):
     ("header", "path", "expected"),
     [
         ("https://posit.example.com/connect/sas-mcp/mcp", "/mcp", "https://posit.example.com/connect/sas-mcp/"),
-        ("https://posit.example.com/connect/content/abc/mcp/?x=1", "/mcp/", "https://posit.example.com/connect/content/abc/"),
+        (
+            "https://posit.example.com/connect/content/abc/mcp/?x=1",
+            "/mcp/",
+            "https://posit.example.com/connect/content/abc/",
+        ),
         ("https://connect.example.org/mcp", "/mcp", "https://connect.example.org/"),
         (None, "/mcp", None),
         ("not a url", "/mcp", None),
@@ -152,8 +171,10 @@ async def test_getter_exchanges_the_forwarded_session_token():
         "posit-connect-user-session-token": "SESSION",
         "x-rsc-request": "https://posit.example.com/connect/sas-mcp/mcp",
     }
-    with patch.object(posit_connect, "get_http_request", return_value=_request_with(headers)), \
-         patch.object(posit_connect, "exchange_session_token", exchange):
+    with (
+        patch.object(posit_connect, "get_http_request", return_value=_request_with(headers)),
+        patch.object(posit_connect, "exchange_session_token", exchange),
+    ):
         assert await getter(AsyncMock()) == "VIYA"
     exchange.assert_awaited_once_with(
         "SESSION", audience="integ-guid", content_url="https://posit.example.com/connect/sas-mcp/"
@@ -161,10 +182,35 @@ async def test_getter_exchanges_the_forwarded_session_token():
 
 
 @pytest.mark.asyncio
+async def test_getter_link_keeps_content_path_under_root_path():
+    # Behind Connect, url.path includes the mount root_path; only the part
+    # below it (/mcp) may be stripped from X-RSC-Request.
+    getter = posit_connect.make_token_getter()
+    exchange = AsyncMock(return_value="VIYA")
+    headers = {
+        "posit-connect-user-session-token": "SESSION",
+        "x-rsc-request": "https://posit.example.com/connect/sas-mcp/mcp",
+    }
+    request = SimpleNamespace(
+        headers=httpx.Headers(headers),
+        url=SimpleNamespace(path="/connect/sas-mcp/mcp"),
+        scope={"path": "/connect/sas-mcp/mcp", "root_path": "/connect/sas-mcp"},
+    )
+    with (
+        patch.object(posit_connect, "get_http_request", return_value=request),
+        patch.object(posit_connect, "exchange_session_token", exchange),
+    ):
+        await getter(AsyncMock())
+    assert exchange.await_args.kwargs["content_url"] == "https://posit.example.com/connect/sas-mcp/"
+
+
+@pytest.mark.asyncio
 async def test_getter_without_session_header_raises():
     getter = posit_connect.make_token_getter()
-    with patch.object(posit_connect, "get_http_request", return_value=_request_with({})), \
-         pytest.raises(AuthenticationError, match="Posit-Connect-User-Session-Token"):
+    with (
+        patch.object(posit_connect, "get_http_request", return_value=_request_with({})),
+        pytest.raises(AuthenticationError, match="Posit-Connect-User-Session-Token"),
+    ):
         await getter(AsyncMock())
 
 
@@ -214,9 +260,17 @@ def test_connect_mode_rejects_contradictory_settings(monkeypatch, restore_config
 
 def test_landing_page_names_connect_sign_in():
     facts = ServerFacts(
-        server_name="SAS", version="1.0", mcp_url="https://c/mcp", viya_endpoint="https://v",
-        auth_enabled=True, allow_raw_bearer=False, enabled_tiers=frozenset(), read_only=False,
-        tiers=(), prompts=(), posit_connect=True,
+        server_name="SAS",
+        version="1.0",
+        mcp_url="https://c/mcp",
+        viya_endpoint="https://v",
+        auth_enabled=True,
+        allow_raw_bearer=False,
+        enabled_tiers=frozenset(),
+        read_only=False,
+        tiers=(),
+        prompts=(),
+        posit_connect=True,
     )
     page = render_page(facts, nonce="n")
     assert "Sign-in: Posit Connect + SAS Viya" in page
@@ -255,10 +309,16 @@ _SERVER_PROBE = textwrap.dedent(
 def test_server_in_connect_mode_has_no_sas_logon_gate():
     """Built fresh in a subprocess (module-level app): no OAuth provider, and a
     request carrying Connect's credential, not a Viya one, is served."""
-    env = {**os.environ, "POSIT_CONNECT_OAUTH": "true", "ALLOW_RAW_BEARER": "false", "VIYA_AUTH": "true",
-           "VIYA_ENDPOINT": os.environ.get("VIYA_ENDPOINT") or "https://test.viya.com"}
-    out = subprocess.run([sys.executable, "-c", _SERVER_PROBE], env=env, capture_output=True, text=True,
-                         timeout=120, check=True)
+    env = {
+        **os.environ,
+        "POSIT_CONNECT_OAUTH": "true",
+        "ALLOW_RAW_BEARER": "false",
+        "VIYA_AUTH": "true",
+        "VIYA_ENDPOINT": os.environ.get("VIYA_ENDPOINT") or "https://test.viya.com",
+    }
+    out = subprocess.run(
+        [sys.executable, "-c", _SERVER_PROBE], env=env, capture_output=True, text=True, timeout=120, check=True
+    )
     result = json.loads(out.stdout.strip().splitlines()[-1])
     assert result["auth"] is True
     assert result["status"] == 200

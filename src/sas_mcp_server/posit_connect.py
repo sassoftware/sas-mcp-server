@@ -59,6 +59,22 @@ def public_content_url(original_url: str | None, request_path: str) -> str | Non
     return urlunsplit((parts.scheme, parts.netloc, path.rstrip("/") + "/", "", ""))
 
 
+def _app_path(request) -> str:
+    """The request path relative to the app's mount point.
+
+    Behind Connect the app runs with a ``root_path`` (e.g. ``/connect/sas-mcp``)
+    and Starlette's ``request.url.path`` includes it. Stripping that full path
+    from ``X-RSC-Request`` would take the content's own path with it, leaving
+    only the host, so strip just the part below the mount (``/mcp``).
+    """
+    scope = getattr(request, "scope", None) or {}
+    path: str = scope.get("path") or request.url.path
+    root: str = scope.get("root_path", "") or ""
+    if root and path.startswith(root):
+        return path[len(root) :] or "/"
+    return path
+
+
 def _content_hint(content_url: str | None) -> str:
     """Where the user can authorize the SAS Logon integration."""
     where = content_url or "this MCP server's content URL on Posit Connect"
@@ -94,7 +110,10 @@ async def exchange_session_token(
     client: httpx.AsyncClient | None = None,
 ) -> str:
     """Trade a Connect user session token for the user's SAS Viya access token."""
-    server = os.getenv("CONNECT_SERVER", "").rstrip("/")
+    # POSIT_CONNECT_API_URL overrides the CONNECT_SERVER Connect injects (from
+    # Server.EnvAddress). With off-host execution, an EnvAddress of
+    # http://localhost:3939 is the content's own pod, not Connect.
+    server = (os.getenv("POSIT_CONNECT_API_URL") or os.getenv("CONNECT_SERVER", "")).rstrip("/")
     api_key = os.getenv("CONNECT_API_KEY", "")
     if not server or not api_key:
         raise AuthenticationError(
@@ -118,7 +137,11 @@ async def exchange_session_token(
         else:
             resp = await client.post(url, data=data, headers=headers)
     except httpx.HTTPError as exc:
-        raise AuthenticationError(f"Could not reach Posit Connect at {server} to get a SAS Viya token: {exc}") from exc
+        # str() of httpx timeouts is often empty, so always name the type.
+        detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        raise AuthenticationError(
+            f"Could not reach Posit Connect at {server} to get a SAS Viya token: {detail}"
+        ) from exc
 
     if resp.status_code >= 400:
         # Connect answers 4xx when the viewer has not authorized the
@@ -131,8 +154,7 @@ async def exchange_session_token(
             + (f": {reason}" if reason else ".")
             + " Usual causes: you have not authorized the SAS Logon integration for this content yet; "
             "the integration is not attached to this content item (or several are, and "
-            "POSIT_CONNECT_INTEGRATION_GUID is not set); or your SAS Logon grant expired."
-            + _content_hint(content_url)
+            "POSIT_CONNECT_INTEGRATION_GUID is not set); or your SAS Logon grant expired." + _content_hint(content_url)
         )
     try:
         token = resp.json().get("access_token")
@@ -154,7 +176,7 @@ def make_token_getter(audience: str | None = None):
                 f"No {SESSION_TOKEN_HEADER} header on this request. POSIT_CONNECT_OAUTH=true only works "
                 "for content deployed on Posit Connect, which adds that header for signed-in users."
             )
-        content_url = public_content_url(request.headers.get(ORIGINAL_URL_HEADER), request.url.path)
+        content_url = public_content_url(request.headers.get(ORIGINAL_URL_HEADER), _app_path(request))
         return await exchange_session_token(session_token, audience=audience, content_url=content_url)
 
     return connect_viya_token

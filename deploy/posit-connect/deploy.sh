@@ -7,7 +7,7 @@
 # Builds a bundle of the sas_mcp_server package plus a requirements.txt pinned
 # from uv.lock, then runs `rsconnect deploy fastapi`. Everything after the
 # options below is passed to rsconnect unchanged, e.g. -n <server-nickname>,
-# --guid <content-guid> to redeploy, -t <title>, --visibility private.
+# --app-id <content-guid> to redeploy, -t <title>, --visibility private.
 #
 # Usage:
 #   VIYA_ENDPOINT=https://viya.example.com deploy/posit-connect/deploy.sh -n myconnect
@@ -15,7 +15,8 @@
 #
 # Environment variables forwarded to the content when set locally (others can
 # be set later in the content's Vars pane on Connect):
-#   VIYA_ENDPOINT (required), POSIT_CONNECT_INTEGRATION_GUID, MCP_BASE_URL,
+#   VIYA_ENDPOINT (required), POSIT_CONNECT_INTEGRATION_GUID,
+#   POSIT_CONNECT_API_URL, MCP_BASE_URL,
 #   COMPUTE_CONTEXT_NAME, MCP_SERVER_NAME, MCP_TIERS, MCP_READ_ONLY,
 #   MCP_DEFAULT_FOLDER, MCP_APPS, MCP_TOOL_RENAME, SSL_VERIFY,
 #   VIYA_CLIENT_TIMEOUT, MAX_UPLOAD_BYTES, MAX_EXPORT_INLINE_BYTES
@@ -24,7 +25,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENTRYPOINT="sas_mcp_server.mcp_server:app"
 FORWARDED_VARS=(
-  POSIT_CONNECT_INTEGRATION_GUID MCP_BASE_URL COMPUTE_CONTEXT_NAME MCP_SERVER_NAME
+  POSIT_CONNECT_INTEGRATION_GUID POSIT_CONNECT_API_URL MCP_BASE_URL COMPUTE_CONTEXT_NAME MCP_SERVER_NAME
   MCP_TIERS MCP_READ_ONLY MCP_DEFAULT_FOLDER MCP_APPS MCP_TOOL_RENAME SSL_VERIFY
   VIYA_CLIENT_TIMEOUT MAX_UPLOAD_BYTES MAX_EXPORT_INLINE_BYTES
 )
