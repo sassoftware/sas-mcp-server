@@ -24,6 +24,7 @@ from typing import Annotated, Any
 from fastmcp import Context, FastMCP
 from pydantic import BeforeValidator
 
+from .. import config
 from ..config import VIYA_ENDPOINT
 from ..helpers import decisioning_assets as assets
 from ..helpers import lookup_helpers as lookups
@@ -708,7 +709,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         revision_id: str,
         publish_name: str,
         ctx: Context,
-        destination_name: str = "maslocal",
+        destination_name: str | None = None,
         poll_timeout: float = 60.0,
     ) -> dict[str, Any]:
         """Publish a locked decision revision to a Micro Analytic Score (MAS) destination.
@@ -739,8 +740,10 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 ``lock_decision_flow_revision``).
             publish_name: The published name shown in Model Publish (not the
                 MAS module ID — see above).
-            destination_name: The configured MAS publishing destination
-                (default "maslocal").
+            destination_name: A Micro Analytic Score publishing destination.
+                Default: the deployment's ``MCP_DEFAULT_PUBLISH_DESTINATION``,
+                ``maslocal`` unless an administrator changed it. The code is
+                generated for MAS, so the destination must be a MAS one.
             poll_timeout: Max seconds to wait for the publish job to reach a
                 terminal state before giving up (default 60.0).
         """
@@ -756,7 +759,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             code, _ = plain_input_names(code_resp.text)
             body = {
                 "name": publish_name,
-                "destinationName": destination_name,
+                "destinationName": destination_name or config.MCP_DEFAULT_PUBLISH_DESTINATION,
                 "modelContents": [
                     {
                         "modelName": publish_name,

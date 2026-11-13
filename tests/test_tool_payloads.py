@@ -162,7 +162,8 @@ async def test_tool_schemas(mcp_server_with_mock_client):
         assert "destination_name" in props
         required = publish_champion.input_schema.get("required", [])
         assert "project_id" in required
-        assert "destination_name" in required
+        # Optional since MCP_DEFAULT_PUBLISH_DESTINATION supplies the default.
+        assert "destination_name" not in required
 
 
 # -----------------------------------------------------------------------

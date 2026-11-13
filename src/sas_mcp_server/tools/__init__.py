@@ -39,6 +39,7 @@ from . import (
     discovery,
     glossary,
     jobs,
+    model_lifecycle,
     model_scoring,
     reports,
     workbench,
@@ -67,6 +68,7 @@ _TIER_REGISTRARS: dict[int, Registrar] = {
     8: workbench.register,
     9: glossary.register,
     10: decisioning_content.register,
+    11: model_lifecycle.register,
 }
 
 TIER_TITLES: dict[int, str] = {
@@ -81,6 +83,7 @@ TIER_TITLES: dict[int, str] = {
     8: "Workbench (Execute Code Only)",
     9: "Business Glossary (SAS Data Governance)",
     10: "Decisioning Advanced (SAS Intelligent Decisioning)",
+    11: "Model Lifecycle (SAS Model Manager)",
 }
 
 ALL_TIERS: frozenset[int] = frozenset(_TIER_REGISTRARS)

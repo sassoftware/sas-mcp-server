@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 115 tools across 11 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 137 tools across 12 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Interactive views (MCP Apps) for data, SAS logs and glossary editing in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
@@ -166,6 +166,7 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 8 | Workbench (Execute Code Only) |
 | 9 | Business Glossary (SAS Data Governance) |
 | 10 | Decisioning Advanced (SAS Intelligent Decisioning) — needs Tier 7 |
+| 11 | Model Lifecycle (SAS Model Manager) |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -174,7 +175,7 @@ MCP_TIERS=0-3 uv run app
 
 ### Read-only mode
 
-Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 57 of the 115 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 64 of the 137 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
 
 This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
 
@@ -193,6 +194,7 @@ The definition is strict: a tool qualifies only if it can neither write nor star
 | `execute_sas_code`, `submit_batch_job` | Run arbitrary code — can perform any operation, including deletes |
 | `score_data`, `catalog_run_agent`, `catalog_run_adhoc_analysis` | Start server-side jobs and leave run records, though they return data |
 | `promote_table_to_memory` | Mutates CAS in-memory state |
+| `test_score_model`, `validate_published_model`, `describe_analytic_store` | Run a SAS session or a score job, though they return data and leave nothing behind |
 | `cancel_job`, `reset_compute_session` | Destroy something the caller owns |
 
 Classification is fail-closed: a tool that is not explicitly classified as read-only is withheld. The list lives in [`src/sas_mcp_server/tools/_access.py`](src/sas_mcp_server/tools/_access.py), and a test asserts it covers every registered tool, so a newly added tool cannot silently land in read-only mode.
@@ -204,9 +206,9 @@ The same classification is **advertised** to every client as [MCP tool annotatio
 | Hint | Derived from |
 |---|---|
 | `readOnlyHint` | exactly the read-only set above — one table, so what a client is told and what `MCP_READ_ONLY` enforces cannot drift |
-| `destructiveHint` | tools that can remove or overwrite existing state: arbitrary code (`execute_sas_code`, `submit_batch_job`), `delete_*`, `cancel_job`, `reset_compute_session`, the `update_*` PUTs, `apply_report_operations`, `create_report`/`copy_report` (their `replace` conflict policy), `publish_ml_champion_model` |
-| `idempotentHint` | reads, the `update_*` PUTs, deletes, `cancel_job`, `reset_compute_session`, `promote_table_to_memory` |
-| `openWorldHint` | only tools that can reach beyond Viya: arbitrary code and the upload tools' `url` source |
+| `destructiveHint` | tools that can remove or overwrite existing state: arbitrary code (`execute_sas_code`, `submit_batch_job`), `delete_*`, `cancel_job`, `reset_compute_session`, the `update_*` PUTs, `apply_report_operations`, `create_report`/`copy_report` (their `replace` conflict policy), `publish_ml_champion_model`, `register_model`/`publish_model`/`save_castable` (their `replace`), `drop_castable`, `score_table`, `set_project_champion`, `create_performance_definition` (its `replace`), `set_kpi_alert_rule` (updates the rule for the same KPI in place) |
+| `idempotentHint` | reads, the `update_*` PUTs, deletes, `cancel_job`, `reset_compute_session`, `promote_table_to_memory`, and the tools that report what an earlier call made instead of acting again (`create_folder`, `create_model_project`, `save_castable`, `drop_castable`, `set_project_champion`, `create_performance_definition`, `set_kpi_alert_rule`) |
+| `openWorldHint` | only tools that can reach beyond Viya: arbitrary code, the upload tools' `url` source, and `publish_model` (Git and container-registry destinations) |
 
 Clients use these to shape their approval UX — e.g. Claude groups read-only tools for one-click approval and warns before destructive ones — and to decide when to interrupt the user. They are hints, not enforcement: the spec tells clients to treat them as untrusted unless the server is trusted, and `MCP_READ_ONLY` remains the server-side control. Without annotations a client must assume the spec's pessimistic defaults (writable, destructive, open-world) for every tool, so this only ever reduces friction. The browser landing page marks each tool `read-only` / `write` / `destructive` from the same hints.
 
@@ -292,6 +294,9 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **upload_file**: Upload a file to the Viya Files Service, optionally into a Content folder (`parent_folder_uri`). Content comes from exactly one of `content` (inline text), `file_path` (read **server-side**, binary-safe — xlsx, zip, images — gated by `ALLOW_LOCAL_FILE_UPLOAD`), or `url` (server-side fetch)
 - **download_file**: Download file content
 - **find_folder**: Look up a SAS Content folder by path (`/Public/Content/Decisions`, `My Folder`, `My Folder/Risk`), ID or URI, and return its ID, URI, name and full path — for confirming a folder the user named, or getting the URI that `upload_file` and `MCP_DEFAULT_FOLDER` take
+- **create_folder**: Create a SAS Content folder and any missing folders above it: `/Public/Content/Risk` and `My Folder/Risk` where they say, a relative path such as `Risk/2026` under `MCP_DEFAULT_FOLDER` (refused when that is unset). An existing folder is returned unchanged, so it can be called twice
+- **save_castable**: Save an in-memory CAS table to a file in a caslib (`sashdat`, `csv`, `parquet` or `sas7bdat`), so it survives a drop or a CAS restart; an existing file is overwritten only with `replace`
+- **drop_castable**: Drop a table from CAS memory and keep its source file, so `promote_table_to_memory` can load it again. A table with no source file would lose its data, so it is refused unless `allow_unsaved`
 
 #### Tier 3 — Reports & Visualization
 - **list_reports**: List Visual Analytics reports
@@ -316,14 +321,20 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **create_ml_project**: Create a new AutoML project from a loaded, global-scope CAS table (caslib + table + optional CAS server)
 - **run_ml_project**: Run pipeline automation
 - **register_ml_champion_model**: Register an AutoML project's champion model to the Model Repository
-- **publish_ml_champion_model**: Publish an AutoML project's champion model to a scoring destination
+- **publish_ml_champion_model**: Publish an AutoML project's champion model to a scoring destination (default: `MCP_DEFAULT_PUBLISH_DESTINATION`)
 
 #### Tier 6 — Model Management & Scoring
 - **list_registered_models**: List models in repository
-- **list_publishing_destinations**: List available scoring/publishing destinations, for use with **publish_ml_champion_model**
+- **list_publishing_destinations**: List available scoring/publishing destinations, for use with **publish_model** and **publish_ml_champion_model**
 - **list_mas_modules**: List published MAS modules
 - **get_mas_module_step_signature**: Inspect a published MAS module step's input/output variable signature before scoring
 - **score_data**: Score data against a published model or decision; for a decision published from the Intelligent Decisioning UI, whose inputs carry a trailing underscore, the plain names are accepted and mapped (`inputs_renamed`)
+- **get_model**: Describe a registered model: project, version, role (champion or not), target, event probability variable, input and output variables, and files
+- **list_model_versions**: A model's versions, the current one first
+- **test_score_model**: Score a few rows (default 10, at most 100) with a registered model using Model Manager's own score test, wait, and return the scored rows; the scratch tables and score definition are removed again
+- **score_table**: Score a whole CAS table with a registered model, straight from the repository (no publishing needed); returns the score execution to follow
+- **get_score_execution**: State, output table and, when it failed, the log's errors of a score execution; optionally the first scored rows
+- **list_published_models**: Published models by destination and name, with their state and the registered model they came from
 
 #### Tier 7 — Decisioning Foundation (SAS Intelligent Decisioning)
 Build and run SAS Intelligent Decisioning decisions — rule sets that consult lookup tables, and decision flows that combine them with models, branches, conditions, assignments and sub-decisions — then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it. The life-cycle tools read, lock, copy and delete every kind of decisioning content. Segmentation trees, code files, value lists and custom functions are written with [Tier 10](#tier-10--decisioning-advanced-sas-intelligent-decisioning); enable both (`MCP_TIERS=...,7,10`) for everything — the server logs a warning when Tier 10 is on without Tier 7.
@@ -406,6 +417,30 @@ SAS Intelligent Decisioning content beyond rule sets, for the decision flows of 
 - **create_code_file** / **update_code_file**: DS2, Python or SQL code files; Viya reads the signature from the code, and `signature` supplies the types Python cannot state
 - **create_custom_function** / **update_custom_function**: DS2 custom functions that rule expressions call, checked to compile first; a category named but missing is created
 - **validate_custom_function**: Compile a custom function without saving it and return the compiler's error lines
+
+#### Tier 11 — Model Lifecycle (SAS Model Manager)
+The steps after a model is trained: register it, keep it in a project, make it the champion, publish it, check the published copy, and monitor it with KPI alert rules. Projects live in a model repository (`MCP_DEFAULT_MODEL_REPOSITORY`, default `Public`), not in SAS Content.
+
+> **Python models are currently not supported.** The tools work with SAS models: analytic stores and DATA step score code.
+
+*Registration and projects:*
+- **describe_analytic_store**: PROC ASTORE DESCRIBE of an analytic store in CAS: its inputs, outputs and algorithm, before registering it
+- **register_model**: Register a SAS model with PROC REGISTERMODEL, run in a compute session of its own: an analytic store in CAS (downloaded to the session and registered from there, never through the client) or DATA step score code. The procedure writes the variables, properties and score code, and with a data table and target the fit statistics, ROC and lift. Not Python or DS2. A model of the same name in the project is refused unless `replace=true`, which gives it a new ID and loses its score tests, publish history and monitoring
+- **list_model_repositories**: Model repositories, the default one marked
+- **list_model_projects**: Projects, by repository and name
+- **create_model_project**: Create a project, optionally in a folder inside the repository; one of that name is returned instead of a second one
+- **set_project_champion**: Make a model the champion, first copying the model's target, event and variables to the project where they are missing, as Model Manager's UI does (Model Manager refuses a champion without them, and PROC REGISTERMODEL leaves them empty)
+
+*Publishing:*
+- **publish_model**: Publish any registered model to a destination — MAS, CAS, a container registry, Git (`git_remote_path`) — with `dry_run` to see the destination, the published name and whether it would replace one. Default destination: `MCP_DEFAULT_PUBLISH_DESTINATION` (`maslocal`)
+- **validate_published_model**: Score a few rows with the published copy in its destination (Model Manager's publish validation) and return them, to compare with **test_score_model**
+
+*Monitoring:*
+- **create_performance_definition**: Define how a project's models are monitored, from one CAS table per period named `<prefix>_<n>_<label>`; defaults to the champion, its inputs (for drift) and its event probability. A project has one: an existing one is returned, and `replace` changes it
+- **run_performance_definition**: Run it — by definition, or by project when it has one — optionally waiting up to ten minutes; reports each model's job and the log's errors of one that failed or completed with errors, and once the run is done returns Model Manager's run summary (rank, periods, headline KPIs per model), has Model Manager calculate the KPIs and reports the alert rules the champion breaks
+- **get_project_kpis**: The project's monitoring picture: the KPIs from the last runs (`_AUC_`, `_MISC_`, `_F1_`, …, and `devIndex` per variable for drift), its KPI alert rules, whether the champion (or another model) breaks each — Model Manager's own health check — and its performance definitions
+- **set_kpi_alert_rule**: Alert when a KPI crosses a threshold: accuracy KPIs (`AUC`, `misclassification`, …), drift (`devIndex`, one rule per input or output variable) or fairness for a sensitive variable; above or below, with Model Manager's priority and number of occurrences. A rule for the same KPI, variable and direction is updated, not duplicated, and the result says whether the champion breaks it now
+- **delete_kpi_alert_rule**: Delete a KPI alert rule
 
 ### Prompt Templates
 
@@ -661,7 +696,7 @@ tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
 
-Every one of the 115 tools and 9 prompt templates has an integration test, enforced by the
+Every one of the 137 tools and 9 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most
@@ -699,6 +734,7 @@ gh gist create reports/integration.xml                          # full XML as a 
 |---|---|
 | `tests/test_tool_payloads.py` | Payload assertions for all 75 Tier 0-8 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
 | `tests/test_integration.py` | End-to-end workflow tests against a real Viya instance |
+| `tests/test_model_lifecycle.py` | Tool tests for the model tools (Tiers 2, 6 and 11) against a routed fake Viya, and the SAS programs they generate |
 | `tests/test_tools.py` | Unit tests for the generic Viya REST helpers in `viya_client` (`get_json`, `post_json`, `make_client`, …) |
 | `tests/test_viya_utils.py` | Unit tests for Viya compute session and job orchestration |
 | `tests/test_mcp_server.py` | Unit tests for the HTTP auth middleware, health route, and token getter |

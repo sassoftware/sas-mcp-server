@@ -14,7 +14,7 @@ from fastmcp import Context, FastMCP
 
 from ..config import MAX_UPLOAD_BYTES, SSL_VERIFY, VIYA_ENDPOINT
 from ..env import env_bool
-from ..helpers.folder_helpers import resolve_folder
+from ..helpers.folder_helpers import FolderError, create_folder_path, resolve_folder
 from ..viya_client import (
     contains_filter,
     get_json,
@@ -290,6 +290,49 @@ async def _post_cas_upload(
         "caslib": body.get("caslibName"),
         "scope": body.get("scope"),
     }
+
+
+# --- save_castable / drop_castable ---------------------------------------------
+# A loaded table's casManagement record does not say whether a source file
+# backs it, so the caslib's /sources listing is asked: path-based caslibs list
+# files (TABLE.sashdat), database caslibs list tables without an extension.
+SAVE_FORMATS = ("sashdat", "csv", "parquet", "sas7bdat")
+_SOURCE_PAGE = 1000
+_SOURCE_PAGES = 10
+
+
+async def _source_files(client: httpx.AsyncClient, server_id: str, caslib_name: str, table_name: str) -> list[str]:
+    """The caslib's source files (or source tables) that hold *table_name*."""
+    wanted = table_name.lower()
+    found: list[str] = []
+    for page in range(_SOURCE_PAGES):
+        items, count = await get_paged_items(
+            f"/casManagement/servers/{server_id}/caslibs/{caslib_name}/sources",
+            client,
+            limit=_SOURCE_PAGE,
+            start=page * _SOURCE_PAGE,
+        )
+        for item in items:
+            name = item.get("name") or ""
+            stem = name.rsplit(".", 1)[0] if "." in name else name
+            if stem.lower() == wanted:
+                found.append(name)
+        if (page + 1) * _SOURCE_PAGE >= count:
+            break
+    return found
+
+
+async def _table_info(
+    client: httpx.AsyncClient, server_id: str, caslib_name: str, table_name: str
+) -> dict[str, Any] | None:
+    resp = await client.get(
+        f"{VIYA_ENDPOINT}/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
+        headers={"Accept": "application/json"},
+    )
+    if resp.status_code == 404:
+        return None
+    raise_for_viya_status(resp)
+    return resp.json()
 
 
 def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
@@ -593,6 +636,175 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         """
         async with viya_session("find_folder", ctx) as client:
             return await resolve_folder(client, folder)
+
+    @mcp.tool()
+    async def create_folder(path: str, ctx: Context) -> dict[str, Any]:
+        """Create a SAS Content folder, including any missing folders above it.
+
+        Where it is created:
+
+        * a path from the top, ``/Public/Content/Risk``, is created there;
+        * ``My Folder/Risk`` is created in the user's own My Folder;
+        * a relative path, ``Risk/2026``, is created under the deployment's
+          default folder (``MCP_DEFAULT_FOLDER``). Without that setting a
+          relative path is refused: ask the user for the full path.
+
+        A folder that already exists is returned unchanged (``status``
+        ``exists``), so calling twice is safe. The user's SAS Viya permissions
+        decide where they may create folders; top-level folders such as
+        Public are made by administrators. For SAS Content only: model projects
+        live in model repositories (see ``create_model_project``).
+
+        Args:
+            path: The folder to create, as described above.
+
+        Returns:
+            The folder's ``id``, ``uri`` (what ``upload_file`` and the
+            decisioning tools take), ``name`` and ``path``; ``status``
+            ``created`` or ``exists``; and ``created``, the paths of the folders
+            this call made.
+        """
+        async with viya_session("create_folder", ctx) as client:
+            try:
+                return await create_folder_path(client, path)
+            except FolderError as exc:
+                return {"status": "refused", "path": path, "message": str(exc)}
+
+    @mcp.tool()
+    async def save_castable(
+        caslib_name: str,
+        table_name: str,
+        ctx: Context,
+        server_id: str = "cas-shared-default",
+        target_caslib: str | None = None,
+        target_name: str | None = None,
+        file_format: str = "sashdat",
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """Save an in-memory CAS table to a file (or database table) in a caslib.
+
+        A table loaded into CAS memory is lost when it is dropped or the CAS
+        server restarts unless it is saved. This writes it to the caslib's
+        data source, so ``promote_table_to_memory`` can load it again later.
+        An existing file is not overwritten unless ``replace`` is true.
+
+        Args:
+            caslib_name: Caslib of the loaded table.
+            table_name: The loaded table to save.
+            server_id: CAS server (default ``cas-shared-default``).
+            target_caslib: Caslib to write to (default: the table's own).
+            target_name: Name of the saved file, without extension (default:
+                the table's name).
+            file_format: ``sashdat`` (default, fastest to load back), ``csv``,
+                ``parquet`` or ``sas7bdat``.
+            replace: Overwrite an existing file of that name (default false).
+        """
+        fmt = file_format.lower().lstrip(".")
+        if fmt not in SAVE_FORMATS:
+            return {"status": "refused", "message": f"file_format must be one of {', '.join(SAVE_FORMATS)}."}
+        out_caslib = target_caslib or caslib_name
+        out_name = target_name or table_name
+        async with viya_session("save_castable", ctx) as client:
+            info = await _table_info(client, server_id, caslib_name, table_name)
+            if info is None:
+                return {
+                    "status": "not_found",
+                    "table": f"{caslib_name}.{table_name}",
+                    "message": f"No table '{table_name}' in caslib '{caslib_name}'. list_castables lists them.",
+                }
+            if info.get("state") != "loaded":
+                return {
+                    "status": "not_loaded",
+                    "table": f"{caslib_name}.{table_name}",
+                    "message": "The table is not in memory, so its data is already in its source file.",
+                }
+            existing = await _source_files(client, server_id, out_caslib, out_name)
+            if existing and not replace:
+                return {
+                    "status": "exists",
+                    "table": f"{caslib_name}.{table_name}",
+                    "existing": existing,
+                    "message": (
+                        f"Caslib '{out_caslib}' already has {', '.join(existing)}. Ask the user whether to "
+                        "overwrite it (call again with replace=true) or save under another target_name."
+                    ),
+                }
+            resp = await client.post(
+                f"{VIYA_ENDPOINT}/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}",
+                json={"caslibName": out_caslib, "tableName": out_name, "format": fmt, "replace": replace},
+                headers={"Content-Type": "application/vnd.sas.cas.table.save.request+json", "Accept": "*/*"},
+            )
+            raise_for_viya_status(resp)
+            return {
+                "status": "saved",
+                "table": f"{caslib_name}.{table_name}",
+                "saved_to": {"caslib": out_caslib, "name": out_name, "format": fmt},
+                "replaced": bool(existing),
+            }
+
+    @mcp.tool()
+    async def drop_castable(
+        caslib_name: str,
+        table_name: str,
+        ctx: Context,
+        server_id: str = "cas-shared-default",
+        allow_unsaved: bool = False,
+    ) -> dict[str, Any]:
+        """Drop a table from CAS memory, keeping its source file.
+
+        Frees the memory a loaded table takes; ``promote_table_to_memory``
+        loads it again from its source. Nothing on disk is deleted. A table
+        with no source file in its caslib exists only in memory, so dropping
+        it would lose its data: such a table is refused unless
+        ``allow_unsaved`` is true. Save it first with ``save_castable``, or
+        ask the user before dropping it. A table that is not loaded is left
+        as it is.
+
+        Args:
+            caslib_name: Caslib of the table.
+            table_name: The table to drop from memory.
+            server_id: CAS server (default ``cas-shared-default``).
+            allow_unsaved: Drop it even when no source file holds its data
+                (default false). Only with the user's say-so.
+        """
+        table = f"{caslib_name}.{table_name}"
+        async with viya_session("drop_castable", ctx) as client:
+            info = await _table_info(client, server_id, caslib_name, table_name)
+            if info is None:
+                return {
+                    "status": "not_found",
+                    "table": table,
+                    "message": f"No table '{table_name}' in caslib '{caslib_name}'.",
+                }
+            if info.get("state") != "loaded":
+                return {
+                    "status": "not_loaded",
+                    "table": table,
+                    "message": "The table is not in memory; nothing to drop.",
+                }
+            sources = await _source_files(client, server_id, caslib_name, table_name)
+            if not sources and not allow_unsaved:
+                return {
+                    "status": "unsaved",
+                    "table": table,
+                    "message": (
+                        f"No source file for {table_name} was found in caslib '{caslib_name}', so its data "
+                        "exists only in memory and would be lost. Save it first with save_castable, or call "
+                        "again with allow_unsaved=true if the user agrees to lose it."
+                    ),
+                }
+            resp = await client.put(
+                f"{VIYA_ENDPOINT}/casManagement/servers/{server_id}/caslibs/{caslib_name}/tables/{table_name}/state",
+                params={"value": "unloaded"},
+                headers={"Accept": "*/*"},
+            )
+            raise_for_viya_status(resp)
+            return {
+                "status": "dropped",
+                "table": table,
+                "state": resp.text.strip() or "unloaded",
+                "source": sources,
+            }
 
     @mcp.tool()
     async def download_file(file_id: str, ctx: Context) -> str:

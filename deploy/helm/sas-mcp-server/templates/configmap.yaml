@@ -26,6 +26,12 @@ data:
   {{- with .Values.server.defaultFolder }}
   MCP_DEFAULT_FOLDER: {{ . | quote }}
   {{- end }}
+  {{- with .Values.server.defaultPublishDestination }}
+  MCP_DEFAULT_PUBLISH_DESTINATION: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.server.defaultModelRepository }}
+  MCP_DEFAULT_MODEL_REPOSITORY: {{ . | quote }}
+  {{- end }}
   {{- /* toString, NOT `with`: Go templates treat the integer 0 as false, so
          `--set server.tiers=0` would drop this key entirely and the server
          would fall back to registering EVERY tier. */}}

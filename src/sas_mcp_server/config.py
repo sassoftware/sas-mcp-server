@@ -159,6 +159,16 @@ MCP_STATELESS_HTTP = env_bool("MCP_STATELESS_HTTP", False)
 # a path such as /Public/Content/Decisions. Resolved per call, with the
 # caller's own permissions. See sas_mcp_server.helpers.folder_helpers.
 MCP_DEFAULT_FOLDER = os.getenv("MCP_DEFAULT_FOLDER", "").strip()
+# Where the model tools publish when a call names no destination (default:
+# maslocal, the Micro Analytic Score destination every Viya has). Used by
+# publish_model, publish_ml_champion_model and publish_decision_flow.
+# list_publishing_destinations shows the names a deployment has.
+MCP_DEFAULT_PUBLISH_DESTINATION = os.getenv("MCP_DEFAULT_PUBLISH_DESTINATION", "").strip() or "maslocal"
+# The SAS Model Manager repository that new projects and registered models go
+# into when a call names none (default: Public). Projects live under
+# /Model Repositories/<repository>, never in SAS Content, so MCP_DEFAULT_FOLDER
+# does not apply to them. list_model_repositories shows the names.
+MCP_DEFAULT_MODEL_REPOSITORY = os.getenv("MCP_DEFAULT_MODEL_REPOSITORY", "").strip() or "Public"
 # Rename tools on the wire (default: empty, no renaming). Comma-separated
 # ``old=new`` pairs, each replacing a tool-name prefix: ``catalog_=infocat_``
 # presents catalog_search as infocat_search, and so on. For hosts that refuse

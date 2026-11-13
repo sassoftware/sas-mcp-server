@@ -1982,6 +1982,329 @@ async def test_catalog_table_profile_loop(integration_mcp_server):
 
 
 # -----------------------------------------------------------------------
+# Folders and CAS table life cycle (Tier 2)
+# -----------------------------------------------------------------------
+
+
+async def _cas_table_state(token: str, caslib: str, table: str) -> str | None:
+    """The table's state, or None when it does not exist."""
+    from sas_mcp_server.config import VIYA_ENDPOINT
+    from sas_mcp_server.viya_client import make_client
+
+    async with make_client(token) as client:
+        resp = await client.get(
+            f"{VIYA_ENDPOINT}/casManagement/servers/cas-shared-default/caslibs/{caslib}/tables/{table}",
+            headers={"Accept": "application/json"},
+        )
+    return resp.json().get("state") if resp.status_code == 200 else None
+
+
+async def _remove_cas_table(token: str, caslib: str, table: str, source: str | None = None) -> None:
+    """Best effort: unload a CAS table and delete its source file."""
+    from sas_mcp_server.config import VIYA_ENDPOINT
+    from sas_mcp_server.viya_client import make_client
+
+    base = f"{VIYA_ENDPOINT}/casManagement/servers/cas-shared-default/caslibs/{caslib}/tables/{table}"
+    async with make_client(token) as client:
+        with contextlib.suppress(Exception):
+            await client.put(f"{base}/state", params={"value": "unloaded"}, headers={"Accept": "*/*"})
+        if source:
+            with contextlib.suppress(Exception):
+                await client.delete(base, params={"sourceTableName": source, "quiet": "true"})
+
+
+async def test_folder_and_castable_tools(integration_mcp_server, viya_token, monkeypatch):
+    """create_folder (absolute, below My Folder, relative), save_castable and drop_castable."""
+    folder_name = f"mcp_test_mkdir_{_SUFFIX}"
+    table = f"MCP_SAVE_{_SUFFIX}"
+    top_id = None
+    async with Client(integration_mcp_server) as client:
+        try:
+            made = (await client.call_tool("create_folder", {"path": f"My Folder/{folder_name}/a/b"})).data
+            assert made["status"] == "created" and len(made["created"]) == 3, made
+            assert made["path"].endswith(f"/My Folder/{folder_name}/a/b")
+            top = (await client.call_tool("find_folder", {"folder": f"My Folder/{folder_name}"})).data
+            top_id = top["id"]
+            again = (await client.call_tool("create_folder", {"path": made["path"]})).data
+            assert again["status"] == "exists" and again["id"] == made["id"] and again["created"] == []
+
+            monkeypatch.setattr("sas_mcp_server.config.MCP_DEFAULT_FOLDER", "")
+            refused = (await client.call_tool("create_folder", {"path": "relative/path"})).data
+            assert refused["status"] == "refused" and "MCP_DEFAULT_FOLDER" in refused["message"]
+            monkeypatch.setattr("sas_mcp_server.config.MCP_DEFAULT_FOLDER", f"/folders/folders/{top_id}")
+            relative = (await client.call_tool("create_folder", {"path": "c"})).data
+            assert relative["status"] == "created" and relative["path"] == f"{top['path']}/c"
+
+            # an in-memory table with no source is protected until it is saved
+            await client.call_tool("upload_inline_data", {
+                "server_id": "cas-shared-default", "caslib_name": "CASUSER", "table_name": table,
+                "data": "x,y\n1,a\n2,b\n", "data_format": "csv",
+            })
+            assert await _cas_table_state(viya_token, "CASUSER", table) == "loaded"
+            unsaved = (await client.call_tool("drop_castable", {"caslib_name": "CASUSER", "table_name": table})).data
+            assert unsaved["status"] == "unsaved", unsaved
+            saved = (await client.call_tool("save_castable", {"caslib_name": "CASUSER", "table_name": table})).data
+            assert saved["status"] == "saved", saved
+            twice = (await client.call_tool("save_castable", {"caslib_name": "CASUSER", "table_name": table})).data
+            assert twice["status"] == "exists" and twice["existing"], twice
+            dropped = (await client.call_tool("drop_castable", {"caslib_name": "CASUSER", "table_name": table})).data
+            assert dropped["status"] == "dropped" and dropped["source"], dropped
+            assert await _cas_table_state(viya_token, "CASUSER", table) == "unloaded"
+            gone = (await client.call_tool("drop_castable", {"caslib_name": "CASUSER", "table_name": table})).data
+            assert gone["status"] == "not_loaded"
+        finally:
+            await _remove_cas_table(viya_token, "CASUSER", table, f"{table}.sashdat")
+            if top_id:
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/folders/folders/{top_id}?recursive=true")
+
+
+# -----------------------------------------------------------------------
+# Model life cycle (Tiers 6 and 11)
+# -----------------------------------------------------------------------
+
+# A score code a DATA step model can be registered with: inputs from HMEQ, the
+# outputs a binary classifier has. Deliberately crude; it only has to run.
+_LOGIT_CODE = """\
+length I_BAD $ 1;
+_lp = -1.5 + 0.00002 * coalesce(LOAN, 0) - 0.0000001 * coalesce(VALUE, 0) + 0.02 * coalesce(DEBTINC, 30);
+P_BAD1 = 1 / (1 + exp(-_lp));
+P_BAD0 = 1 - P_BAD1;
+I_BAD = ifc(P_BAD1 >= 0.5, '1', '0');
+drop _lp;
+"""
+
+
+async def _poll(fetch, done, timeout: float = 300, every: float = 5):
+    """Call ``await fetch()`` until ``done(result)`` or the timeout; return the last result."""
+    deadline = time.monotonic() + timeout
+    while True:
+        result = await fetch()
+        if done(result) or time.monotonic() > deadline:
+            return result
+        await asyncio.sleep(every)
+
+
+async def _remove_performance_results(token: str, project_id: str) -> list[str]:
+    """Unload and delete a project's results in ModelPerformanceData; returns the files found."""
+    listing = await _viya_get(
+        token,
+        "/casManagement/servers/cas-shared-default/caslibs/ModelPerformanceData/sources",
+        {"limit": 2000},
+    )
+    files = [s["name"] for s in listing.get("items", []) if s.get("name", "").startswith(f"{project_id}.")]
+    for name in files:
+        await _remove_cas_table(token, "ModelPerformanceData", name.rsplit(".", 1)[0], name)
+    return files
+
+
+async def test_model_lifecycle_workflow(integration_mcp_server, viya_token):
+    """Register (analytic store and DATA step) → project → champion → score test →
+    batch scoring → publish → validate → monitor → KPI alert rules → KPIs, then
+    remove everything, ModelPerformanceData results included."""
+    try:
+        await _viya_get(viya_token, "/modelRepository/repositories", {"limit": 1})
+        await _viya_get(viya_token, "/modelManagement/performanceTasks", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Model Manager not available on this instance: {e}")
+    s = _SUFFIX
+    data, store, scored = f"MCPLC_{s}_HMEQ", f"MCPLC_{s}_STORE", f"MCPLC_{s}_SCORED"
+    periods = [f"MCPPF_{s}_1_P1", f"MCPPF_{s}_2_P2"]
+    project_name = f"MCP Test Lifecycle {s}"
+    project_id = task_id = publish = None
+    score_ids: list[tuple[str, str]] = []
+    leftover: list[str] = []
+    results: list[str] = []
+    project_folder = None
+    prep = f"""
+cas mcpit sessopts=(caslib=casuser);
+libname casuser cas caslib=casuser;
+data casuser.{data}(promote=yes); set sampsio.hmeq; run;
+data casuser.{periods[0]}(promote=yes); set sampsio.hmeq(firstobs=1 obs=2500); run;
+data casuser.{periods[1]}(promote=yes); set sampsio.hmeq(firstobs=2501); run;
+proc treesplit data=casuser.{data};
+  input loan value mortdue debtinc derog / level=interval;
+  input job / level=nominal;
+  target bad / level=nominal;
+  prune none;
+  savestate rstore=casuser.{store};
+run;
+proc casutil; promote casdata="{store}" incaslib="casuser" outcaslib="casuser"; quit;
+cas mcpit terminate;
+"""
+    async with Client(integration_mcp_server) as client:
+        try:
+            ran = (await client.call_tool("execute_sas_code", {"sas_code": prep, "html_results": False})).data
+            if "ERROR" in ran["log"]:
+                pytest.skip("Could not prepare the HMEQ data and analytic store: "
+                            + "; ".join(line for line in ran["log"].splitlines() if line.startswith("ERROR"))[:300])
+
+            repos = (await client.call_tool("list_model_repositories", {})).data
+            assert any(r["default"] for r in repos), repos
+            made = (await client.call_tool("create_model_project", {
+                "name": project_name, "folder": "MCP Test", "target_variable": "BAD", "target_level": "binary",
+                "target_event": "1", "description": "sas-mcp-server integration test - delete me",
+            })).data
+            assert made["status"] == "created", made
+            project_id = made["project"]["id"]
+            project_folder = made["project"].get("folderId")
+            again = (await client.call_tool("create_model_project", {"name": project_name})).data
+            assert again["status"] == "exists" and again["project"]["id"] == project_id
+            listed = (await client.call_tool(
+                "list_model_projects", {"repository": made["repository"], "name_filter": s}
+            )).data
+            assert [p["id"] for p in listed] == [project_id]
+
+            described = (await client.call_tool(
+                "describe_analytic_store", {"caslib_name": "CASUSER", "table_name": store}
+            )).data
+            assert described["status"] == "ok" and "LOAN" in described["description"].upper(), described
+
+            tree = (await client.call_tool("register_model", {
+                "name": "MCP Tree", "project_id": project_id, "astore_caslib": "CASUSER", "astore_table": store,
+                "data_caslib": "CASUSER", "data_table": data, "target_variable": "BAD", "target_level": "binary",
+                "target_event": "1", "algorithm": "TREE", "function": "CLASSIFICATION",
+            })).data
+            assert tree["status"] == "registered", tree
+            tree_id = tree["model"]["id"]
+            duplicate = (await client.call_tool("register_model", {
+                "name": "MCP Tree", "project_id": project_id, "astore_caslib": "CASUSER", "astore_table": store,
+            })).data
+            assert duplicate["status"] == "exists" and duplicate["existing_model_id"] == tree_id
+            logit = (await client.call_tool("register_model", {
+                "name": "MCP Logit", "project_id": project_id, "score_code": _LOGIT_CODE, "data_caslib": "CASUSER",
+                "data_table": data, "target_variable": "BAD", "target_level": "binary", "target_event": "1",
+                "algorithm": "LOGISTIC", "function": "CLASSIFICATION",
+            })).data
+            assert logit["status"] == "registered", logit
+            logit_id = logit["model"]["id"]
+
+            model = (await client.call_tool("get_model", {"model_id": tree_id})).data
+            assert model["projectId"] == project_id and model["inputVariables"] and model["files"]
+            versions = (await client.call_tool("list_model_versions", {"model_id": tree_id})).data
+            assert versions["versions"][0]["current"] is True
+
+            champion = (await client.call_tool(
+                "set_project_champion", {"project_id": project_id, "model_id": tree_id}
+            )).data
+            assert champion["status"] == "champion_set", champion
+
+            for model_id in (tree_id, logit_id):
+                tested = (await client.call_tool("test_score_model", {
+                    "model_id": model_id, "caslib_name": "CASUSER", "table_name": data, "rows": 5,
+                })).data
+                assert tested["status"] == "completed", tested
+                assert len(tested["rows"]) == 5 and "P_BAD1" in {c.upper() for c in tested["columns"]}, tested
+
+            batch = (await client.call_tool("score_table", {
+                "model_id": tree_id, "caslib_name": "CASUSER", "table_name": data, "output_table": scored,
+            })).data
+            score_ids.append((batch["execution_id"], batch["score_definition_id"]))
+            finished = await _poll(
+                lambda: client.call_tool("get_score_execution", {"execution_id": batch["execution_id"], "rows": 3}),
+                lambda r: r.data["state"] not in ("pending", "running"),
+            )
+            assert finished.data["state"] == "completed", finished.data
+            assert len(finished.data["rows"]) == 3
+
+            plan = (await client.call_tool("publish_model", {"model_id": tree_id, "dry_run": True})).data
+            assert plan["status"] == "dry_run" and plan["publish_name"] == "MCP_Tree", plan
+            name = f"mcp_lc_{s}"
+            published = (await client.call_tool("publish_model", {"model_id": tree_id, "publish_name": name})).data
+            assert published["status"] == "publishing", published
+            copies = await _poll(
+                lambda: client.call_tool(
+                    "list_published_models", {"destination_name": plan["destination"], "name_filter": name}
+                ),
+                lambda r: bool(r.data) and r.data[0]["state"] not in ("pending", "running"),
+            )
+            assert copies.data and copies.data[0]["state"] == "completed", copies.data
+            publish = copies.data[0]
+            assert publish["modelId"] == tree_id
+            validated = (await client.call_tool("validate_published_model", {
+                "published_model_id": publish["id"], "caslib_name": "CASUSER", "table_name": data, "rows": 3,
+            })).data
+            assert validated["status"] == "completed" and len(validated["rows"]) == 3, validated
+
+            definition = (await client.call_tool("create_performance_definition", {
+                "project_id": project_id, "data_caslib": "CASUSER", "data_prefix": f"MCPPF_{s}",
+                "model_ids": [tree_id, logit_id],
+            })).data
+            assert definition["status"] == "created" and sorted(definition["period_tables"]) == periods, definition
+            task_id = definition["performance_definition_id"]
+            second = (await client.call_tool("create_performance_definition", {
+                "project_id": project_id, "data_caslib": "CASUSER", "data_prefix": f"MCPPF_{s}",
+            })).data
+            assert second["status"] == "exists" and second["performance_definition"]["id"] == task_id, second
+
+            # A KPI alert rule set before the first run: the run then reports the champion breaking it.
+            early = (await client.call_tool("set_kpi_alert_rule", {
+                "project_id": project_id, "kpi": "AUC", "operator": "lessThan", "threshold": 0.999, "severity": "high",
+            })).data
+            assert early["status"] == "set" and early["rules"][0]["action"] == "created", early
+            run = (await client.call_tool("run_performance_definition", {
+                "project_id": project_id, "wait_seconds": 600,
+            })).data
+            assert run["status"].lower() in ("completed", "succeeded") and run["kpis"] > 0, run
+            assert [a["kpi"] for a in run["breached_alerts"]] == ["_AUC_"], run
+
+            # Drift rules, one per variable, that the champion keeps; the AUC rule updated, not duplicated.
+            drift = (await client.call_tool("set_kpi_alert_rule", {
+                "project_id": project_id, "kpi": "devIndex", "operator": "greaterThan", "threshold": 1000,
+                "variables": ["LOAN", "DEBTINC"],
+            })).data
+            assert [r["action"] for r in drift["rules"]] == ["created", "created"], drift
+            assert len(drift["now"]) == 2 and not any(a["breached"] for a in drift["now"]), drift
+            lowered = (await client.call_tool("set_kpi_alert_rule", {
+                "project_id": project_id, "kpi": "AUC", "operator": "lessThan", "threshold": 0.01,
+            })).data
+            assert lowered["rules"][0]["action"] == "updated", lowered
+            assert [a["breached"] for a in lowered["now"]] == [False], lowered
+
+            kpis = (await client.call_tool("get_project_kpis", {"project_id": project_id})).data
+            assert any(k["name"] == "_AUC_" for k in kpis["kpis"]), kpis
+            assert len(kpis["alert_rules"]) == 3 and [d["id"] for d in kpis["performance_definitions"]] == [task_id]
+            assert kpis["alerts_for_model"] == "MCP Tree" and len(kpis["alerts"]) == 3, kpis
+            removed = (await client.call_tool("delete_kpi_alert_rule", {
+                "project_id": project_id, "alert_rule_id": drift["rules"][0]["id"],
+            })).data
+            assert removed["status"] == "deleted", removed
+            other = (await client.call_tool("get_project_kpis", {"project_id": project_id, "model_id": logit_id})).data
+            assert len(other["alert_rules"]) == 2 and other["alerts_for_model"] == logit_id, other
+        finally:
+            for table in (data, store, scored, *periods):
+                await _remove_cas_table(viya_token, "CASUSER", table)
+            for execution_id, definition_id in score_ids:
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/scoreExecution/executions/{execution_id}")
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/scoreDefinitions/definitions/{definition_id}")
+            if publish:
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/microanalyticScore/modules/{publish['name'].lower()}")
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/modelPublish/models/{publish['id']}")
+            if task_id:
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/modelManagement/performanceTasks/{task_id}")
+            if project_id:
+                results = await _remove_performance_results(viya_token, project_id)
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/modelRepository/projects/{project_id}")
+                if project_folder:  # the repository folder the test created; refused if not empty
+                    with contextlib.suppress(Exception):
+                        await _viya_delete(viya_token, f"/folders/folders/{project_folder}")
+                left = await _viya_get(
+                    viya_token,
+                    "/casManagement/servers/cas-shared-default/caslibs/ModelPerformanceData/sources",
+                    {"limit": 2000},
+                )
+                leftover = [x["name"] for x in left.get("items", []) if x.get("name", "").startswith(project_id)]
+    assert results, "the performance run wrote no results to ModelPerformanceData"
+    assert not leftover, f"performance results left behind in ModelPerformanceData: {leftover}"
+
+
+# -----------------------------------------------------------------------
 # Coverage guards — fail if a registered tool/prompt has no integration test
 # -----------------------------------------------------------------------
 
@@ -2104,6 +2427,30 @@ TOOL_COVERAGE = {
     "update_glossary_term_type": "test_glossary_term_type_lifecycle",
     "delete_glossary_term_type": "test_glossary_term_type_lifecycle",
     "import_glossary_terms": "test_glossary_bulk_import",
+    # Tier 2 — folders and CAS table life cycle
+    "create_folder": "test_folder_and_castable_tools",
+    "save_castable": "test_folder_and_castable_tools",
+    "drop_castable": "test_folder_and_castable_tools",
+    # Tiers 6 and 11 — model life cycle
+    "get_model": "test_model_lifecycle_workflow",
+    "list_model_versions": "test_model_lifecycle_workflow",
+    "test_score_model": "test_model_lifecycle_workflow",
+    "score_table": "test_model_lifecycle_workflow",
+    "get_score_execution": "test_model_lifecycle_workflow",
+    "list_published_models": "test_model_lifecycle_workflow",
+    "list_model_repositories": "test_model_lifecycle_workflow",
+    "list_model_projects": "test_model_lifecycle_workflow",
+    "create_model_project": "test_model_lifecycle_workflow",
+    "set_project_champion": "test_model_lifecycle_workflow",
+    "describe_analytic_store": "test_model_lifecycle_workflow",
+    "register_model": "test_model_lifecycle_workflow",
+    "publish_model": "test_model_lifecycle_workflow",
+    "validate_published_model": "test_model_lifecycle_workflow",
+    "create_performance_definition": "test_model_lifecycle_workflow",
+    "run_performance_definition": "test_model_lifecycle_workflow",
+    "get_project_kpis": "test_model_lifecycle_workflow",
+    "set_kpi_alert_rule": "test_model_lifecycle_workflow",
+    "delete_kpi_alert_rule": "test_model_lifecycle_workflow",
 }
 
 

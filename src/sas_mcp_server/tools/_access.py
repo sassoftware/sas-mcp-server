@@ -92,6 +92,10 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "list_publishing_destinations",
         "list_mas_modules",
         "get_mas_module_step_signature",
+        "get_model",
+        "list_model_versions",
+        "get_score_execution",
+        "list_published_models",
         # Tier 7 — Decisioning
         "list_business_rulesets",
         "get_business_ruleset",
@@ -116,6 +120,10 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "get_glossary_term",
         "list_term_assets",
         "list_table_terms",
+        # Tier 11 — Model Lifecycle
+        "list_model_repositories",
+        "list_model_projects",
+        "get_project_kpis",
     }
 )
 
@@ -143,6 +151,9 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "upload_inline_data",
         "upload_file",
         "promote_table_to_memory",  # mutates CAS in-memory state
+        "create_folder",
+        "save_castable",  # writes a file into the caslib's data source
+        "drop_castable",  # removes the table from CAS memory
         # Tier 3
         "create_report",
         "apply_report_operations",
@@ -158,6 +169,10 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "publish_ml_champion_model",
         # Tier 6
         "score_data",  # invokes a MAS module; may persist output
+        # Runs a SAS session and a score job, writing (then removing) scratch
+        # tables and a score definition: server-side work.
+        "test_score_model",
+        "score_table",  # writes the scored table and leaves a score definition
         # Tier 7
         "create_business_ruleset",
         "update_business_ruleset",
@@ -204,6 +219,18 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "create_custom_function",
         "update_custom_function",
         "validate_custom_function",  # compiles DS2 in a SAS session, like validate_decision_expression
+        # Tier 11
+        "create_model_project",
+        "set_project_champion",  # also fills the project's target fields and variables
+        # Runs PROC ASTORE in a SAS session: no state change, but server-side work.
+        "describe_analytic_store",
+        "register_model",
+        "publish_model",
+        "validate_published_model",  # a score job against the published copy, like test_score_model
+        "create_performance_definition",
+        "run_performance_definition",  # scores and writes results to ModelPerformanceData
+        "set_kpi_alert_rule",
+        "delete_kpi_alert_rule",
     }
 )
 
@@ -253,6 +280,19 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "update_glossary_term_type",
         # update_existing=true overwrites a term already at that path.
         "import_glossary_terms",
+        # allow_unsaved=true drops a table that only exists in memory.
+        "drop_castable",
+        "save_castable",  # replace=true overwrites the file
+        "score_table",  # an existing output table of that name is replaced
+        # replace=true deletes the model of that name; it comes back with a new ID.
+        "register_model",
+        "publish_model",  # replace=true replaces the published model
+        "set_project_champion",  # replaces the project's current champion
+        # replace=true changes the project's one performance definition.
+        "create_performance_definition",
+        # Updates the rule for the same KPI, variable and direction in place.
+        "set_kpi_alert_rule",
+        "delete_kpi_alert_rule",
     }
 )
 
@@ -288,6 +328,17 @@ IDEMPOTENT_WRITE_TOOLS: frozenset[str] = frozenset(
         # creating a duplicate or failing on an absent one.
         "assign_glossary_term",
         "unassign_glossary_term",
+        # Each finds what an earlier call made and reports it instead of acting again.
+        "create_folder",
+        "create_model_project",
+        "save_castable",
+        "drop_castable",
+        "set_project_champion",
+        "create_performance_definition",  # returns the project's definition rather than a second one
+        # One rule per KPI, variable and direction: a repeat sets the same values again.
+        "set_kpi_alert_rule",
+        "delete_kpi_alert_rule",
+        "describe_analytic_store",  # like validate_custom_function: work, no state change
     }
 )
 
@@ -300,6 +351,8 @@ OPEN_WORLD_TOOLS: frozenset[str] = frozenset(
         "submit_batch_job",
         "upload_data",
         "upload_file",
+        # Git and container-registry destinations are outside Viya.
+        "publish_model",
     }
 )
 

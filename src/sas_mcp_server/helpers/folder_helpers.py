@@ -204,6 +204,84 @@ async def resolve_target_folder(client: httpx.AsyncClient, folder: str | None, w
         ) from None
 
 
+def _relative_without_default(path: str) -> str:
+    return (
+        f"{path!r} is a relative path, and relative paths are created under the deployment's "
+        "default folder (MCP_DEFAULT_FOLDER), which is not set. Give the full path, starting with "
+        "/ (such as /Public/Content/Risk) or with 'My Folder/', or ask the user where to create it."
+    )
+
+
+async def _deepest_existing(client: httpx.AsyncClient, names: list[str], floor: int) -> tuple[int, dict[str, Any]]:
+    """The longest prefix of *names*, at least *floor* long, that exists: (its length, the folder)."""
+    for depth in range(len(names), floor - 1, -1):
+        try:
+            return depth, await _find_by_path(client, names[:depth])
+        except FolderError:
+            continue
+    raise FolderError(
+        f"There is no folder {'/' + '/'.join(names[:floor])!r} to create {'/' + '/'.join(names)!r} in. "
+        "Folders at the top level, such as Public, are created by administrators."
+    )
+
+
+async def create_folder_path(client: httpx.AsyncClient, path: str) -> dict[str, Any]:
+    """Create the SAS Content folder *path*, with any missing levels, and report it.
+
+    ``/Public/Content/Risk`` and ``My Folder/Risk`` are created where they say;
+    a relative path such as ``Risk/2026`` under MCP_DEFAULT_FOLDER, and not at
+    all when that is unset. A folder that already exists is returned unchanged,
+    so the call can be repeated. A folder URI or ID names an existing folder.
+    """
+    value = path.strip()
+    ref = parse_folder_reference(value)
+    if ref.uri is not None:
+        return {**await resolve_folder(client, value), "status": "exists", "created": []}
+    if value.startswith("/"):
+        base: list[str] = []
+        segments = list(ref.segments)
+        floor = 1
+    elif ref.under_my_folder:
+        my_folder = await _get_folder(client, MY_FOLDER_URI, value)
+        base = [*await _path_names(client, my_folder["id"]), my_folder.get("name", "My Folder")]
+        segments = list(ref.segments)
+        floor = len(base)
+    else:
+        default = config.MCP_DEFAULT_FOLDER
+        if not default:
+            raise FolderError(_relative_without_default(value))
+        try:
+            anchor = await resolve_folder(client, default)
+        except FolderError as exc:
+            raise FolderError(
+                f"The default folder MCP_DEFAULT_FOLDER={default!r} cannot be used: {exc} "
+                "Give the full path instead, starting with / or 'My Folder/'."
+            ) from None
+        base = [name for name in anchor["path"].split("/") if name]
+        segments = list(ref.segments)
+        floor = len(base)
+    bad = [s for s in segments if s in (".", "..")]
+    if bad:
+        raise FolderError(f"{path!r} contains {bad[0]!r}. Give the folder names themselves.")
+    names = [*base, *segments]
+    depth, folder = await _deepest_existing(client, names, floor)
+    created: list[str] = []
+    for index in range(depth, len(names)):
+        resp = await client.post(
+            f"{config.VIYA_ENDPOINT}/folders/folders",
+            params={"parentFolderUri": FOLDER_URI_PREFIX + folder["id"]},
+            json={"name": names[index], "type": "folder"},
+            headers={"Content-Type": "application/vnd.sas.content.folder+json", **_JSON},
+        )
+        if resp.status_code == 409:  # created meanwhile by someone else: use it
+            folder = await _find_by_path(client, names[: index + 1])
+            continue
+        raise_for_viya_status(resp)
+        folder = resp.json()
+        created.append("/" + "/".join(names[: index + 1]))
+    return {**_info(folder, names), "status": "created" if created else "exists", "created": created}
+
+
 async def current_folder(client: httpx.AsyncClient, asset_uri: str) -> FolderInfo | None:
     """The folder *asset_uri* sits in, or None when it is in no folder."""
     resp = await client.get(
