@@ -24,6 +24,17 @@ ALLOW_RAW_BEARER = env_bool("ALLOW_RAW_BEARER", False)
 # unaffected. See sas_mcp_server.auth.PermissiveOAuthProxy.register_client.
 MCP_OAUTH_CLIENT_SECRETS = env_bool("MCP_OAUTH_CLIENT_SECRETS", False)
 AUTH_ENABLED = env_bool("VIYA_AUTH", True)
+# Posit Connect mode (HTTP only, default: false). Connect signs MCP clients in
+# itself (its own OAuth server, or a Connect API key), so the server's SAS
+# Logon OAuth proxy is switched off and never reached. Instead, each tool call
+# trades the per-request user session token Connect forwards for that user's
+# SAS Viya access token, through a Connect viewer OAuth integration whose
+# provider is SAS Logon. See sas_mcp_server.posit_connect and
+# deploy/POSIT-CONNECT.md.
+POSIT_CONNECT_OAUTH = env_bool("POSIT_CONNECT_OAUTH", False)
+# GUID of the SAS Logon integration, sent as the exchange's audience. Only
+# needed when the content has more than one OAuth integration attached.
+POSIT_CONNECT_INTEGRATION_GUID = os.getenv("POSIT_CONNECT_INTEGRATION_GUID", "").strip() or None
 
 # --- Opt-in collection mode (telemetry) -------------------------------------
 # Master switch. Default OFF; must be explicitly true/1/yes/on. When false,
@@ -220,6 +231,17 @@ if not VIYA_ENDPOINT:
         "VIYA_ENDPOINT is not set. Please set it in the environment variables."
     )
 
+if POSIT_CONNECT_OAUTH and not AUTH_ENABLED:
+    raise ConfigError(
+        "POSIT_CONNECT_OAUTH=true needs VIYA_AUTH left on: Connect mode sends each "
+        "user's own SAS Viya token, which VIYA_AUTH=false would drop."
+    )
+if POSIT_CONNECT_OAUTH and ALLOW_RAW_BEARER:
+    raise ConfigError(
+        "ALLOW_RAW_BEARER cannot be combined with POSIT_CONNECT_OAUTH: on Posit Connect "
+        "the Authorization header carries the Connect credential, not a Viya token."
+    )
+
 AUTHORIZATION_ENDPOINT = f"{VIYA_ENDPOINT}/SASLogon/oauth/authorize"
 TOKEN_ENDPOINT = f"{VIYA_ENDPOINT}/SASLogon/oauth/token"
 JWKS_URI = f"{VIYA_ENDPOINT}/SASLogon/token_keys"
@@ -227,7 +249,10 @@ JWKS_URI = f"{VIYA_ENDPOINT}/SASLogon/token_keys"
 
 token_verifier = JWTVerifier(jwks_uri=JWKS_URI, audience=[])
 
-viya_auth = PermissiveOAuthProxy(
+# The server's own SAS Logon sign-in. Not built in Posit Connect mode: Connect
+# handles sign-in, and building the proxy creates its client-storage directory
+# under FastMCP's home at import, which a Connect sandbox need not allow.
+viya_auth: PermissiveOAuthProxy | None = None if POSIT_CONNECT_OAUTH else PermissiveOAuthProxy(
     upstream_authorization_endpoint=AUTHORIZATION_ENDPOINT,
     upstream_token_endpoint=TOKEN_ENDPOINT,
     upstream_client_id=CLIENT_ID,

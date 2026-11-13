@@ -142,6 +142,8 @@ class ServerFacts:
     read_only: bool
     tiers: tuple[TierGroup, ...]
     prompts: tuple[PromptEntry, ...]
+    # Hosted on Posit Connect (POSIT_CONNECT_OAUTH): Connect signs users in.
+    posit_connect: bool = False
 
     @property
     def tool_count(self) -> int:
@@ -221,6 +223,7 @@ async def collect_facts(
     auth_enabled: bool,
     allow_raw_bearer: bool,
     read_only: bool,
+    posit_connect: bool = False,
     enabled_tiers: Iterable[int] | None = None,
     public_name: Callable[[str], str] | None = None,
     version: str | None = None,
@@ -276,6 +279,7 @@ async def collect_facts(
         enabled_tiers=enabled,
         read_only=read_only,
         tiers=tuple(groups),
+        posit_connect=posit_connect,
         prompts=tuple(
             PromptEntry(name=p.name, summary=summarize(p.description)) for p in sorted(prompts, key=lambda p: p.name)
         ),
@@ -547,14 +551,22 @@ def render_page(facts: ServerFacts, *, nonce: str) -> str:
         if facts.read_only
         else '<span class="badge ok">Read &amp; write tools</span>'
     )
-    auth_badge = (
-        '<span class="badge">Sign-in: SAS Viya (OAuth 2.0 + PKCE)</span>'
-        if facts.auth_enabled
-        else '<span class="badge warn">Authentication disabled</span>'
-    )
+    if facts.posit_connect:
+        auth_badge = '<span class="badge">Sign-in: Posit Connect + SAS Viya</span>'
+    elif facts.auth_enabled:
+        auth_badge = '<span class="badge">Sign-in: SAS Viya (OAuth 2.0 + PKCE)</span>'
+    else:
+        auth_badge = '<span class="badge warn">Authentication disabled</span>'
     tools_badge = f'<span class="badge">{facts.tool_count} tools · {len(facts.prompts)} prompts</span>'
 
-    if facts.auth_enabled:
+    if facts.posit_connect:
+        auth_para = (
+            "<p>This server is hosted on Posit Connect. Your MCP client signs in to Connect "
+            "(or sends a Connect API key), and Connect asks you once to authorize SAS Viya "
+            "through SAS Logon. Every action then runs under <em>your</em> Viya identity and "
+            "permissions; this server never sees your password.</p>"
+        )
+    elif facts.auth_enabled:
         auth_para = (
             "<p>Your MCP client will open a browser window and ask you to sign in to SAS Viya "
             "the first time it connects. The sign-in happens on SAS Logon, not here — this "

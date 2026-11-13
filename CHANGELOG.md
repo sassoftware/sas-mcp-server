@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Posit Connect deployment** (`POSIT_CONNECT_OAUTH`, `deploy/posit-connect/deploy.sh`, `deploy/POSIT-CONNECT.md`). On Connect the content sits behind Connect's own sign-in: Connect is the OAuth server MCP clients talk to, or it takes a Connect API key in `Authorization: Key …`. So the server's SAS Logon proxy can never be reached there. With `POSIT_CONNECT_OAUTH=true` the server builds no OAuth proxy. Instead, each tool call exchanges the `Posit-Connect-User-Session-Token` that Connect forwards for the caller's SAS Viya token, through a Connect viewer OAuth integration whose provider is SAS Logon. Connect stores and refreshes the user's grant, and Viya permissions apply per user as before. `POSIT_CONNECT_INTEGRATION_GUID` picks the integration when content has several. `POSIT_CONNECT_API_URL` overrides the Connect API address (`CONNECT_SERVER`) for off-host execution, where Connect's `localhost` address points at the content's own pod. `CONNECT_PYTHON_VERSION` picks the Python version the deploy script requests from Connect. The mode refuses to start with `ALLOW_RAW_BEARER` or `VIYA_AUTH=false`. The deploy script bundles the package with a `requirements.txt` pinned from `uv.lock` and runs `rsconnect deploy fastapi`. The guide covers the SAS Logon client and CSP change, the Connect integration, content settings (one process, timeouts) and client setup. `server_version()` falls back to `SAS_MCP_VERSION` for an uninstalled source bundle.
+
 ## [1.20.0] - 2026-11-12
 
 ### Added
