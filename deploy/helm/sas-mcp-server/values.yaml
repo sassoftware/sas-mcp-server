@@ -58,6 +58,12 @@ server:
   # means each person's own My Folder. Empty = no default: the tools ask the
   # user for a folder, since these assets are always stored in one.
   defaultFolder: ""
+  # Publishing destination for publish_model, publish_ml_champion_model and
+  # publish_decision_flow when a call names none. Empty = maslocal.
+  defaultPublishDestination: ""
+  # SAS Model Manager repository for new projects and registered models when
+  # a call names none. Empty = Public.
+  defaultModelRepository: ""
   # Issue and enforce a client secret for MCP clients that register asking for
   # one. Required for a Microsoft 365 Copilot declarative agent, whose
   # registration service refuses a server that only knows public clients.

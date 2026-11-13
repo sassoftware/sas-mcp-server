@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 from fastmcp import Context, FastMCP
 
+from .. import config
 from ..config import VIYA_ENDPOINT
 from ..helpers import auto_ml_helpers
 from ..viya_client import get_json, get_paged_items, post_json, raise_for_viya_status, return_items
@@ -130,15 +131,21 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             return await auto_ml_helpers.ml_register_publish(props, client)
 
     @mcp.tool()
-    async def publish_ml_champion_model(project_id: str, destination_name: str, ctx: Context) -> dict[str, Any]:
-        """Publish the champion model from an AutoML pipeline automation project to the Model Repository.
+    async def publish_ml_champion_model(
+        project_id: str, ctx: Context, destination_name: str | None = None
+    ) -> dict[str, Any]:
+        """Publish the champion model from an AutoML pipeline automation project to a destination.
 
         Args:
             project_id: ID of the ML pipeline automation project.
-            destination_name: Name of the destination to publish to.
+            destination_name: Name of the destination to publish to (see
+                ``list_publishing_destinations``). Default: the deployment's
+                ``MCP_DEFAULT_PUBLISH_DESTINATION``, ``maslocal`` unless an
+                administrator changed it.
         """
+        destination = destination_name or config.MCP_DEFAULT_PUBLISH_DESTINATION
         async with viya_session("publish_ml_champion_model", ctx) as client:
-            props = auto_ml_helpers.MLPublishProps(project_id=project_id, destination_name=destination_name)
+            props = auto_ml_helpers.MLPublishProps(project_id=project_id, destination_name=destination)
             return await auto_ml_helpers.ml_register_publish(props, client)
 
     @mcp.tool()
