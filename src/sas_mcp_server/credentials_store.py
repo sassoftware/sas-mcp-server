@@ -64,7 +64,7 @@ def load_blocks(path: Path) -> dict[str, Any]:
     write would erase every login in it.
     """
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
     data = json.loads(text)
@@ -123,7 +123,7 @@ def _write_via_temp(path: Path, text: str) -> None:
     # mkstemp creates the file with mode 0600, so the tokens are never readable by others.
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
         _replace(tmp, path)
     except BaseException:
@@ -148,12 +148,12 @@ def _write_atomic(path: Path, data: dict[str, Any]) -> None:
         if not (isinstance(exc, PermissionError) or exc.errno in _RENAME_UNAVAILABLE):
             raise
         logger.debug("Could not replace %s (%s); writing it in place", path, exc)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         with contextlib.suppress(OSError):
             os.chmod(path, 0o600)
 
 
-def update_block(path: Path, key: str, block: dict[str, Any], harden: bool = True) -> None:
+def update_block(path: Path, key: str, block: dict[str, Any], *, harden: bool = True) -> None:
     """Set ``key`` to *block* in the credentials file, keeping every other key.
 
     *harden* restricts the file's Windows ACL to the current user. Pass ``False`` for a

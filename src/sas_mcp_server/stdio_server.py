@@ -265,6 +265,7 @@ def _write_credentials(
     refresh_token: str,
     expires_in: int,
     key: str = "Default",
+    *,
     endpoint: str | None = None,
 ) -> None:
     """Persist a refreshed token set in the same shape ``sas-mcp-login`` writes.
@@ -288,7 +289,7 @@ def _write_credentials(
 
 
 def _refresh_cached_token(
-    path: Path, client_id: str, key: str = "Default", endpoint: str | None = None, data: dict | None = None
+    path: Path, client_id: str, key: str = "Default", *, endpoint: str | None = None, data: dict | None = None
 ) -> str | None:
     """Refresh the token in block *key* of *path* and return the new access token.
 
@@ -308,7 +309,7 @@ def _refresh_cached_token(
     # SAS Logon may or may not rotate the refresh token; keep the old one if not.
     new_refresh = tokens.get("refresh_token") or refresh_token
     _write_credentials(
-        path, tokens["access_token"], new_refresh, int(tokens.get("expires_in", 0)), key, endpoint
+        path, tokens["access_token"], new_refresh, int(tokens.get("expires_in", 0)), key, endpoint=endpoint
     )
     logger.info("Refreshed access token and updated cache at %s", path)
     return tokens["access_token"]
@@ -382,7 +383,7 @@ def _get_viya_token() -> str:
             return token
         # Present-but-expired (or absent access token): try a refresh before
         # giving up on this source and moving to the next.
-        token = _refresh_cached_token(path, client_id, key, bind, data)
+        token = _refresh_cached_token(path, client_id, key, endpoint=bind, data=data)
         if token:
             return token
     logger.warning(

@@ -167,12 +167,11 @@ def _clear_state() -> None:
         STATE_PATH.unlink()
 
 
-def _write_cache(tokens: dict, endpoint: str | None = None) -> Path:
-    """Store *tokens* in the credentials file.
+def _write_cache(tokens: dict, endpoint: str) -> Path:
+    """Store *tokens* in the credentials file, keyed by *endpoint*.
 
-    With an *endpoint* the block is keyed by that endpoint, so logins to several
-    deployments sit side by side; without one it is written as the legacy
-    ``Default`` block. Other blocks in the file are always kept.
+    Logins to several deployments sit side by side; other blocks in the file,
+    including the legacy ``Default`` one, are always kept.
     """
     expires_in = int(tokens.get("expires_in", 0))
     expiry = (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
@@ -181,7 +180,7 @@ def _write_cache(tokens: dict, endpoint: str | None = None) -> Path:
         "refresh-token": tokens.get("refresh_token", ""),
         "expiry": expiry,
     }
-    update_block(CACHE_PATH, normalize_endpoint(endpoint) if endpoint else "Default", block)
+    update_block(CACHE_PATH, normalize_endpoint(endpoint), block)
     return CACHE_PATH
 
 
@@ -191,8 +190,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--endpoint",
-        default=os.getenv("VIYA_ENDPOINT", ""),
-        help="SAS Viya endpoint (default: VIYA_ENDPOINT from environment)",
+        default=None,
+        help=(
+            "SAS Viya endpoint (default: VIYA_ENDPOINT from environment; with --code, "
+            "the endpoint of the pending login)"
+        ),
     )
     parser.add_argument(
         "--client-id",
@@ -237,10 +239,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.endpoint:
-        parser.error(
-            "VIYA_ENDPOINT is not set in the environment and --endpoint was not given"
-        )
+    if args.logout and args.code:
+        parser.error("--logout cannot be combined with --code")
+    # With --code the pending login already records its endpoint, so the environment
+    # (which may point at a different deployment) is not consulted.
+    if not args.endpoint and not args.code:
+        args.endpoint = os.getenv("VIYA_ENDPOINT", "")
+        if not args.endpoint:
+            parser.error(
+                "VIYA_ENDPOINT is not set in the environment and --endpoint was not given"
+            )
 
     if args.logout:
         key = normalize_endpoint(args.endpoint)
@@ -273,7 +281,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        if normalize_endpoint(state["endpoint"]) != normalize_endpoint(args.endpoint):
+        if args.endpoint and normalize_endpoint(state["endpoint"]) != normalize_endpoint(args.endpoint):
             print(
                 f"The pending login in {STATE_PATH} is for {state['endpoint']}, not "
                 f"{args.endpoint}. Run `sas-mcp-login --endpoint {args.endpoint}` again "

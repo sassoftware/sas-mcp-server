@@ -302,3 +302,10 @@ def test_corrupt_symlinked_file_moves_the_target_not_the_link(tmp_path):
     assert link.is_symlink()
     assert (managed / "credentials.json.corrupt").read_text() == "{nope"
     assert json.loads(target.read_text()) == {"https://a": {"access-token": "A"}}
+
+
+def test_utf8_blocks_survive_a_rewrite(tmp_path):
+    p = tmp_path / "credentials.json"
+    p.write_bytes('{"cli": {"user": "Jörg"}}'.encode())
+    store.update_block(p, "https://a", {"access-token": "A"}, harden=False)
+    assert json.loads(p.read_text(encoding="utf-8"))["cli"] == {"user": "Jörg"}
