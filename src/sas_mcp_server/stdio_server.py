@@ -32,7 +32,6 @@ OAuth 2.1 deprecates it, and it does not work for confidential OAuth clients
 """
 
 import contextlib
-import json
 import os
 import sys
 import time
@@ -47,6 +46,7 @@ from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
 
 from .config import AUTH_ENABLED, CLIENT_ID, SERVER_NAME, SSL_VERIFY, VIYA_ENDPOINT
+from .credentials_store import load_blocks, normalize_endpoint, update_block
 from .exceptions import AuthenticationError
 from .helpers.telemetry_helpers import server_version
 from .http_debug import install_http_debug
@@ -86,15 +86,36 @@ def _helper_credentials_path() -> Path:
     return Path.home() / ".sas-mcp-server" / "credentials.json"
 
 
-def _load_credentials(path: Path) -> dict | None:
-    """Return the ``Default`` credential block from *path*, or ``None``."""
-    if not path.exists():
-        return None
+def _read_credentials_file(path: Path) -> dict:
+    """Parse the credentials file *path* once.
+
+    Returns ``{}`` if it is missing, and (with a warning) if it is unreadable, in another
+    encoding or not a JSON object, so a damaged file falls through to the next source.
+    """
     try:
-        return json.loads(path.read_text())["Default"]
-    except (KeyError, json.JSONDecodeError, OSError) as exc:
+        return load_blocks(path)
+    except (OSError, ValueError) as exc:
         logger.warning("Could not read credentials at %s: %s", path, exc)
-        return None
+        return {}
+
+
+def _load_credentials(path: Path, key: str = "Default", data: dict | None = None) -> dict | None:
+    """Return the *key* credential block from *path*, or ``None``.
+
+    *key* is ``Default`` or a normalised endpoint URL. A missing endpoint block
+    is normal (the user has not logged in to that deployment), so it is not
+    logged as a warning. Pass *data* (from :func:`_read_credentials_file`) to
+    avoid reading the file again.
+    """
+    if data is None:
+        data = _read_credentials_file(path)
+    block = data.get(key)
+    if isinstance(block, dict):
+        return block
+    if block is not None or (key == "Default" and data):
+        log = logger.warning if key == "Default" else logger.debug
+        log("Could not read credentials at %s: no usable %r block", path, key)
+    return None
 
 
 def _token_expired(creds: dict, skew_seconds: int = TOKEN_EXPIRY_SKEW) -> bool:
@@ -115,17 +136,17 @@ def _token_expired(creds: dict, skew_seconds: int = TOKEN_EXPIRY_SKEW) -> bool:
     return datetime.now(UTC) >= expiry - timedelta(seconds=skew_seconds)
 
 
-def _read_cached_token(path: Path) -> str | None:
-    """Return a *non-expired* ``Default.access-token`` from *path*, or ``None``.
+def _read_cached_token(path: Path, key: str = "Default", data: dict | None = None) -> str | None:
+    """Return a *non-expired* ``access-token`` of block *key* in *path*, or ``None``.
 
     An expired token returns ``None`` so the caller falls through to a refresh
     or the next credential source instead of serving a token Viya will 401.
     """
-    creds = _load_credentials(path)
+    creds = _load_credentials(path, key, data)
     if creds is None:
         return None
     token = creds.get("access-token")
-    if not token:
+    if not token or not isinstance(token, str):
         logger.warning("No access-token in credentials at %s", path)
         return None
     if _token_expired(creds):
@@ -153,8 +174,8 @@ def _native_device_code_token() -> str:
             "Viya rejected the device-authorization request (CSRF protection "
             "on /SASLogon/oauth/device_authorization). Run either "
             "`sas-viya auth loginCode` (writes ~/.sas/credentials.json) or "
-            "`uv run sas-mcp-login` (writes ~/.sas-mcp-server/credentials.json) "
-            "and re-launch this server."
+            f"`uv run sas-mcp-login --endpoint {VIYA_ENDPOINT}` "
+            "(writes ~/.sas-mcp-server/credentials.json) and re-launch this server."
         )
     raise_for_viya_status(init)
     flow = init.json()
@@ -239,36 +260,47 @@ def _refresh_access_token(refresh_token: str, client_id: str) -> dict | None:
 
 
 def _write_credentials(
-    path: Path, access_token: str, refresh_token: str, expires_in: int
+    path: Path,
+    access_token: str,
+    refresh_token: str,
+    expires_in: int,
+    key: str = "Default",
+    endpoint: str | None = None,
 ) -> None:
-    """Persist a refreshed token set in the same shape ``sas-mcp-login`` writes."""
+    """Persist a refreshed token set in the same shape ``sas-mcp-login`` writes.
+
+    Only block *key* is replaced; the other blocks in the file are kept. When
+    *endpoint* is given it is recorded in the block, binding it to that deployment.
+    The Windows ACL is restricted only on our own cache, never on the SAS Viya CLI's.
+    """
     expiry = (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
-    payload = {
-        "Default": {
-            "access-token": access_token,
-            "refresh-token": refresh_token,
-            "expiry": expiry,
-        }
+    block = {
+        "access-token": access_token,
+        "refresh-token": refresh_token,
+        "expiry": expiry,
     }
+    if endpoint:
+        block["endpoint"] = endpoint
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2))
-        with contextlib.suppress(OSError):
-            os.chmod(path, 0o600)
+        update_block(path, key, block, harden=path == _helper_credentials_path())
     except OSError as exc:
         logger.warning("Could not write refreshed credentials to %s: %s", path, exc)
 
 
-def _refresh_cached_token(path: Path, client_id: str) -> str | None:
-    """Refresh the token cached at *path* and return the new access token.
+def _refresh_cached_token(
+    path: Path, client_id: str, key: str = "Default", endpoint: str | None = None, data: dict | None = None
+) -> str | None:
+    """Refresh the token in block *key* of *path* and return the new access token.
 
-    Returns ``None`` if there is no refresh token or the exchange fails.
+    Returns ``None`` if there is no refresh token or the exchange fails. A
+    refresh that succeeds against this server's token endpoint proves the block
+    belongs to this deployment, so *endpoint*, when given, is recorded in it.
     """
-    creds = _load_credentials(path)
+    creds = _load_credentials(path, key, data)
     if creds is None:
         return None
     refresh_token = creds.get("refresh-token")
-    if not refresh_token:
+    if not refresh_token or not isinstance(refresh_token, str):
         return None
     tokens = _refresh_access_token(refresh_token, client_id)
     if not tokens or not tokens.get("access_token"):
@@ -276,30 +308,87 @@ def _refresh_cached_token(path: Path, client_id: str) -> str | None:
     # SAS Logon may or may not rotate the refresh token; keep the old one if not.
     new_refresh = tokens.get("refresh_token") or refresh_token
     _write_credentials(
-        path, tokens["access_token"], new_refresh, int(tokens.get("expires_in", 0))
+        path, tokens["access_token"], new_refresh, int(tokens.get("expires_in", 0)), key, endpoint
     )
     logger.info("Refreshed access token and updated cache at %s", path)
     return tokens["access_token"]
 
 
+_warned: set[str] = set()
+
+
+def _warn_once(msg: str, *args: str) -> None:
+    """Log a warning once per process; tokens are resolved on every tool call."""
+    text = msg % args
+    if text not in _warned:
+        _warned.add(text)
+        logger.warning(text)
+
+
+def _legacy_default_usable(data: dict, path: Path, endpoint: str) -> bool:
+    """Whether the legacy ``Default`` block in *data* (the parsed *path*) may be used for *endpoint*.
+
+    Never when the file has a block for *endpoint* itself: the user has logged in
+    here, so another deployment's legacy token must not stand in for a login that
+    expired or was revoked. A block recorded as belonging to another deployment
+    (or with an unreadable record) is never sent here either. An unrecorded one is
+    used as before, with a warning that it is not bound.
+    """
+    if isinstance(data.get(endpoint), dict):
+        return False
+    creds = data.get("Default")
+    if not isinstance(creds, dict):
+        return False
+    bound = creds.get("endpoint")
+    if bound not in (None, "") and (not isinstance(bound, str) or normalize_endpoint(bound) != endpoint):
+        _warn_once(
+            "Ignoring the legacy 'Default' token in %s: it was issued for %s, not %s. "
+            "Run `sas-mcp-login --endpoint %s` to store a login for this endpoint.",
+            str(path), str(bound), endpoint, endpoint,
+        )
+        return False
+    if bound in (None, ""):
+        _warn_once(
+            "Using the legacy 'Default' token in %s, which is not bound to an endpoint. "
+            "Run `sas-mcp-login --endpoint %s` to store a login for this endpoint.",
+            str(path), endpoint,
+        )
+    return True
+
+
 def _get_viya_token() -> str:
     if not AUTH_ENABLED:
         return ""
-    for path, client_id in (
-        (_sas_cli_credentials_path(), SAS_CLI_CLIENT_ID),
-        (_helper_credentials_path(), HELPER_CLIENT_ID),
+    endpoint = normalize_endpoint(VIYA_ENDPOINT)
+    helper = _helper_credentials_path()
+    # (file, OAuth client, block, whether it is the helper's legacy Default block). The helper
+    # file is tried for this endpoint's own block first, then for the legacy Default block.
+    files: dict[Path, dict] = {}  # each file is parsed once per call, not once per source
+    for path, client_id, key, legacy_default in (
+        (_sas_cli_credentials_path(), SAS_CLI_CLIENT_ID, "Default", False),
+        (helper, HELPER_CLIENT_ID, endpoint, False),
+        (helper, HELPER_CLIENT_ID, "Default", True),
     ):
-        token = _read_cached_token(path)
+        if path not in files:
+            files[path] = _read_credentials_file(path)
+        data = files[path]
+        if legacy_default and not _legacy_default_usable(data, path, endpoint):
+            continue
+        # A legacy block that refreshes against this server is proven to belong to this endpoint,
+        # so record that in it; every other block is either keyed by its endpoint or not ours.
+        bind = endpoint if legacy_default else None
+        token = _read_cached_token(path, key, data)
         if token:
             return token
         # Present-but-expired (or absent access token): try a refresh before
         # giving up on this source and moving to the next.
-        token = _refresh_cached_token(path, client_id)
+        token = _refresh_cached_token(path, client_id, key, bind, data)
         if token:
             return token
-    logger.info(
-        "No usable cached credentials at ~/.sas or ~/.sas-mcp-server; "
-        "attempting native device-code flow"
+    logger.warning(
+        "No usable cached credentials for %s; attempting native device-code flow. "
+        "Run `sas-mcp-login --endpoint %s` to store a login for it.",
+        endpoint, endpoint,
     )
     return _native_device_code_token()
 
