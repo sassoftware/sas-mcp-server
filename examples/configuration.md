@@ -358,6 +358,41 @@ The stdio server reads whichever cache file exists, in this order:
 
 When the token expires, re-run the same command you used originally.
 
+#### Several SAS Viya deployments (stdio)
+
+Run one server entry per deployment, each with its own `VIYA_ENDPOINT` and a distinct `MCP_SERVER_NAME`, and log in to each one:
+
+```json
+{
+    "mcpServers": {
+        "sas-viya-dev": {
+            "command": "uv",
+            "args": ["run", "--no-sync", "app-stdio"],
+            "cwd": "/path/to/sas-mcp-server",
+            "env": { "VIYA_ENDPOINT": "https://viya-dev.example.com", "MCP_SERVER_NAME": "SAS Viya (dev)" }
+        },
+        "sas-viya-prod": {
+            "command": "uv",
+            "args": ["run", "--no-sync", "app-stdio"],
+            "cwd": "/path/to/sas-mcp-server",
+            "env": { "VIYA_ENDPOINT": "https://viya-prod.example.com", "MCP_SERVER_NAME": "SAS Viya (prod)" }
+        }
+    }
+}
+```
+
+```sh
+uv run sas-mcp-login --endpoint https://viya-dev.example.com
+uv run sas-mcp-login --endpoint https://viya-prod.example.com
+```
+
+`sas-mcp-login` adds a block for the endpoint to `~/.sas-mcp-server/credentials.json` and keeps the others; the key is the endpoint URL (lower-cased, without a default port or trailing slash). A server reads the block for its own `VIYA_ENDPOINT`, and a login for it that has expired or been revoked is never replaced by another endpoint's token.
+
+- **Existing setups keep working.** A `Default` block written by an earlier version is still used when no block exists for the server's endpoint, and the server logs a warning that it is not bound to an endpoint. Once it has refreshed that token, it records the endpoint in the block, and a server for any other endpoint then ignores it. Run `sas-mcp-login --endpoint <url>` to store a login for an endpoint.
+- **Remove a login:** `uv run sas-mcp-login --logout --endpoint https://viya-dev.example.com` removes that endpoint's block, and a `Default` block recorded for it. A `Default` block that is not bound to an endpoint is kept and the command says so; delete the `Default` key from the file to remove it.
+- The `sas-viya` CLI cache (`~/.sas/credentials.json`) holds no endpoint, so it is still read first and sent to whichever endpoint the server is configured for. With several deployments, use `sas-mcp-login` or point each entry at its own cache with `SAS_CLI_CONFIG`.
+- The file holds access and refresh tokens in plain text. It is created readable only by your user (on Windows by restricting its ACL, best effort). Keep it out of backups and shared folders.
+
 ---
 
 ### Further MCP setup options

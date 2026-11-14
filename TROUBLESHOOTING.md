@@ -135,8 +135,10 @@ Run one of the bootstrap commands:
 
 ```sh
 sas-viya auth loginCode      # if you have the SAS Viya CLI
-uv run sas-mcp-login          # zero-prereq helper using the built-in vscode client
+uv run sas-mcp-login --endpoint <VIYA_ENDPOINT>   # zero-prereq helper using the built-in vscode client
 ```
+
+The server logs `No usable cached credentials for <endpoint>` (or `Using the legacy 'Default' token ...`) with the exact command to run. Tokens from `sas-mcp-login` are stored per endpoint, so log in once for each deployment you use.
 
 If your `sas-viya` profile lives outside `$HOME`, set `SAS_CLI_CONFIG` to its parent directory in `.env`. See [`examples/configuration.md`](examples/configuration.md#authentication-modes--at-a-glance) for the full auth chain.
 

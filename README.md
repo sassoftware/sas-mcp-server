@@ -90,6 +90,8 @@ uv run sas-mcp-login
 
 Both flows write an access token to a local cache (`~/.sas/credentials.json` and `~/.sas-mcp-server/credentials.json` respectively); the stdio server reads whichever it finds. When the token expires, re-run the same command.
 
+To use several SAS Viya deployments, configure one stdio server entry per deployment, each with its own `VIYA_ENDPOINT`, and log in to each (`uv run sas-mcp-login --endpoint https://your-viya-server.com`). `sas-mcp-login` stores each token in `~/.sas-mcp-server/credentials.json` under the endpoint it was issued for, so the logins do not overwrite each other, and a server reads only the login stored for its own endpoint. Tokens stored by earlier versions (the `Default` block) and the `sas-viya` CLI cache carry no endpoint and are used as before. See [examples/configuration.md](examples/configuration.md#several-sas-viya-deployments-stdio).
+
 Then configure your MCP client to launch the server directly (see below).
 
 **Option C: Docker / Podman** (containerized deployment)
