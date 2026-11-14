@@ -16,7 +16,8 @@ page. The user pastes the code back into the terminal; the helper
 exchanges it for an access token and writes the result to
 ``~/.sas-mcp-server/credentials.json`` in the same shape as
 ``~/.sas/credentials.json`` so the stdio server picks it up
-automatically.
+automatically. The token is stored under the endpoint it was issued for, so
+logging in to several deployments keeps one token for each.
 
 Usage:
 
@@ -29,6 +30,9 @@ Usage:
       TTY). The first invocation (no --code) persists PKCE state to
       ``~/.sas-mcp-server/login-state.json`` and prints instructions; the
       second invocation completes the exchange.
+
+  uv run sas-mcp-login --logout --endpoint <URL>
+      Removes the stored login for that endpoint; other endpoints are kept.
 """
 
 import argparse
@@ -48,6 +52,7 @@ from urllib.parse import urlencode
 import httpx
 from dotenv import load_dotenv
 
+from .credentials_store import normalize_endpoint, remove_login, update_block
 from .env import env_bool
 
 load_dotenv()
@@ -162,20 +167,20 @@ def _clear_state() -> None:
         STATE_PATH.unlink()
 
 
-def _write_cache(tokens: dict) -> Path:
-    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _write_cache(tokens: dict, endpoint: str) -> Path:
+    """Store *tokens* in the credentials file, keyed by *endpoint*.
+
+    Logins to several deployments sit side by side; other blocks in the file,
+    including the legacy ``Default`` one, are always kept.
+    """
     expires_in = int(tokens.get("expires_in", 0))
     expiry = (datetime.now(UTC) + timedelta(seconds=expires_in)).isoformat()
-    payload = {
-        "Default": {
-            "access-token": tokens["access_token"],
-            "refresh-token": tokens.get("refresh_token", ""),
-            "expiry": expiry,
-        }
+    block = {
+        "access-token": tokens["access_token"],
+        "refresh-token": tokens.get("refresh_token", ""),
+        "expiry": expiry,
     }
-    CACHE_PATH.write_text(json.dumps(payload, indent=2))
-    with contextlib.suppress(OSError):
-        os.chmod(CACHE_PATH, 0o600)
+    update_block(CACHE_PATH, normalize_endpoint(endpoint), block)
     return CACHE_PATH
 
 
@@ -185,8 +190,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--endpoint",
-        default=os.getenv("VIYA_ENDPOINT", ""),
-        help="SAS Viya endpoint (default: VIYA_ENDPOINT from environment)",
+        default=None,
+        help=(
+            "SAS Viya endpoint (default: VIYA_ENDPOINT from environment; with --code, "
+            "the endpoint of the pending login)"
+        ),
     )
     parser.add_argument(
         "--client-id",
@@ -224,12 +232,42 @@ def main() -> int:
         action="store_true",
         help="Skip SSL certificate verification",
     )
+    parser.add_argument(
+        "--logout",
+        action="store_true",
+        help="Remove the stored login for --endpoint from the credentials file and exit",
+    )
     args = parser.parse_args()
 
-    if not args.endpoint:
-        parser.error(
-            "VIYA_ENDPOINT is not set in the environment and --endpoint was not given"
-        )
+    if args.logout and args.code:
+        parser.error("--logout cannot be combined with --code")
+    # With --code the pending login already records its endpoint, so the environment
+    # (which may point at a different deployment) is not consulted.
+    if not args.endpoint and not args.code:
+        args.endpoint = os.getenv("VIYA_ENDPOINT", "")
+        if not args.endpoint:
+            parser.error(
+                "VIYA_ENDPOINT is not set in the environment and --endpoint was not given"
+            )
+
+    if args.logout:
+        key = normalize_endpoint(args.endpoint)
+        try:
+            removed, unbound_default = remove_login(CACHE_PATH, args.endpoint)
+        except (OSError, ValueError) as exc:
+            print(f"Could not update {CACHE_PATH}: {exc}", file=sys.stderr)
+            return 1
+        if removed:
+            print(f"Removed the stored login for {key} from {CACHE_PATH} (blocks: {', '.join(removed)})")
+        else:
+            print(f"No stored login for {key} in {CACHE_PATH}")
+        if unbound_default:
+            print(
+                "A legacy 'Default' login that is not bound to an endpoint is still in the file, and "
+                "servers without a login of their own keep using it. Delete the \"Default\" key from "
+                "the file to remove it."
+            )
+        return 0
 
     verify_ssl = False if args.insecure else env_bool("SSL_VERIFY", True)
 
@@ -240,6 +278,14 @@ def main() -> int:
             print(
                 f"No saved login state at {STATE_PATH}. Run `sas-mcp-login` "
                 "first to get the authorization URL, then re-run with --code.",
+                file=sys.stderr,
+            )
+            return 1
+        if args.endpoint and normalize_endpoint(state["endpoint"]) != normalize_endpoint(args.endpoint):
+            print(
+                f"The pending login in {STATE_PATH} is for {state['endpoint']}, not "
+                f"{args.endpoint}. Run `sas-mcp-login --endpoint {args.endpoint}` again "
+                "to start a login for it.",
                 file=sys.stderr,
             )
             return 1
@@ -257,9 +303,13 @@ def main() -> int:
             if exc.response is not None:
                 print(f"Response body: {exc.response.text[:500]}", file=sys.stderr)
             return 1
-        path = _write_cache(tokens)
+        try:
+            path = _write_cache(tokens, state["endpoint"])
+        except OSError as exc:
+            print(f"Could not store the token in {CACHE_PATH}: {exc}", file=sys.stderr)
+            return 1
         _clear_state()
-        print(f"Token cached at: {path}")
+        print(f"Token cached at: {path} (for {normalize_endpoint(state['endpoint'])})")
         print(
             "Stdio mode (`uv run app-stdio` or the container's `app-stdio` "
             "command) will read this file automatically. Re-run "
@@ -339,10 +389,14 @@ def main() -> int:
             print(f"Response body: {exc.response.text[:500]}", file=sys.stderr)
         return 1
 
-    path = _write_cache(tokens)
+    try:
+        path = _write_cache(tokens, args.endpoint)
+    except OSError as exc:
+        print(f"Could not store the token in {CACHE_PATH}: {exc}", file=sys.stderr)
+        return 1
     _clear_state()
     print()
-    print(f"Token cached at: {path}")
+    print(f"Token cached at: {path} (for {normalize_endpoint(args.endpoint)})")
     print(
         "Stdio mode (`uv run app-stdio` or the container's `app-stdio` command) "
         "will read this file automatically. Re-run `sas-mcp-login` when the "

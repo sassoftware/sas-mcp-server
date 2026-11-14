@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Several SAS Viya deployments from one machine in stdio mode.** `sas-mcp-login` now stores each token in `~/.sas-mcp-server/credentials.json` under the endpoint it was issued for, next to the existing `Default` block, so logging in to a second deployment no longer overwrites the first. Each stdio server reads the block for its own `VIYA_ENDPOINT`, and a login for it that has expired or been revoked is never replaced by another endpoint's token. Tokens stored before this version carry no endpoint, so they keep working as before and are not covered by that guarantee: a `Default` block is still used when there is no block for the endpoint (with a one-time warning), and once it has been refreshed it records its endpoint, so a server for a different endpoint ignores it; the `sas-viya` CLI cache is still read first. Existing setups need no action. `sas-mcp-login --logout --endpoint <url>` removes one endpoint's login, and a `Default` block recorded for it; a `Default` block that is not bound to an endpoint is kept and the command says so.
+
+### Changed
+- **The credentials file is rewritten atomically, with only the block being refreshed replaced.** The server's token refresh and `sas-mcp-login` keep every other block in the file (also in `~/.sas/credentials.json`), create it owner-only from the start and no longer leave a half-written file for a concurrent reader.
+- **A credentials file that cannot be read is never overwritten.** A read error (for example a briefly locked file on Windows) stops the update instead of replacing the file with only the new login, and a file that is not valid JSON is moved to `credentials.json.corrupt` first. A block or field of the wrong type is skipped instead of failing the tool call, and the file is parsed once per token lookup instead of several times.
+- **The Windows ACL is restricted only on the server's own credentials file**, not on the `sas-viya` CLI's `~/.sas/credentials.json` that the server refreshes in place. The helper moved from `usage_logger.py` to the new `fs_perms.py`, the file replace retries briefly if a scanner has the file open, and where a rename is impossible (a bind-mounted file, a read-only directory) the file is rewritten in place as before. A symlinked `credentials.json` is written through, not replaced, and a file in another encoding is skipped with a warning instead of failing the tool call.
+- **`sas-mcp-login --code` refuses a pending login that was started for another endpoint**, instead of storing its token under the wrong one.
+- Known limit: the credentials file is updated without a lock, so two servers refreshing in the same few milliseconds can lose one update; the other server's token then refreshes again on its next call.
+- Note for mixed versions: an older `sas-mcp-login` rewrites the whole file with only its `Default` block, dropping the per-endpoint blocks; log in again with the new version. An older server ignores the per-endpoint blocks, so it finds no token after a fresh install with this version.
+
 ## [1.20.1] - 2026-11-13
 
 ### Changed

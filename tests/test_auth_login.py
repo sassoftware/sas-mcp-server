@@ -187,21 +187,21 @@ def test_write_cache_shape(tmp_path, monkeypatch):
     p = tmp_path / "credentials.json"
     monkeypatch.setattr(auth_login, "CACHE_PATH", p)
     out = auth_login._write_cache(
-        {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600}
+        {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600}, "https://v"
     )
     assert out == p
     data = json.loads(p.read_text())
-    assert data["Default"]["access-token"] == "AT"
-    assert data["Default"]["refresh-token"] == "RT"
-    assert data["Default"]["expiry"]  # ISO timestamp present
+    assert data["https://v"]["access-token"] == "AT"
+    assert data["https://v"]["refresh-token"] == "RT"
+    assert data["https://v"]["expiry"]  # ISO timestamp present
 
 
 def test_write_cache_defaults_missing_refresh(tmp_path, monkeypatch):
     p = tmp_path / "credentials.json"
     monkeypatch.setattr(auth_login, "CACHE_PATH", p)
-    auth_login._write_cache({"access_token": "AT"})
+    auth_login._write_cache({"access_token": "AT"}, "https://v")
     data = json.loads(p.read_text())
-    assert data["Default"]["refresh-token"] == ""
+    assert data["https://v"]["refresh-token"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ def test_main_code_success(tmp_path, monkeypatch):
     assert rc == 0
     assert cache_p.exists()
     assert not state_p.exists()  # state cleared after success
-    assert json.loads(cache_p.read_text())["Default"]["access-token"] == "AT"
+    assert json.loads(cache_p.read_text())["https://v"]["access-token"] == "AT"
 
 
 def test_main_code_exchange_failure_returns_1(tmp_path, monkeypatch):
@@ -296,4 +296,159 @@ def test_main_phase1_interactive_exchanges(tmp_path, monkeypatch):
 
     assert rc == 0
     assert mock_post.call_args[1]["data"]["code"] == "PASTED_CODE"
-    assert cache_p.exists()
+    assert json.loads(cache_p.read_text())["https://v"]["access-token"] == "AT"
+
+
+# ---------------------------------------------------------------------------
+# several endpoints in one credentials file
+# ---------------------------------------------------------------------------
+
+
+def _login_main(monkeypatch, endpoint, *extra):
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--endpoint", endpoint, *extra])
+
+
+def test_write_cache_with_endpoint_keeps_other_blocks(tmp_path, monkeypatch):
+    p = tmp_path / "credentials.json"
+    monkeypatch.setattr(auth_login, "CACHE_PATH", p)
+    p.write_text(json.dumps({"Default": {"access-token": "OLD"}}))
+    auth_login._write_cache({"access_token": "A"}, "https://a.example.com/")
+    auth_login._write_cache({"access_token": "B"}, "https://B.example.com")
+    data = json.loads(p.read_text())
+    assert data["Default"] == {"access-token": "OLD"}  # legacy block untouched
+    assert data["https://a.example.com"]["access-token"] == "A"
+    assert data["https://b.example.com"]["access-token"] == "B"
+
+
+def test_main_code_rejects_state_for_another_endpoint(tmp_path, monkeypatch, capsys):
+    state_p = tmp_path / "state.json"
+    cache_p = tmp_path / "creds.json"
+    monkeypatch.setattr(auth_login, "STATE_PATH", state_p)
+    monkeypatch.setattr(auth_login, "CACHE_PATH", cache_p)
+    auth_login._write_state({
+        "endpoint": "https://a", "client_id": "vscode", "redirect_uri": "", "verifier": "ver",
+    })
+    _login_main(monkeypatch, "https://b", "--code", "CODE")
+    with patch("sas_mcp_server.auth_login.httpx.post") as post:
+        assert auth_login.main() == 1
+        post.assert_not_called()
+    assert not cache_p.exists()
+    assert state_p.exists()  # the pending login for https://a is kept
+    assert "https://a" in capsys.readouterr().err
+
+
+def test_main_code_accepts_equivalent_endpoint_spelling(tmp_path, monkeypatch):
+    state_p = tmp_path / "state.json"
+    cache_p = tmp_path / "creds.json"
+    monkeypatch.setattr(auth_login, "STATE_PATH", state_p)
+    monkeypatch.setattr(auth_login, "CACHE_PATH", cache_p)
+    auth_login._write_state({
+        "endpoint": "https://V.example.com/", "client_id": "vscode", "redirect_uri": "", "verifier": "ver",
+    })
+    _login_main(monkeypatch, "https://v.example.com:443", "--code", "CODE")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value={"access_token": "AT", "expires_in": 60})
+    with patch("sas_mcp_server.auth_login.httpx.post", return_value=resp):
+        assert auth_login.main() == 0
+    assert "https://v.example.com" in json.loads(cache_p.read_text())
+
+
+def test_logout_removes_only_that_endpoint(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "credentials.json"
+    monkeypatch.setattr(auth_login, "CACHE_PATH", p)
+    p.write_text(json.dumps({
+        "Default": {"access-token": "D"},
+        "https://a": {"access-token": "A"},
+        "https://b": {"access-token": "B"},
+    }))
+    _login_main(monkeypatch, "https://a/", "--logout")
+    assert auth_login.main() == 0
+    assert sorted(json.loads(p.read_text())) == ["Default", "https://b"]
+    assert "Removed" in capsys.readouterr().out
+
+
+def test_logout_unknown_endpoint_is_harmless(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "credentials.json"
+    monkeypatch.setattr(auth_login, "CACHE_PATH", p)
+    _login_main(monkeypatch, "https://nope", "--logout")
+    assert auth_login.main() == 0
+    assert not p.exists()
+    assert "No stored login" in capsys.readouterr().out
+
+
+def test_login_reports_an_unwritable_credentials_file(tmp_path, monkeypatch, capsys):
+    state_p = tmp_path / "state.json"
+    monkeypatch.setattr(auth_login, "STATE_PATH", state_p)
+    monkeypatch.setattr(auth_login, "CACHE_PATH", tmp_path / "creds.json")
+    auth_login._write_state({
+        "endpoint": "https://v", "client_id": "vscode", "redirect_uri": "", "verifier": "ver",
+    })
+    _login_main(monkeypatch, "https://v", "--code", "CODE")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value={"access_token": "AT", "expires_in": 60})
+    failing_store = patch("sas_mcp_server.auth_login.update_block", side_effect=PermissionError("locked"))
+    with patch("sas_mcp_server.auth_login.httpx.post", return_value=resp), failing_store:
+        assert auth_login.main() == 1  # a message, not a traceback
+    assert "Could not store the token" in capsys.readouterr().err
+
+
+def test_logout_reports_a_corrupt_credentials_file(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "credentials.json"
+    p.write_text("{nope")
+    monkeypatch.setattr(auth_login, "CACHE_PATH", p)
+    _login_main(monkeypatch, "https://a", "--logout")
+    assert auth_login.main() == 1
+    assert p.read_text() == "{nope"  # untouched
+    assert "Could not update" in capsys.readouterr().err
+
+
+def test_logout_removes_default_bound_to_that_endpoint(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "credentials.json"
+    monkeypatch.setattr(auth_login, "CACHE_PATH", p)
+    p.write_text(json.dumps({
+        "Default": {"access-token": "D", "endpoint": "https://a"},
+        "https://b": {"access-token": "B"},
+    }))
+    _login_main(monkeypatch, "https://a", "--logout")
+    assert auth_login.main() == 0
+    assert list(json.loads(p.read_text())) == ["https://b"]
+    assert "Default" in capsys.readouterr().out
+
+
+def test_logout_mentions_an_unbound_default_it_cannot_remove(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "credentials.json"
+    monkeypatch.setattr(auth_login, "CACHE_PATH", p)
+    p.write_text(json.dumps({"Default": {"access-token": "D"}}))
+    _login_main(monkeypatch, "https://a", "--logout")
+    assert auth_login.main() == 0
+    assert json.loads(p.read_text()) == {"Default": {"access-token": "D"}}
+    out = capsys.readouterr().out
+    assert "No stored login" in out
+    assert "not bound to an endpoint" in out
+
+
+def test_main_code_defaults_to_pending_login_endpoint(tmp_path, monkeypatch):
+    # The printed two-step command has no --endpoint; a .env pointing at another
+    # deployment must not make it fail.
+    state_p = tmp_path / "state.json"
+    cache_p = tmp_path / "creds.json"
+    monkeypatch.setattr(auth_login, "STATE_PATH", state_p)
+    monkeypatch.setattr(auth_login, "CACHE_PATH", cache_p)
+    monkeypatch.setenv("VIYA_ENDPOINT", "https://other")
+    auth_login._write_state({
+        "endpoint": "https://a", "client_id": "vscode", "redirect_uri": "", "verifier": "ver",
+    })
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--code", "CODE"])
+    resp = MagicMock()
+    resp.json = MagicMock(return_value={"access_token": "AT", "expires_in": 60})
+    with patch("sas_mcp_server.auth_login.httpx.post", return_value=resp):
+        assert auth_login.main() == 0
+    assert json.loads(cache_p.read_text())["https://a"]["access-token"] == "AT"
+
+
+def test_logout_with_code_is_rejected(monkeypatch):
+    _login_main(monkeypatch, "https://a", "--logout", "--code", "CODE")
+    with pytest.raises(SystemExit):
+        auth_login.main()
