@@ -110,7 +110,7 @@ def test_resolve_log_path_hardens_only_dirs_it_creates(tmp_path, monkeypatch):
     import sas_mcp_server.usage_logger as usage_logger
 
     hardened: list = []
-    monkeypatch.setattr(usage_logger, "_win_harden", hardened.append)
+    monkeypatch.setattr(usage_logger, "win_harden", hardened.append)
 
     # A parent that already exists must be left untouched.
     existing = tmp_path / "existing"
@@ -125,25 +125,25 @@ def test_resolve_log_path_hardens_only_dirs_it_creates(tmp_path, monkeypatch):
 
 
 def test_win_harden_noop_off_windows(tmp_path, monkeypatch):
-    """On non-Windows, _win_harden returns immediately without shelling out."""
-    import sas_mcp_server.usage_logger as usage_logger
+    """On non-Windows, win_harden returns immediately without shelling out."""
+    from sas_mcp_server import fs_perms
 
     calls: list = []
-    monkeypatch.setattr(usage_logger.subprocess, "run", lambda *a, **k: calls.append(a))
-    monkeypatch.setattr(usage_logger.sys, "platform", "linux")
-    usage_logger._win_harden(tmp_path / "tool-usage.log")
+    monkeypatch.setattr(fs_perms.subprocess, "run", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(fs_perms.sys, "platform", "linux")
+    fs_perms.win_harden(tmp_path / "tool-usage.log")
     assert calls == []
 
 
 def test_win_harden_noop_without_username(tmp_path, monkeypatch):
-    """On Windows with no USERNAME, _win_harden bails before calling icacls."""
-    import sas_mcp_server.usage_logger as usage_logger
+    """On Windows with no USERNAME, win_harden bails before calling icacls."""
+    from sas_mcp_server import fs_perms
 
     calls: list = []
-    monkeypatch.setattr(usage_logger.subprocess, "run", lambda *a, **k: calls.append(a))
-    monkeypatch.setattr(usage_logger.sys, "platform", "win32")
+    monkeypatch.setattr(fs_perms.subprocess, "run", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(fs_perms.sys, "platform", "win32")
     monkeypatch.delenv("USERNAME", raising=False)
-    usage_logger._win_harden(tmp_path / "tool-usage.log")
+    fs_perms.win_harden(tmp_path / "tool-usage.log")
     assert calls == []
 
 
