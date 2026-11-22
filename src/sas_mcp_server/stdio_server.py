@@ -4,24 +4,30 @@
 """
 Stdio MCP Server for SAS Viya.
 
-Authenticates via OAuth 2.0. Three paths are tried in order; the first one
+Authenticates via OAuth 2.0. The sources below are tried in order; the first one
 that yields a *usable* token wins. A cached token counts as usable only if it
 is present and not expired — an expired token is skipped rather than served, so
 a stale cache never shadows a valid one. When a cache's access token is expired
 but it still holds a refresh token, the refresh token is exchanged for a fresh
 access token, which is written back to the same cache before use.
 
-  1. Token cached by the SAS Viya CLI's ``sas-viya auth loginCode`` command.
+  1. This endpoint's own login, stored by this project's zero-prereq login
+     helper (``uv run sas-mcp-login --endpoint <URL>``) in
+     ``~/.sas-mcp-server/credentials.json`` under the endpoint's URL. The
+     helper runs Authorization Code + PKCE against the built-in ``vscode``
+     OAuth client. When this login exists it is the only cached source used:
+     neither of the next two records which deployment issued it, so neither
+     may stand in for it once it has expired or been revoked.
+
+  2. Token cached by the SAS Viya CLI's ``sas-viya auth loginCode`` command.
      Default location: ``~/.sas/credentials.json`` (override the parent dir
      with the ``SAS_CLI_CONFIG`` env var).
 
-  2. Token cached by this project's own zero-prereq login helper
-     (``uv run sas-mcp-login``). Default location:
-     ``~/.sas-mcp-server/credentials.json``. The helper runs Authorization
-     Code + PKCE against the built-in ``vscode`` OAuth client and writes
-     the token in the same shape as the SAS Viya CLI cache.
+  3. The helper file's legacy ``Default`` block, written by older versions of
+     the helper: when it is recorded as belonging to this endpoint, or when it
+     is not recorded at all and the file holds no other endpoint's login.
 
-  3. Native device-code flow against ``/SASLogon/oauth/device_authorization``.
+  4. Native device-code flow against ``/SASLogon/oauth/device_authorization``.
      Used only when no cached credentials exist. Works on Viya instances
      whose admins have not enabled CSRF protection on the device endpoint
      and whose OAuth client is registered with the device-code grant type.
@@ -46,7 +52,7 @@ from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
 
 from .config import AUTH_ENABLED, CLIENT_ID, SERVER_NAME, SSL_VERIFY, VIYA_ENDPOINT
-from .credentials_store import load_blocks, normalize_endpoint, update_block
+from .credentials_store import endpoint_keys, load_blocks, normalize_endpoint, update_block
 from .exceptions import AuthenticationError
 from .helpers.telemetry_helpers import server_version
 from .http_debug import install_http_debug
@@ -91,12 +97,26 @@ def _read_credentials_file(path: Path) -> dict:
 
     Returns ``{}`` if it is missing, and (with a warning) if it is unreadable, in another
     encoding or not a JSON object, so a damaged file falls through to the next source.
+    Invalid JSON is read once more after a short pause first: another server may be
+    rewriting the file in place at that moment (when a rename is not possible), and a
+    half-written file must not send this tool call to the interactive login.
     """
-    try:
-        return load_blocks(path)
-    except (OSError, ValueError) as exc:
-        logger.warning("Could not read credentials at %s: %s", path, exc)
-        return {}
+    for attempt in (1, 2):
+        try:
+            return load_blocks(path)
+        except UnicodeDecodeError as exc:
+            logger.warning("Could not read credentials at %s: %s", path, exc)
+            return {}
+        except ValueError as exc:
+            if attempt == 1:
+                time.sleep(0.2)
+                continue
+            logger.warning("Could not read credentials at %s: %s", path, exc)
+            return {}
+        except OSError as exc:
+            logger.warning("Could not read credentials at %s: %s", path, exc)
+            return {}
+    return {}  # pragma: no cover - the loop always returns
 
 
 def _load_credentials(path: Path, key: str = "Default", data: dict | None = None) -> dict | None:
@@ -284,7 +304,7 @@ def _write_credentials(
         block["endpoint"] = endpoint
     try:
         update_block(path, key, block, harden=path == _helper_credentials_path())
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("Could not write refreshed credentials to %s: %s", path, exc)
 
 
@@ -332,8 +352,14 @@ def _legacy_default_usable(data: dict, path: Path, endpoint: str) -> bool:
     Never when the file has a block for *endpoint* itself: the user has logged in
     here, so another deployment's legacy token must not stand in for a login that
     expired or was revoked. A block recorded as belonging to another deployment
-    (or with an unreadable record) is never sent here either. An unrecorded one is
-    used as before, with a warning that it is not bound.
+    (or with an unreadable record) is never sent here either.
+
+    An unrecorded block is used as before, with a warning that it is not bound, but
+    only while the file holds no other endpoint's login. Once it does, the user runs
+    several deployments, and the unrecorded token (and its refresh token) could
+    belong to any of them: sending it here would hand one deployment's credentials
+    to another. SAS Logon's tokens do not tell: their issuer is SAS Logon's internal
+    address, not the deployment's.
     """
     if isinstance(data.get(endpoint), dict):
         return False
@@ -346,6 +372,15 @@ def _legacy_default_usable(data: dict, path: Path, endpoint: str) -> bool:
             "Ignoring the legacy 'Default' token in %s: it was issued for %s, not %s. "
             "Run `sas-mcp-login --endpoint %s` to store a login for this endpoint.",
             str(path), str(bound), endpoint, endpoint,
+        )
+        return False
+    others = [k for k in endpoint_keys(data) if k != endpoint]
+    if bound in (None, "") and others:
+        _warn_once(
+            "Ignoring the legacy 'Default' token in %s: it is not bound to an endpoint, and the file "
+            "also holds logins for %s, so it may have been issued by another deployment. "
+            "Run `sas-mcp-login --endpoint %s` to store a login for this endpoint.",
+            str(path), ", ".join(others), endpoint,
         )
         return False
     if bound in (None, ""):
@@ -362,14 +397,20 @@ def _get_viya_token() -> str:
         return ""
     endpoint = normalize_endpoint(VIYA_ENDPOINT)
     helper = _helper_credentials_path()
-    # (file, OAuth client, block, whether it is the helper's legacy Default block). The helper
-    # file is tried for this endpoint's own block first, then for the legacy Default block.
-    files: dict[Path, dict] = {}  # each file is parsed once per call, not once per source
-    for path, client_id, key, legacy_default in (
-        (_sas_cli_credentials_path(), SAS_CLI_CLIENT_ID, "Default", False),
-        (helper, HELPER_CLIENT_ID, endpoint, False),
-        (helper, HELPER_CLIENT_ID, "Default", True),
-    ):
+    files: dict[Path, dict] = {helper: _read_credentials_file(helper)}  # each file parsed once per call
+    # (file, OAuth client, block, whether it is the helper's legacy Default block).
+    sources: tuple[tuple[Path, str, str, bool], ...]
+    if isinstance(files[helper].get(endpoint), dict):
+        # The user logged in to this deployment: use that login and nothing else. The SAS
+        # Viya CLI cache and the legacy Default block do not record their deployment, so
+        # they must not stand in when this login has expired or been revoked.
+        sources = ((helper, HELPER_CLIENT_ID, endpoint, False),)
+    else:
+        sources = (
+            (_sas_cli_credentials_path(), SAS_CLI_CLIENT_ID, "Default", False),
+            (helper, HELPER_CLIENT_ID, "Default", True),
+        )
+    for path, client_id, key, legacy_default in sources:
         if path not in files:
             files[path] = _read_credentials_file(path)
         data = files[path]

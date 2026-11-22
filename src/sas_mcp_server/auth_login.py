@@ -25,7 +25,7 @@ Usage:
       Prints the SAS Logon URL, opens it in a browser, then prompts for the
       authorization code (interactive terminal).
 
-  uv run sas-mcp-login --code <CODE>
+  uv run sas-mcp-login [--endpoint <URL>] --code <CODE>
       Two-step variant for non-interactive contexts (e.g., shells without a
       TTY). The first invocation (no --code) persists PKCE state to
       ``~/.sas-mcp-server/login-state.json`` and prints instructions; the
@@ -52,7 +52,7 @@ from urllib.parse import urlencode
 import httpx
 from dotenv import load_dotenv
 
-from .credentials_store import normalize_endpoint, remove_login, update_block
+from .credentials_store import endpoint_keys, load_blocks, normalize_endpoint, remove_login, update_block
 from .env import env_bool
 
 load_dotenv()
@@ -180,8 +180,32 @@ def _write_cache(tokens: dict, endpoint: str) -> Path:
         "refresh-token": tokens.get("refresh_token", ""),
         "expiry": expiry,
     }
-    update_block(CACHE_PATH, normalize_endpoint(endpoint), block)
+    key = normalize_endpoint(endpoint)
+    update_block(CACHE_PATH, key, block)
+    _note_unbound_default(key)
     return CACHE_PATH
+
+
+def _note_unbound_default(key: str) -> None:
+    """Say so when this login retires an untagged legacy ``Default`` login.
+
+    Servers use an untagged ``Default`` only while the file holds no other endpoint's
+    login, since it could have been issued by any deployment. The first per-endpoint
+    login therefore stops it being used for the other deployments too.
+    """
+    try:
+        data = load_blocks(CACHE_PATH)
+    except (OSError, ValueError):
+        return
+    default = data.get("Default")
+    if not isinstance(default, dict) or default.get("endpoint") or endpoint_keys(data) != [key]:
+        return
+    print(
+        "Note: the file also holds an older login ('Default') that does not record which "
+        "deployment issued it. Servers stop using it now that the file has per-endpoint "
+        "logins. If you use it for another deployment, run "
+        "`sas-mcp-login --endpoint <URL>` for that one too."
+    )
 
 
 def main() -> int:
@@ -305,7 +329,7 @@ def main() -> int:
             return 1
         try:
             path = _write_cache(tokens, state["endpoint"])
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             print(f"Could not store the token in {CACHE_PATH}: {exc}", file=sys.stderr)
             return 1
         _clear_state()
@@ -360,7 +384,7 @@ def main() -> int:
         print(
             "Stdin is not a terminal, so this helper cannot prompt. Once you "
             "have the code, run:\n"
-            f"\n    uv run sas-mcp-login --code <CODE>\n\n"
+            f"\n    uv run sas-mcp-login --endpoint {args.endpoint} --code <CODE>\n\n"
             f"PKCE state has been saved to {STATE_PATH}."
         )
         return 0
@@ -391,7 +415,7 @@ def main() -> int:
 
     try:
         path = _write_cache(tokens, args.endpoint)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         print(f"Could not store the token in {CACHE_PATH}: {exc}", file=sys.stderr)
         return 1
     _clear_state()

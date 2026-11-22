@@ -17,9 +17,11 @@ import errno
 import json
 import logging
 import os
+import stat
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -61,10 +63,12 @@ def load_blocks(path: Path) -> dict[str, Any]:
     Raises :class:`OSError` if the file cannot be read and :class:`ValueError` if it
     is not a JSON object. Only a missing file counts as empty: a file that is merely
     unreadable at the moment must never be mistaken for an empty one, or the next
-    write would erase every login in it.
+    write would erase every login in it. A UTF-8 byte-order mark, which some
+    editors add, is accepted; a file in another encoding raises
+    :class:`UnicodeDecodeError` (a :class:`ValueError`).
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         return {}
     data = json.loads(text)
@@ -76,18 +80,94 @@ def load_blocks(path: Path) -> dict[str, Any]:
 def _blocks_for_update(path: Path) -> dict[str, Any]:
     """Like :func:`load_blocks`, but set aside a file that is not valid JSON.
 
-    The file is moved to ``<name>.corrupt`` rather than overwritten, so a hand-edit
-    mistake costs the user nothing they cannot recover. A read error still raises,
-    leaving the file untouched.
+    The file is moved to ``<name>.corrupt-<timestamp>`` rather than overwritten, so a
+    hand-edit mistake costs the user nothing they cannot recover, and a later incident
+    does not replace an earlier backup. A read error still raises, leaving the file
+    untouched, and so does a file in another encoding: it may hold valid logins, so it
+    is the user's to convert, not ours to discard.
     """
     try:
         return load_blocks(path)
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{path} is not UTF-8 text, so it was left as it is ({exc.reason})") from exc
     except ValueError:
         path = _resolved(path)
-        backup = path.with_name(f"{path.name}.corrupt")
+        stamp = time.strftime("%Y%m%dT%H%M%S")
+        backup = path.with_name(f"{path.name}.corrupt-{stamp}")
+        n = 1
+        while backup.exists():
+            n += 1
+            backup = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
         os.replace(path, backup)
         logger.warning("%s is not a valid credentials file; moved it to %s and starting a new one", path, backup)
         return {}
+
+
+# How long a writer waits for another process's update, and after how long a lock
+# file is taken to be left behind by a process that died mid-update. An update holds
+# the lock for milliseconds (a few seconds at most, when icacls is slow on Windows).
+_LOCK_TIMEOUT = 15.0
+_LOCK_STALE_AFTER = 60.0
+
+
+def _acquire(lock: Path) -> int | None:
+    """Create *lock* exclusively and return its descriptor.
+
+    Returns ``None`` when no lock file can be created at all (a read-only directory),
+    so the update goes ahead unlocked, as it did before locking existed. Raises
+    :class:`TimeoutError` (an :class:`OSError`) when another process holds the lock
+    for longer than ``_LOCK_TIMEOUT``.
+    """
+    deadline = time.monotonic() + _LOCK_TIMEOUT
+    while True:
+        try:
+            return os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            pass
+        except PermissionError:
+            # With no lock file there, the directory is not writable. (On Windows an
+            # existing lock file can also answer this way; that is waited for below.)
+            if not lock.exists():
+                logger.debug("Cannot create %s; updating without a lock", lock)
+                return None
+        except OSError as exc:
+            logger.debug("Cannot lock %s (%s); updating without a lock", lock, exc)
+            return None
+        try:
+            age = time.time() - os.stat(lock).st_mtime
+        except FileNotFoundError:
+            continue  # released between our attempt and the stat
+        except OSError:
+            age = 0.0
+        if age > _LOCK_STALE_AFTER:
+            logger.warning("Removing %s, left behind by an update that did not finish", lock)
+            with contextlib.suppress(OSError):
+                os.unlink(lock)
+            continue
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"{lock} is held by another process; try again")
+        time.sleep(0.05)
+
+
+@contextlib.contextmanager
+def _locked(path: Path) -> Iterator[None]:
+    """Hold ``<path>.lock`` across a read-modify-write of *path*.
+
+    Several stdio servers share the file. Without the lock, two refreshes at the same
+    moment could each write the file from a copy read before the other's write, and
+    the loser's new tokens would be lost. With SAS Logon rotating refresh tokens, that
+    leaves a revoked refresh token in the file and costs a fresh login.
+    """
+    lock = path.with_name(f"{path.name}.lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = _acquire(lock)
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+            with contextlib.suppress(OSError):
+                os.unlink(lock)
 
 
 def _replace(src: str, dst: Path) -> None:
@@ -119,12 +199,27 @@ def _resolved(path: Path) -> Path:
 _RENAME_UNAVAILABLE = (errno.EBUSY, errno.EXDEV, errno.EROFS)
 
 
-def _write_via_temp(path: Path, text: str) -> None:
-    # mkstemp creates the file with mode 0600, so the tokens are never readable by others.
+def _write_via_temp(path: Path, text: str, *, harden: bool) -> None:
+    """Write *text* to a temp file next to *path*, flush it to disk, then rename it over *path*.
+
+    The temp file gets its final permissions before it holds any token: on POSIX mkstemp
+    creates it with mode 0600, and on Windows (where that mode is ignored and the file
+    would take the directory's inherited ACL) *harden* restricts its ACL first. A file
+    that is not ours (*harden* false) keeps its existing POSIX permission bits instead.
+    """
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
     try:
+        if harden:
+            win_harden(Path(tmp))
+        else:
+            with contextlib.suppress(OSError):
+                os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+            fh.flush()
+            # Without this a crash right after the rename can leave an empty file on
+            # filesystems that may persist the rename before the data (XFS, btrfs, NFS).
+            os.fsync(fh.fileno())
         _replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -132,39 +227,56 @@ def _write_via_temp(path: Path, text: str) -> None:
         raise
 
 
-def _write_atomic(path: Path, data: dict[str, Any]) -> None:
+def _write_in_place(path: Path, text: str, *, harden: bool) -> None:
+    path.write_text(text, encoding="utf-8")
+    if harden:
+        with contextlib.suppress(OSError):
+            os.chmod(path, 0o600)
+        win_harden(path)
+
+
+def _write_atomic(path: Path, data: dict[str, Any], *, harden: bool) -> None:
     """Replace *path* with *data* without ever exposing a partial or world-readable file.
 
     Where a rename is impossible (see ``_RENAME_UNAVAILABLE``) the file is rewritten in place
-    instead, as it was before, so a setup that could update the file still can. The Windows
-    ACL is left to the caller.
+    instead, as it was before, so a setup that could update the file still can.
+
+    A file that belongs to another tool (*harden* false) is rewritten in place on Windows:
+    a renamed-in file would carry the directory's inherited ACL and silently replace
+    whatever ACL that tool or an administrator set on it.
     """
     path = _resolved(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(data, indent=2)
+    if not harden and sys.platform == "win32" and path.exists():
+        _write_in_place(path, text, harden=False)
+        return
     try:
-        _write_via_temp(path, text)
+        _write_via_temp(path, text, harden=harden)
     except OSError as exc:
         if not (isinstance(exc, PermissionError) or exc.errno in _RENAME_UNAVAILABLE):
             raise
         logger.debug("Could not replace %s (%s); writing it in place", path, exc)
-        path.write_text(text, encoding="utf-8")
-        with contextlib.suppress(OSError):
-            os.chmod(path, 0o600)
+        _write_in_place(path, text, harden=harden)
 
 
 def update_block(path: Path, key: str, block: dict[str, Any], *, harden: bool = True) -> None:
     """Set ``key`` to *block* in the credentials file, keeping every other key.
 
-    *harden* restricts the file's Windows ACL to the current user. Pass ``False`` for a
-    file that belongs to another tool, such as the SAS Viya CLI's own cache.
+    *harden* restricts the file to the current user (mode 0600, and an owner-only ACL on
+    Windows). Pass ``False`` for a file that belongs to another tool, such as the SAS
+    Viya CLI's own cache: its permissions are kept as they are.
+
+    The read and the write happen under a lock file, so concurrent updates from several
+    servers cannot undo each other. Raises :class:`OSError` (including
+    :class:`TimeoutError` when the lock stays taken) or :class:`ValueError` (a file
+    that is not UTF-8 text) and leaves the file untouched.
     """
     path = _resolved(path)
-    data = _blocks_for_update(path)
-    data[key] = block
-    _write_atomic(path, data)
-    if harden:
-        win_harden(path)  # POSIX chmod is a no-op on Windows
+    with _locked(path):
+        data = _blocks_for_update(path)
+        data[key] = block
+        _write_atomic(path, data, harden=harden)
 
 
 def remove_login(path: Path, endpoint: str) -> tuple[list[str], bool]:
@@ -180,15 +292,20 @@ def remove_login(path: Path, endpoint: str) -> tuple[list[str], bool]:
     """
     key = normalize_endpoint(endpoint)
     path = _resolved(path)
-    data = load_blocks(path)
-    removed = [key] if data.pop(key, None) is not None else []
-    default = data.get("Default")
-    if isinstance(default, dict):
-        bound = default.get("endpoint")
-        if isinstance(bound, str) and normalize_endpoint(bound) == key:
-            del data["Default"]
-            removed.append("Default")
-    if removed:
-        _write_atomic(path, data)
-        win_harden(path)
+    with _locked(path):
+        data = load_blocks(path)
+        removed = [key] if data.pop(key, None) is not None else []
+        default = data.get("Default")
+        if isinstance(default, dict):
+            bound = default.get("endpoint")
+            if isinstance(bound, str) and normalize_endpoint(bound) == key:
+                del data["Default"]
+                removed.append("Default")
+        if removed:
+            _write_atomic(path, data, harden=True)
     return removed, isinstance(data.get("Default"), dict) and not data["Default"].get("endpoint")
+
+
+def endpoint_keys(data: dict[str, Any]) -> list[str]:
+    """The keys of *data* that hold a per-endpoint login (not ``Default`` or other entries)."""
+    return [k for k, v in data.items() if k != "Default" and "://" in k and isinstance(v, dict)]

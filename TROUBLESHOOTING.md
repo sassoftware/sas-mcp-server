@@ -221,9 +221,9 @@ You run `uv run sas-mcp-login` inside a wrapper that does not provide an interac
 Use the two-step variant. The first invocation persists PKCE state to `~/.sas-mcp-server/login-state.json` and exits cleanly; the second exchanges the code:
 
 ```sh
-uv run sas-mcp-login                            # opens browser, prints URL, exits
+uv run sas-mcp-login --endpoint <VIYA_ENDPOINT>  # opens browser, prints URL, exits
 # sign in, copy the code from the SAS Logon results page
-uv run sas-mcp-login --code <PASTE-CODE-HERE>   # completes the exchange
+uv run sas-mcp-login --endpoint <VIYA_ENDPOINT> --code <PASTE-CODE-HERE>   # completes the exchange
 ```
 
 ---

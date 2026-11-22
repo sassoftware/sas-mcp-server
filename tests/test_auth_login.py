@@ -278,6 +278,15 @@ def test_main_phase1_non_tty_saves_state(tmp_path, monkeypatch):
     assert "verifier" in saved
 
 
+def test_main_phase1_non_tty_prints_a_command_naming_the_endpoint(tmp_path, monkeypatch, capsys):
+    """With --endpoint in the follow-up command, the pending-login check catches a mix-up."""
+    monkeypatch.setattr(auth_login, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--endpoint", "https://v", "--no-browser"])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    assert auth_login.main() == 0
+    assert "sas-mcp-login --endpoint https://v --code <CODE>" in capsys.readouterr().out
+
+
 def test_main_phase1_interactive_exchanges(tmp_path, monkeypatch):
     state_p = tmp_path / "state.json"
     cache_p = tmp_path / "creds.json"
@@ -318,6 +327,24 @@ def test_write_cache_with_endpoint_keeps_other_blocks(tmp_path, monkeypatch):
     assert data["Default"] == {"access-token": "OLD"}  # legacy block untouched
     assert data["https://a.example.com"]["access-token"] == "A"
     assert data["https://b.example.com"]["access-token"] == "B"
+
+
+def test_first_endpoint_login_says_the_untagged_login_is_retired(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "credentials.json"
+    monkeypatch.setattr(auth_login, "CACHE_PATH", p)
+    p.write_text(json.dumps({"Default": {"access-token": "OLD"}}))
+    auth_login._write_cache({"access_token": "A"}, "https://a.example.com")
+    assert "older login ('Default')" in capsys.readouterr().out
+    auth_login._write_cache({"access_token": "B"}, "https://b.example.com")
+    assert "older login" not in capsys.readouterr().out  # said once, on the first one
+
+
+def test_no_note_for_a_default_bound_to_an_endpoint(tmp_path, monkeypatch, capsys):
+    p = tmp_path / "credentials.json"
+    monkeypatch.setattr(auth_login, "CACHE_PATH", p)
+    p.write_text(json.dumps({"Default": {"access-token": "OLD", "endpoint": "https://a.example.com"}}))
+    auth_login._write_cache({"access_token": "B"}, "https://b.example.com")
+    assert "older login" not in capsys.readouterr().out
 
 
 def test_main_code_rejects_state_for_another_endpoint(tmp_path, monkeypatch, capsys):

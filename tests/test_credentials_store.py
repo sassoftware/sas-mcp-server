@@ -7,6 +7,8 @@ import json
 import os
 import stat
 import sys
+import threading
+import time
 
 import pytest
 
@@ -15,6 +17,10 @@ from sas_mcp_server import credentials_store as store
 
 def _files(directory):
     return sorted(f.name for f in directory.iterdir())
+
+
+def _backups(directory):
+    return sorted(directory.glob("credentials.json.corrupt-*"))
 
 
 @pytest.mark.parametrize(
@@ -78,7 +84,8 @@ def test_update_block_sets_corrupt_file_aside(tmp_path, text):
     p.write_text(text)
     store.update_block(p, "https://a", {"access-token": "A"})
     assert json.loads(p.read_text()) == {"https://a": {"access-token": "A"}}
-    assert (tmp_path / "credentials.json.corrupt").read_text() == text  # nothing is lost
+    [backup] = _backups(tmp_path)
+    assert backup.read_text() == text  # nothing is lost
 
 
 def test_remove_login_refuses_corrupt_file(tmp_path):
@@ -174,7 +181,48 @@ def test_update_block_can_skip_windows_hardening(tmp_path, monkeypatch):
     p = tmp_path / "credentials.json"
     store.update_block(p, "k", {"access-token": "T"})
     store.update_block(p, "k", {"access-token": "T2"}, harden=False)
-    assert hardened == [p]  # only the first write
+    # only the first write, and on the temp file before it takes the real name
+    assert [h.name.startswith("credentials.json.") and h.name.endswith(".tmp") for h in hardened] == [True]
+
+
+def test_the_temp_file_is_restricted_before_it_holds_a_token(tmp_path, monkeypatch):
+    """On Windows mkstemp's 0600 is ignored: the ACL must be set while the file is still empty."""
+    sizes = []
+    monkeypatch.setattr(store, "win_harden", lambda f: sizes.append(os.path.getsize(f)))
+    store.update_block(tmp_path / "credentials.json", "k", {"access-token": "T"})
+    assert sizes == [0]
+
+
+def test_the_temp_file_is_flushed_to_disk_before_the_rename(tmp_path, monkeypatch):
+    order = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(store.os, "fsync", lambda fd: order.append("fsync") or real_fsync(fd))
+    monkeypatch.setattr(store.os, "replace", lambda s, d: order.append("replace") or real_replace(s, d))
+    store.update_block(tmp_path / "credentials.json", "k", {"access-token": "T"})
+    assert order == ["fsync", "replace"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_another_tools_file_keeps_its_permission_bits(tmp_path):
+    p = tmp_path / "credentials.json"
+    p.write_text("{}")
+    os.chmod(p, 0o640)
+    store.update_block(p, "Default", {"access-token": "T"}, harden=False)
+    assert stat.S_IMODE(os.stat(p).st_mode) == 0o640
+
+
+def test_another_tools_file_is_rewritten_in_place_on_windows(tmp_path, monkeypatch):
+    """A renamed-in file would replace the ACL that tool or an admin set with the folder's."""
+    p = tmp_path / "credentials.json"
+    p.write_text(json.dumps({"other": 1}))
+    monkeypatch.setattr(store.sys, "platform", "win32")
+
+    def no_temp(*a, **k):
+        raise AssertionError("must not replace another tool's file")
+
+    monkeypatch.setattr(store.tempfile, "mkstemp", no_temp)
+    store.update_block(p, "Default", {"access-token": "T"}, harden=False)
+    assert json.loads(p.read_text()) == {"other": 1, "Default": {"access-token": "T"}}
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="the retry only applies on Windows")
@@ -300,7 +348,8 @@ def test_corrupt_symlinked_file_moves_the_target_not_the_link(tmp_path):
         pytest.skip("cannot create symlinks here")
     store.update_block(link, "https://a", {"access-token": "A"})
     assert link.is_symlink()
-    assert (managed / "credentials.json.corrupt").read_text() == "{nope"
+    [backup] = _backups(managed)
+    assert backup.read_text() == "{nope"
     assert json.loads(target.read_text()) == {"https://a": {"access-token": "A"}}
 
 
@@ -309,3 +358,104 @@ def test_utf8_blocks_survive_a_rewrite(tmp_path):
     p.write_bytes('{"cli": {"user": "Jörg"}}'.encode())
     store.update_block(p, "https://a", {"access-token": "A"}, harden=False)
     assert json.loads(p.read_text(encoding="utf-8"))["cli"] == {"user": "Jörg"}
+
+
+def test_a_byte_order_mark_is_not_corruption(tmp_path):
+    """Some Windows editors (PowerShell 5.1's Out-File) save UTF-8 with a BOM."""
+    p = tmp_path / "credentials.json"
+    p.write_bytes(b"\xef\xbb\xbf" + json.dumps({"https://a": {"access-token": "A"}}).encode())
+    store.update_block(p, "https://b", {"access-token": "B"})
+    assert sorted(json.loads(p.read_text(encoding="utf-8"))) == ["https://a", "https://b"]
+    assert _backups(tmp_path) == []
+
+
+def test_a_file_in_another_encoding_is_left_alone(tmp_path):
+    """It may hold valid logins: refuse the update rather than set the file aside."""
+    p = tmp_path / "credentials.json"
+    original = '{"Default": {"user": "J\u00f6rg"}}'.encode("cp1252")
+    p.write_bytes(original)
+    with pytest.raises(ValueError, match="not UTF-8"):
+        store.update_block(p, "https://a", {"access-token": "A"})
+    assert p.read_bytes() == original
+    assert _backups(tmp_path) == []
+
+
+def test_a_second_corruption_keeps_the_first_backup(tmp_path):
+    p = tmp_path / "credentials.json"
+    for text in ("{first", "{second"):
+        p.write_text(text)
+        store.update_block(p, "https://a", {"access-token": "A"})
+    assert sorted(b.read_text() for b in _backups(tmp_path)) == ["{first", "{second"]
+
+
+# --- the lock around read-modify-write ----------------------------------------------
+
+
+def test_the_lock_is_released_after_an_update(tmp_path):
+    p = tmp_path / "credentials.json"
+    store.update_block(p, "k", {"access-token": "T"})
+    store.remove_login(p, "k")
+    assert not (tmp_path / "credentials.json.lock").exists()
+
+
+def test_a_held_lock_makes_the_update_wait_and_then_give_up(tmp_path, monkeypatch):
+    p = tmp_path / "credentials.json"
+    store.update_block(p, "https://a", {"access-token": "A"})
+    before = p.read_text()
+    (tmp_path / "credentials.json.lock").write_text("")
+    monkeypatch.setattr(store, "_LOCK_TIMEOUT", 0.2)
+    with pytest.raises(TimeoutError):
+        store.update_block(p, "https://b", {"access-token": "B"})
+    assert p.read_text() == before
+
+
+def test_a_lock_left_by_a_crashed_process_is_cleared(tmp_path):
+    p = tmp_path / "credentials.json"
+    lock = tmp_path / "credentials.json.lock"
+    lock.write_text("")
+    old = time.time() - store._LOCK_STALE_AFTER - 5
+    os.utime(lock, (old, old))
+    store.update_block(p, "https://a", {"access-token": "A"})
+    assert json.loads(p.read_text()) == {"https://a": {"access-token": "A"}}
+    assert not lock.exists()
+
+
+def test_an_unwritable_directory_updates_without_a_lock(tmp_path, monkeypatch):
+    p = tmp_path / "credentials.json"
+    real_open = os.open
+
+    def no_lock(path, *a, **k):
+        if str(path).endswith(".lock"):
+            raise PermissionError("read-only directory")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(store.os, "open", no_lock)
+    store.update_block(p, "https://a", {"access-token": "A"})
+    assert json.loads(p.read_text()) == {"https://a": {"access-token": "A"}}
+
+
+def test_concurrent_updates_keep_every_login(tmp_path):
+    """Two servers refreshing at once must not drop each other's new tokens."""
+    p = tmp_path / "credentials.json"
+    store.update_block(p, "seed", {"access-token": "S"})
+    real = store.load_blocks
+
+    def slow_read(path):
+        data = real(path)
+        time.sleep(0.02)  # widen the window between the read and the write
+        return data
+
+    store_load = store.load_blocks
+    store.load_blocks = slow_read
+    try:
+        threads = [
+            threading.Thread(target=store.update_block, args=(p, f"https://{i}", {"access-token": str(i)}))
+            for i in range(8)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        store.load_blocks = store_load
+    assert sorted(json.loads(p.read_text())) == sorted(["seed", *(f"https://{i}" for i in range(8))])

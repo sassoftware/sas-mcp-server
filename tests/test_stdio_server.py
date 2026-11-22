@@ -460,10 +460,9 @@ def test_no_credentials_warns_with_login_command(helper_file, monkeypatch, caplo
     assert f"sas-mcp-login --endpoint {EP_A}" in caplog.text
 
 
-def test_refreshing_default_tags_it_and_keeps_other_blocks(helper_file):
+def test_refreshing_default_tags_it_and_keeps_other_entries(helper_file):
     helper_file.write_text(json.dumps({
         "Default": _block("EXPIRED", expiry=_iso(-30), refresh="RT"),
-        EP_B: _block("TOK-B"),
         "extra": 1,
     }))
     with patch("sas_mcp_server.stdio_server.httpx.post", return_value=_refresh_ok()):
@@ -472,8 +471,69 @@ def test_refreshing_default_tags_it_and_keeps_other_blocks(helper_file):
     assert data["Default"]["access-token"] == "NEWTOK"
     assert data["Default"]["refresh-token"] == "NEWREFRESH"
     assert data["Default"]["endpoint"] == EP_A  # refresh against this server proves ownership
-    assert data[EP_B] == _block("TOK-B")
     assert data["extra"] == 1
+
+
+def test_untagged_default_is_not_sent_once_other_endpoints_have_logins(helper_file, monkeypatch, caplog):
+    """With several deployments in the file an untagged token could be any of theirs."""
+    helper_file.write_text(json.dumps({
+        "Default": _block("EXPIRED", expiry=_iso(-30), refresh="MAYBE-B-RT"),
+        EP_B: _block("TOK-B"),
+    }))
+    monkeypatch.setattr(stdio_server, "_native_device_code_token", lambda: "DEVTOK")
+    with patch("sas_mcp_server.stdio_server.httpx.post") as post, caplog.at_level("WARNING"):
+        assert stdio_server._get_viya_token() == "DEVTOK"
+        post.assert_not_called()  # neither token nor refresh token went to A's SAS Logon
+    assert EP_B in caplog.text
+    assert f"sas-mcp-login --endpoint {EP_A}" in caplog.text
+    assert "MAYBE-B-RT" not in caplog.text
+
+
+def test_default_tagged_for_this_endpoint_survives_other_logins(helper_file):
+    helper_file.write_text(json.dumps({"Default": _block("LEGACY", endpoint=EP_A), EP_B: _block("TOK-B")}))
+    assert stdio_server._get_viya_token() == "LEGACY"
+
+
+def test_own_login_beats_the_sas_viya_cli_cache(helper_file, tmp_path, monkeypatch):
+    """The CLI cache does not record its deployment; it may be another one's token."""
+    cli = tmp_path / "cli.json"
+    cli.write_text(json.dumps({"Default": _block("CLI-TOKEN-OF-ANOTHER-DEPLOYMENT")}))
+    monkeypatch.setattr(stdio_server, "_sas_cli_credentials_path", lambda: cli)
+    helper_file.write_text(json.dumps({EP_A: _block("MINE")}))
+    assert stdio_server._get_viya_token() == "MINE"
+
+
+def test_lapsed_own_login_does_not_fall_back_to_the_cli_cache(helper_file, tmp_path, monkeypatch):
+    cli = tmp_path / "cli.json"
+    cli.write_text(json.dumps({"Default": _block("CLI-TOKEN", refresh="CLI-RT")}))
+    monkeypatch.setattr(stdio_server, "_sas_cli_credentials_path", lambda: cli)
+    helper_file.write_text(json.dumps({EP_A: _block("EXPIRED", expiry=_iso(-30), refresh="BADRT")}))
+    monkeypatch.setattr(stdio_server, "_native_device_code_token", lambda: "DEVTOK")
+    bad = MagicMock(status_code=401)
+    bad.text = "invalid_grant"
+    with patch("sas_mcp_server.stdio_server.httpx.post", return_value=bad) as post:
+        assert stdio_server._get_viya_token() == "DEVTOK"
+    assert [c[1]["data"]["refresh_token"] for c in post.call_args_list] == ["BADRT"]
+
+
+def test_the_cli_cache_is_still_used_without_an_own_login(helper_file, tmp_path, monkeypatch):
+    cli = tmp_path / "cli.json"
+    cli.write_text(json.dumps({"Default": _block("CLI-TOKEN")}))
+    monkeypatch.setattr(stdio_server, "_sas_cli_credentials_path", lambda: cli)
+    helper_file.write_text(json.dumps({EP_B: _block("TOK-B")}))
+    assert stdio_server._get_viya_token() == "CLI-TOKEN"
+
+
+def test_a_file_caught_mid_write_is_read_again(helper_file, monkeypatch):
+    """Another server rewriting the file in place must not send this call to the device flow."""
+    helper_file.write_text('{"half')
+    monkeypatch.setattr(stdio_server, "_native_device_code_token", lambda: "DEVTOK")
+
+    def finish_write(_seconds):
+        helper_file.write_text(json.dumps({EP_A: _block("MINE")}))
+
+    monkeypatch.setattr(stdio_server.time, "sleep", finish_write)
+    assert stdio_server._get_viya_token() == "MINE"
 
 
 def test_tagged_default_is_not_offered_to_another_server(helper_file, monkeypatch):
@@ -581,6 +641,7 @@ def test_malformed_default_does_not_hide_a_valid_endpoint_block(helper_file):
 def test_unparseable_file_falls_through(helper_file, monkeypatch):
     helper_file.write_text("{not json")
     monkeypatch.setattr(stdio_server, "_native_device_code_token", lambda: "DEVTOK")
+    monkeypatch.setattr(stdio_server.time, "sleep", lambda _s: None)
     assert stdio_server._get_viya_token() == "DEVTOK"
 
 
@@ -611,7 +672,8 @@ def test_refreshing_the_cli_cache_does_not_touch_its_windows_acl(helper_file, tm
     cli.unlink()
     with patch("sas_mcp_server.stdio_server.httpx.post", return_value=_refresh_ok()):
         assert stdio_server._get_viya_token() == "NEWTOK"
-    assert seen == [helper_file]
+    # restricted as a temp file next to it, before the rename
+    assert [p.name.startswith(f"{helper_file.name}.") and p.name.endswith(".tmp") for p in seen] == [True]
 
 
 # bytes that are not valid text in UTF-8 or in Windows-1252
