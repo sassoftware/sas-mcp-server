@@ -24,6 +24,14 @@ def _private_names_file(tmp_path, monkeypatch):
     """Never read or write the real ~/.sas-mcp-server/endpoints.json."""
     monkeypatch.setattr(auth_login, "NAMES_PATH", tmp_path / "endpoints.json")
 
+
+@pytest.fixture(autouse=True)
+def _console_follows_isatty(monkeypatch):
+    """The tests choose interactive or not by patching ``sys.stdin.isatty``; pytest's
+    own stdin is never a Windows console, so the console check would overrule them."""
+    monkeypatch.setattr(auth_login, "_windows_console", lambda fd: True)
+    monkeypatch.setattr(sys.stdin, "fileno", lambda: 0)  # pytest's stdin has none
+
 # ---------------------------------------------------------------------------
 # _generate_pkce
 # ---------------------------------------------------------------------------
@@ -607,3 +615,43 @@ def test_list_with_no_logins(files, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--list"])
     assert auth_login.main() == 0
     assert "No stored logins" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# prompting only at a real terminal
+# ---------------------------------------------------------------------------
+
+
+def test_nul_on_windows_is_not_a_terminal(tmp_path, monkeypatch, capsys):
+    """Git Bash's ``< /dev/null`` gives Windows' NUL device, for which isatty() is true.
+    The helper must take the two-step path instead of prompting and aborting."""
+    monkeypatch.setattr(auth_login, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--endpoint", "https://v", "--no-browser"])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdin, "fileno", lambda: 0)
+    monkeypatch.setattr(auth_login, "_windows_console", lambda fd: False)
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("must not prompt"))
+    assert auth_login.main() == 0
+    assert "--code <CODE>" in capsys.readouterr().out
+    assert auth_login._read_state()["endpoint"] == "https://v"
+
+
+@pytest.mark.parametrize("broken", [AttributeError, ValueError, OSError])
+def test_a_replaced_or_closed_stdin_is_not_a_terminal(monkeypatch, broken):
+    def isatty():
+        raise broken("no stdin")
+
+    monkeypatch.setattr(sys.stdin, "isatty", isatty)
+    assert auth_login._stdin_is_terminal() is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows console API")
+def test_windows_console_check_against_nul_and_a_file(tmp_path, monkeypatch):
+    monkeypatch.undo()  # use the real check, not the autouse stand-in
+    import os
+
+    with open(os.devnull, "rb") as nul:
+        assert nul.isatty()  # the trap: Windows calls NUL a terminal ...
+        assert auth_login._windows_console(nul.fileno()) is False  # ... but it has no console mode
+    with open(tmp_path / "f", "wb") as f:
+        assert auth_login._windows_console(f.fileno()) is False

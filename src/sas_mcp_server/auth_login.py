@@ -166,6 +166,37 @@ def _exchange(
     return resp.json()
 
 
+def _windows_console(fd: int) -> bool:
+    """Whether *fd* is a real Windows console.
+
+    ``isatty()`` is true for every character device on Windows, including ``NUL``,
+    which is what ``< /dev/null`` in Git Bash and many tool runners hand a program.
+    Only a console has a console mode.
+    """
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    import msvcrt
+
+    try:
+        handle = msvcrt.get_osfhandle(fd)
+    except OSError:
+        return False
+    mode = ctypes.c_ulong()
+    return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
+
+
+def _stdin_is_terminal() -> bool:
+    """Whether someone can type the authorization code at a prompt."""
+    try:
+        if not sys.stdin.isatty():
+            return False
+        fd = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError):  # no stdin, or a replaced one
+        return False
+    return _windows_console(fd)
+
+
 def _write_state(payload: dict) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(payload))
@@ -523,7 +554,7 @@ def main() -> int:
     print(instruction)
     print()
 
-    if not sys.stdin.isatty():
+    if not _stdin_is_terminal():
         # Non-interactive: persist state, tell the user how to finish.
         print(
             "Stdin is not a terminal, so this helper cannot prompt. Once you "

@@ -216,9 +216,11 @@ The install is editable, so code changes from `git pull` still apply on the next
 
 You run `uv run sas-mcp-login` inside a wrapper that does not provide an interactive stdin (CI runners, the Claude Code `!` prefix, `nohup ... &`, etc.) and the helper prints the URL then aborts at the `Authorization code:` prompt.
 
+The helper now takes the two-step path by itself when stdin is not a terminal, including on Windows when stdin is the `NUL` device (`< /dev/null` in Git Bash and many tool runners), which Windows reports as a terminal and which used to end in `Aborted.`. It prints the follow-up command and exits.
+
 ### Fix
 
-Use the two-step variant. The first invocation persists PKCE state to `~/.sas-mcp-server/login-state.json` and exits cleanly; the second exchanges the code:
+If it still prompts and aborts, run the two steps yourself. The first invocation persists PKCE state to `~/.sas-mcp-server/login-state.json` and exits cleanly; the second exchanges the code:
 
 ```sh
 uv run sas-mcp-login --endpoint <VIYA_ENDPOINT>  # opens browser, prints URL, exits
