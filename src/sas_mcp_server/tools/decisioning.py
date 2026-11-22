@@ -30,6 +30,7 @@ from ..helpers import decisioning_assets as assets
 from ..helpers import lookup_helpers as lookups
 from ..helpers.decision_flow_helpers import build_steps
 from ..helpers.folder_helpers import keep_in_folder, resolve_target_folder
+from ..helpers.viya_links import decision_url
 from ..viya_client import (
     contains_filter,
     delete_resource,
@@ -116,6 +117,48 @@ def plain_input_names(code: str) -> tuple[str, list[str]]:
     for name in renamed:
         block = block.replace(f'"{name}"', f'"{name[:-1]}"')
     return code[:start] + block + code[end:], [name[:-1] for name in renamed]
+
+
+# A package declaration on a line of its own: package Name / inline; with the
+# name bare or quoted. The decision's own package is the last one in the code;
+# the ones before it are its rule sets, trees and other steps.
+_PACKAGE = re.compile(r'^[ \t]*package[ \t]+(?:"([^"]+)"|([A-Za-z_]\w*))[ \t]*/[ \t]*inline[ \t]*;', re.M)
+
+
+def module_name(publish_name: str) -> str | None:
+    """The DS2 package name for a module published as *publish_name*.
+
+    Characters other than letters, digits and underscores become underscores,
+    as in the module names SAS Intelligent Decisioning gives. ``None`` when
+    nothing usable is left or the name would start with a digit.
+    """
+    name = re.sub(r"\W+", "_", publish_name.strip()).strip("_")
+    return name if re.fullmatch(r"[A-Za-z_]\w*", name) else None
+
+
+def name_module(code: str, publish_name: str) -> tuple[str, str | None]:
+    """MAS decision code whose module is named after *publish_name*.
+
+    The service generates the decision's package as ``Decision_<revision>``,
+    and MAS takes the module's ID from the package, so every revision would
+    land in a new module that nobody could find by name. SAS Intelligent
+    Decisioning publishes under the name the person chose; this does the same.
+    Returns the code and the module's name, or the code unchanged and ``None``
+    when the name is unusable or would clash with a step's package.
+    """
+    new = module_name(publish_name)
+    packages = list(_PACKAGE.finditer(code))
+    if new is None or not packages:
+        return code, None
+    last = packages[-1]
+    if any((m.group(1) or m.group(2)).lower() == new.lower() for m in packages[:-1]):
+        return code, None
+    old = last.group(2)
+    if old is None:  # a quoted name: rename the declaration only
+        declaration = last.group(0).replace(f'"{last.group(1)}"', new, 1)
+        return code[: last.start()] + declaration + code[last.end():], new
+    # The bare name also appears in the generated log messages; keep them in step.
+    return re.sub(rf"\b{re.escape(old)}\b", new, code), new
 
 
 async def _flow_body(
@@ -614,17 +657,26 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
     async def get_decision_flow(decision_id: str, ctx: Context) -> dict[str, Any]:
         """Fetch the current state of a SAS Intelligent Decisioning flow.
 
+        ``open_url`` opens the decision in SAS Intelligent Decisioning: give
+        it to the person when they ask where to see or edit the decision.
+
         Args:
             decision_id: The decision flow UUID (not its name — list_decision_flows returns both).
         """
         async with viya_session("get_decision_flow", ctx) as client:
-            return await get_json(f"/decisions/flows/{decision_id}", client)
+            decision = await get_json(f"/decisions/flows/{decision_id}", client)
+            decision["open_url"] = decision_url(decision.get("id") or decision_id)
+            return decision
 
     @mcp.tool()
     async def list_decision_flows(
         ctx: Context, limit: int = 20, filter_name: str | None = None
     ) -> list[dict[str, Any]]:
         """List SAS Intelligent Decisioning flows, optionally filtered by name substring.
+
+        Each entry's ``open_url`` opens the decision in SAS Intelligent
+        Decisioning: give it to the person when they ask where to find a
+        decision.
 
         Args:
             limit: Maximum number of results to return (default 20).
@@ -633,7 +685,10 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         filters = contains_filter(filter_name)
         async with viya_session("list_decision_flows", ctx) as client:
             items, _ = await get_paged_items("/decisions/flows", client, limit=limit, filters=filters)
-            return return_items(items, ["id", "name", "majorRevision"])
+            flows = return_items(items, ["id", "name", "majorRevision"])
+            for flow in flows:
+                flow["open_url"] = decision_url(flow["id"])
+            return flows
 
     @mcp.tool()
     async def delete_decision_flow(decision_id: str, ctx: Context) -> str:
@@ -711,6 +766,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         ctx: Context,
         destination_name: str | None = None,
         poll_timeout: float = 60.0,
+        replace_existing: bool = False,
     ) -> dict[str, Any]:
         """Publish a locked decision revision to a Micro Analytic Score (MAS) destination.
 
@@ -720,13 +776,18 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         error mentioning rule set code generation is an environment-level
         issue, not a bad payload.
 
-        Publishing is asynchronous and the resulting MAS module ID is
-        server-generated — it is NOT ``publish_name``. This polls the
-        publish job (``properties.masModules[0].jobUri``) until it reaches a
-        terminal state and returns the real ``moduleId`` alongside the
-        publish record, so the result is directly usable with
-        ``get_mas_module_step_signature``/``score_data`` without a separate
-        lookup via ``list_mas_modules``.
+        The module is named after ``publish_name``, as SAS Intelligent
+        Decisioning names it: ``Loan_Pre_Approval`` becomes the module
+        ``loan_pre_approval`` (anything but letters, digits and underscores
+        becomes an underscore), so it can be found by name in
+        ``list_mas_modules``. When a module of that name exists already the
+        publish fails ("already in use"): pick another name, or, to put a
+        new revision in its place, pass ``replace_existing`` — after asking
+        the person when the module is not one they published themselves.
+        Publishing is asynchronous: this polls the publish job
+        (``properties.masModules[0].jobUri``) until it reaches a terminal
+        state and returns the module's ``moduleId`` alongside the publish
+        record, ready for ``get_mas_module_step_signature``/``score_data``.
 
         The code is generated for MAS, as SAS Intelligent Decisioning does when
         it publishes, so lookup tables are read from MAS. Unlike a module the
@@ -738,14 +799,17 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             decision_id: The decision flow UUID (not its name — list_decision_flows returns both).
             revision_id: The locked revision UUID (see
                 ``lock_decision_flow_revision``).
-            publish_name: The published name shown in Model Publish (not the
-                MAS module ID — see above).
+            publish_name: The published name shown in Model Publish, which
+                also names the MAS module (see above).
             destination_name: A Micro Analytic Score publishing destination.
                 Default: the deployment's ``MCP_DEFAULT_PUBLISH_DESTINATION``,
                 ``maslocal`` unless an administrator changed it. The code is
                 generated for MAS, so the destination must be a MAS one.
             poll_timeout: Max seconds to wait for the publish job to reach a
                 terminal state before giving up (default 60.0).
+            replace_existing: Replace the code of a MAS module that already
+                has this name (default false: such a publish fails). Scoring
+                through the module then runs this revision.
         """
         async with viya_session("publish_decision_flow", ctx) as client:
             # Code for the default target (CAS) reads lookup tables as CAS formats,
@@ -757,6 +821,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             )
             raise_for_viya_status(code_resp)
             code, _ = plain_input_names(code_resp.text)
+            code, _ = name_module(code, publish_name)
             body = {
                 "name": publish_name,
                 "destinationName": destination_name or config.MCP_DEFAULT_PUBLISH_DESTINATION,
@@ -773,6 +838,8 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 f"{VIYA_ENDPOINT}/modelPublish/models",
                 content=json.dumps(body).encode(),
                 headers={"Content-Type": "application/vnd.sas.models.publishing.request+json"},
+                # Verified live: the module's code is replaced, not kept.
+                params={"reuseExistingModules": "true"} if replace_existing else None,
             )
             raise_for_viya_status(resp)
             data = resp.json()

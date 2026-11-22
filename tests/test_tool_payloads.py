@@ -2317,7 +2317,8 @@ async def test_publish_decision_flow_request(mcp_server_with_mock_client):
     sent_body = json.loads(mock_client.post.call_args[1]["content"])
     assert sent_body["name"] == "CreditRisk_Decision_v1"
     assert sent_body["destinationName"] == "maslocal"
-    assert sent_body["modelContents"][0]["code"] == "package Decision_dec_1 / inline;"
+    # The module is named after the publish name, as SAS Intelligent Decisioning does.
+    assert sent_body["modelContents"][0]["code"] == "package CreditRisk_Decision_v1 / inline;"
     assert sent_body["modelContents"][0]["sourceUri"] == "/decisions/flows/dec-1/revisions/rev-1"
     assert result["id"] == "pub-1"
     assert result["moduleId"] == "decision_rev_1"
