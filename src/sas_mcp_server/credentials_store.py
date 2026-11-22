@@ -17,6 +17,7 @@ import errno
 import json
 import logging
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -309,3 +310,87 @@ def remove_login(path: Path, endpoint: str) -> tuple[list[str], bool]:
 def endpoint_keys(data: dict[str, Any]) -> list[str]:
     """The keys of *data* that hold a per-endpoint login (not ``Default`` or other entries)."""
     return [k for k, v in data.items() if k != "Default" and "://" in k and isinstance(v, dict)]
+
+
+# --- names for endpoints (``sas-mcp-login zeus``) ------------------------------------
+#
+# Kept in their own file, ``endpoints.json`` next to the credentials: a name is a
+# convenience for typing the login command, not a secret, and token refreshes never
+# rewrite it. The stdio server does not read it; VIYA_ENDPOINT stays a real URL.
+
+_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+
+
+class EndpointNotFoundError(ValueError):
+    """A name that is neither a saved name nor a single stored endpoint's host."""
+
+
+def valid_name(name: str) -> bool:
+    """Whether *name* can name an endpoint: letters, digits, ``.``, ``_`` and ``-``."""
+    return bool(_NAME.fullmatch(name.lower()))
+
+
+def load_names(path: Path) -> dict[str, str]:
+    """``{name: normalised endpoint}`` from the names file; ``{}`` when it is missing or unreadable."""
+    try:
+        data = load_blocks(path)
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not read endpoint names at %s: %s", path, exc)
+        return {}
+    return {
+        k.lower(): normalize_endpoint(v)
+        for k, v in data.items()
+        if isinstance(v, str) and "://" in v and valid_name(k)
+    }
+
+
+def save_name(path: Path, name: str, endpoint: str) -> str | None:
+    """Point *name* at *endpoint*; return the endpoint it pointed at before, if another."""
+    name = name.lower()
+    target = normalize_endpoint(endpoint)
+    path = _resolved(path)
+    with _locked(path):
+        data = _blocks_for_update(path)
+        previous = data.get(name)
+        data[name] = target
+        _write_atomic(path, data, harden=True)
+    if isinstance(previous, str) and normalize_endpoint(previous) != target:
+        return normalize_endpoint(previous)
+    return None
+
+
+def _host_labels(endpoint: str) -> set[str]:
+    try:
+        host = (urlsplit(endpoint).hostname or "").lower()
+    except ValueError:
+        return set()
+    return {host, *host.split(".")} - {""}
+
+
+def resolve_endpoint(value: str, names: dict[str, str], known: list[str]) -> tuple[str, str]:
+    """Turn what the user typed into an endpoint URL: ``(url, how)``.
+
+    *how* is ``"url"`` for a full URL (returned as typed), ``"name"`` for a saved
+    name, or ``"host"`` when *value* is one dot-separated part of the host of exactly
+    one endpoint in *known* (``zeus`` for ``https://viya4-s2.zeus.example.com``).
+    Raises :class:`EndpointNotFoundError` for anything else, naming the candidates when
+    the word fits several endpoints.
+    """
+    raw = value.strip()
+    if "://" in raw:
+        return raw, "url"
+    word = raw.lower()
+    if word in names:
+        return names[word], "name"
+    matches = sorted({ep for ep in known if word in _host_labels(ep)})
+    if len(matches) == 1:
+        return matches[0], "host"
+    if matches:
+        raise EndpointNotFoundError(
+            f"'{raw}' matches several endpoints: {', '.join(matches)}. "
+            "Give the full URL, or save a name with --name."
+        )
+    raise EndpointNotFoundError(
+        f"'{raw}' is not a saved name or part of a stored endpoint's host. Give the full URL "
+        "(https://...) the first time, optionally with --name to save a name for it."
+    )

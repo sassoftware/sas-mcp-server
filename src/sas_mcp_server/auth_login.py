@@ -33,6 +33,14 @@ Usage:
 
   uv run sas-mcp-login --logout --endpoint <URL>
       Removes the stored login for that endpoint; other endpoints are kept.
+
+  uv run sas-mcp-login --endpoint <URL> --name <NAME>
+      Logs in and saves NAME for the endpoint, so later commands can say
+      ``sas-mcp-login NAME`` (or ``--endpoint NAME``, ``--logout NAME``). A word
+      that is one part of exactly one stored endpoint's host name works too.
+
+  uv run sas-mcp-login --list
+      Lists the stored logins with their names and expiry; no tokens are shown.
 """
 
 import argparse
@@ -52,7 +60,18 @@ from urllib.parse import urlencode
 import httpx
 from dotenv import load_dotenv
 
-from .credentials_store import endpoint_keys, load_blocks, normalize_endpoint, remove_login, update_block
+from .credentials_store import (
+    EndpointNotFoundError,
+    endpoint_keys,
+    load_blocks,
+    load_names,
+    normalize_endpoint,
+    remove_login,
+    resolve_endpoint,
+    save_name,
+    update_block,
+    valid_name,
+)
 from .env import env_bool
 
 load_dotenv()
@@ -60,6 +79,7 @@ load_dotenv()
 DEFAULT_HELPER_CLIENT_ID = "vscode"
 CACHE_PATH = Path.home() / ".sas-mcp-server" / "credentials.json"
 STATE_PATH = Path.home() / ".sas-mcp-server" / "login-state.json"
+NAMES_PATH = Path.home() / ".sas-mcp-server" / "endpoints.json"
 
 
 def _generate_pkce() -> tuple[str, str]:
@@ -208,17 +228,121 @@ def _note_unbound_default(key: str) -> None:
     )
 
 
+def _stored_logins() -> dict:
+    try:
+        return load_blocks(CACHE_PATH)
+    except (OSError, ValueError):
+        return {}
+
+
+def _known_endpoints(logins: dict, names: dict[str, str]) -> list[str]:
+    """Every endpoint this machine knows of: stored logins, a tagged ``Default``, saved names."""
+    known = set(endpoint_keys(logins)) | set(names.values())
+    default = logins.get("Default")
+    if isinstance(default, dict) and isinstance(default.get("endpoint"), str):
+        known.add(normalize_endpoint(default["endpoint"]))
+    return sorted(known)
+
+
+def _resolve(value: str) -> tuple[str, str]:
+    """The endpoint URL for a URL, a saved name or a host word, and a note on how a word was read."""
+    if "://" in value:
+        return value.strip(), ""
+    names = load_names(NAMES_PATH)
+    url, how = resolve_endpoint(value, names, _known_endpoints(_stored_logins(), names))
+    if how == "name":
+        return url, f" (saved name '{value.strip().lower()}')"
+    if how == "host":
+        return url, f" (matched '{value.strip()}' in its host name)"
+    return url, ""
+
+
+def _remember_name(name: str | None, endpoint: str) -> None:
+    if not name:
+        return
+    try:
+        previous = save_name(NAMES_PATH, name, endpoint)
+    except (OSError, ValueError) as exc:
+        print(f"Could not save the name '{name}' in {NAMES_PATH}: {exc}", file=sys.stderr)
+        return
+    moved = f" (it pointed at {previous} before)" if previous else ""
+    print(f"Saved the name '{name.lower()}' for {normalize_endpoint(endpoint)}{moved}.")
+    print(f"Next time: uv run sas-mcp-login {name.lower()}")
+
+
+def _status(block: object) -> str:
+    if not isinstance(block, dict):
+        return "no login"
+    raw = block.get("expiry")
+    try:
+        expiry = datetime.fromisoformat(str(raw).replace("Z", "+00:00")) if raw else None
+    except ValueError:
+        expiry = None
+    if expiry is not None and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=UTC)
+    if expiry is None or expiry > datetime.now(UTC):
+        until = f" until {expiry.astimezone(UTC):%Y-%m-%d %H:%M} UTC" if expiry else ""
+        return f"valid{until}"
+    if block.get("refresh-token"):
+        return "expired, refreshed on next use"
+    return "expired, log in again"
+
+
+def _list_logins() -> int:
+    """Print the stored logins and saved names; never the tokens."""
+    try:
+        logins = load_blocks(CACHE_PATH)
+    except (OSError, ValueError) as exc:
+        print(f"Could not read {CACHE_PATH}: {exc}", file=sys.stderr)
+        return 1
+    names = load_names(NAMES_PATH)
+    rows = []
+    for endpoint in _known_endpoints(logins, names):
+        tagged = [n for n, ep in sorted(names.items()) if ep == endpoint]
+        rows.append((", ".join(tagged) or "-", endpoint, _status(logins.get(endpoint))))
+    default = logins.get("Default")
+    if isinstance(default, dict):
+        bound = default.get("endpoint")
+        where = f"legacy, for {normalize_endpoint(bound)}" if isinstance(bound, str) else "legacy, no endpoint recorded"
+        rows.append(("Default", f"({where})", _status(default)))
+    if not rows:
+        print(f"No stored logins in {CACHE_PATH}.")
+        return 0
+    widths = [max(len(r[i]) for r in [("NAME", "ENDPOINT", "LOGIN"), *rows]) for i in range(2)]
+    for name, endpoint, status in [("NAME", "ENDPOINT", "LOGIN"), *rows]:
+        print(f"{name:<{widths[0]}}  {endpoint:<{widths[1]}}  {status}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="SAS Viya zero-prereq OAuth login helper for sas-mcp-server stdio mode.",
     )
     parser.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        metavar="ENDPOINT_OR_NAME",
+        help="Same as --endpoint, so `sas-mcp-login zeus` works",
+    )
+    parser.add_argument(
         "--endpoint",
         default=None,
         help=(
-            "SAS Viya endpoint (default: VIYA_ENDPOINT from environment; with --code, "
+            "SAS Viya endpoint: a URL, a name saved with --name, or one part of a stored "
+            "endpoint's host name (default: VIYA_ENDPOINT from environment; with --code, "
             "the endpoint of the pending login)"
         ),
+    )
+    parser.add_argument(
+        "--name",
+        default=None,
+        help="Save this name for the endpoint once the login succeeds, for later commands",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List the stored logins and saved names (no tokens) and exit",
     )
     parser.add_argument(
         "--client-id",
@@ -263,8 +387,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.target and args.endpoint:
+        parser.error("give the endpoint once: either as the argument or with --endpoint")
+    args.endpoint = args.endpoint or args.target
+    if args.list:
+        return _list_logins()
     if args.logout and args.code:
         parser.error("--logout cannot be combined with --code")
+    if args.name is not None and (args.logout or not valid_name(args.name)):
+        parser.error(
+            "--name cannot be combined with --logout"
+            if args.logout
+            else f"--name {args.name!r}: use letters, digits, '.', '_' and '-' (up to 64)"
+        )
     # With --code the pending login already records its endpoint, so the environment
     # (which may point at a different deployment) is not consulted.
     if not args.endpoint and not args.code:
@@ -273,6 +408,13 @@ def main() -> int:
             parser.error(
                 "VIYA_ENDPOINT is not set in the environment and --endpoint was not given"
             )
+    how = ""
+    if args.endpoint:
+        try:
+            args.endpoint, how = _resolve(args.endpoint)
+        except EndpointNotFoundError as exc:
+            print(exc, file=sys.stderr)
+            return 1
 
     if args.logout:
         key = normalize_endpoint(args.endpoint)
@@ -334,6 +476,7 @@ def main() -> int:
             return 1
         _clear_state()
         print(f"Token cached at: {path} (for {normalize_endpoint(state['endpoint'])})")
+        _remember_name(args.name or state.get("name"), state["endpoint"])
         print(
             "Stdio mode (`uv run app-stdio` or the container's `app-stdio` "
             "command) will read this file automatically. Re-run "
@@ -351,9 +494,10 @@ def main() -> int:
         "client_id": args.client_id,
         "redirect_uri": redirect_uri or "",
         "verifier": verifier,
+        "name": args.name or "",
     })
 
-    print(f"Endpoint:    {args.endpoint}")
+    print(f"Endpoint:    {args.endpoint}{how}")
     print(f"Client ID:   {args.client_id}")
     print(f"Redirect:    {redirect_uri or '(none — SAS Logon will show the code on a page)'}")
     print(f"SSL verify:  {verify_ssl}")
@@ -421,6 +565,7 @@ def main() -> int:
     _clear_state()
     print()
     print(f"Token cached at: {path} (for {normalize_endpoint(args.endpoint)})")
+    _remember_name(args.name, args.endpoint)
     print(
         "Stdio mode (`uv run app-stdio` or the container's `app-stdio` command) "
         "will read this file automatically. Re-run `sas-mcp-login` when the "

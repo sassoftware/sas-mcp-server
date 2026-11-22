@@ -18,6 +18,12 @@ import pytest
 
 from sas_mcp_server import auth_login
 
+
+@pytest.fixture(autouse=True)
+def _private_names_file(tmp_path, monkeypatch):
+    """Never read or write the real ~/.sas-mcp-server/endpoints.json."""
+    monkeypatch.setattr(auth_login, "NAMES_PATH", tmp_path / "endpoints.json")
+
 # ---------------------------------------------------------------------------
 # _generate_pkce
 # ---------------------------------------------------------------------------
@@ -479,3 +485,125 @@ def test_logout_with_code_is_rejected(monkeypatch):
     _login_main(monkeypatch, "https://a", "--logout", "--code", "CODE")
     with pytest.raises(SystemExit):
         auth_login.main()
+
+
+# ---------------------------------------------------------------------------
+# names for endpoints, host words and --list
+# ---------------------------------------------------------------------------
+
+ZEUS = "https://viya4-s2.zeus.example.com"
+PROD = "https://viya-prod.example.com"
+
+
+def _interactive_login(monkeypatch, *argv):
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", *argv, "--no-browser"])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *_: "CODE")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value={"access_token": "AT", "refresh_token": "RT", "expires_in": 3600})
+    return patch("sas_mcp_server.auth_login.httpx.post", return_value=resp)
+
+
+@pytest.fixture
+def files(tmp_path, monkeypatch):
+    monkeypatch.setattr(auth_login, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(auth_login, "CACHE_PATH", tmp_path / "credentials.json")
+    return tmp_path
+
+
+def test_a_saved_name_logs_in_to_its_endpoint(files, monkeypatch, capsys):
+    with _interactive_login(monkeypatch, "--endpoint", ZEUS, "--name", "Zeus"):
+        assert auth_login.main() == 0
+    assert json.loads((files / "endpoints.json").read_text()) == {"zeus": ZEUS}
+    assert "sas-mcp-login zeus" in capsys.readouterr().out
+
+    with _interactive_login(monkeypatch, "zeus") as post:
+        assert auth_login.main() == 0
+    assert post.call_args[0][0] == f"{ZEUS}/SASLogon/oauth/token"
+    assert "saved name 'zeus'" in capsys.readouterr().out
+
+
+def test_a_host_word_matches_a_stored_endpoint(files, monkeypatch, capsys):
+    (files / "credentials.json").write_text(json.dumps({ZEUS: {"access-token": "A"}, PROD: {"access-token": "P"}}))
+    with _interactive_login(monkeypatch, "--endpoint", "zeus") as post:
+        assert auth_login.main() == 0
+    assert post.call_args[0][0] == f"{ZEUS}/SASLogon/oauth/token"
+    assert "matched 'zeus'" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("word", "message"),
+    [("example", "matches several endpoints"), ("nowhere", "not a saved name"), ("viya", "not a saved name")],
+)
+def test_an_unclear_word_is_refused(files, monkeypatch, capsys, word, message):
+    """Only whole parts of a host count, and only when they point at one endpoint."""
+    (files / "credentials.json").write_text(json.dumps({ZEUS: {"access-token": "A"}, PROD: {"access-token": "P"}}))
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", word, "--no-browser"])
+    with patch("sas_mcp_server.auth_login.httpx.post") as post:
+        assert auth_login.main() == 1
+        post.assert_not_called()
+    assert message in capsys.readouterr().err
+    assert not (files / "state.json").exists()
+
+
+def test_logout_by_name(files, monkeypatch):
+    (files / "credentials.json").write_text(json.dumps({ZEUS: {"access-token": "A"}, PROD: {"access-token": "P"}}))
+    (files / "endpoints.json").write_text(json.dumps({"z": ZEUS}))
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--logout", "z"])
+    assert auth_login.main() == 0
+    assert list(json.loads((files / "credentials.json").read_text())) == [PROD]
+    assert json.loads((files / "endpoints.json").read_text()) == {"z": ZEUS}  # the name stays, for logging in again
+
+
+def test_two_step_login_keeps_the_name_for_the_second_step(files, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--endpoint", ZEUS, "--name", "zeus", "--no-browser"])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    assert auth_login.main() == 0
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value={"access_token": "AT", "expires_in": 60})
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--code", "C"])
+    with patch("sas_mcp_server.auth_login.httpx.post", return_value=resp):
+        assert auth_login.main() == 0
+    assert json.loads((files / "endpoints.json").read_text()) == {"zeus": ZEUS}
+
+
+def test_renaming_says_where_the_name_pointed(files, monkeypatch, capsys):
+    (files / "endpoints.json").write_text(json.dumps({"main": PROD}))
+    with _interactive_login(monkeypatch, "--endpoint", ZEUS, "--name", "main"):
+        assert auth_login.main() == 0
+    assert f"it pointed at {PROD} before" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--name", "has space"], ["--name", "-x"], ["--logout", "--name", "zeus"], [ZEUS, "--endpoint", ZEUS]],
+)
+def test_bad_name_arguments_are_refused(files, monkeypatch, argv):
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", *(["--endpoint", ZEUS] if argv[0] == "--name" else []), *argv])
+    with pytest.raises(SystemExit):
+        auth_login.main()
+
+
+def test_list_shows_names_and_expiry_but_no_tokens(files, monkeypatch, capsys):
+    (files / "credentials.json").write_text(json.dumps({
+        ZEUS: {"access-token": "SECRET-A", "refresh-token": "SECRET-R", "expiry": "2000-01-01T00:00:00+00:00"},
+        PROD: {"access-token": "SECRET-P", "expiry": "2999-01-01T00:00:00+00:00"},
+        "Default": {"access-token": "SECRET-D"},
+    }))
+    (files / "endpoints.json").write_text(json.dumps({"zeus": ZEUS}))
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--list"])
+    assert auth_login.main() == 0
+    out = capsys.readouterr().out
+    assert "SECRET" not in out
+    zeus_line = next(line for line in out.splitlines() if ZEUS in line)
+    assert zeus_line.startswith("zeus") and "expired, refreshed on next use" in zeus_line
+    assert "valid until 2999-01-01" in out
+    assert "legacy, no endpoint recorded" in out
+
+
+def test_list_with_no_logins(files, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["sas-mcp-login", "--list"])
+    assert auth_login.main() == 0
+    assert "No stored logins" in capsys.readouterr().out

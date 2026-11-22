@@ -459,3 +459,44 @@ def test_concurrent_updates_keep_every_login(tmp_path):
     finally:
         store.load_blocks = store_load
     assert sorted(json.loads(p.read_text())) == sorted(["seed", *(f"https://{i}" for i in range(8))])
+
+
+# --- endpoint names -------------------------------------------------------------------
+
+
+def test_names_are_saved_lower_case_and_normalised(tmp_path):
+    p = tmp_path / "endpoints.json"
+    assert store.save_name(p, "Zeus", "HTTPS://Viya.Example.com:443/") is None
+    assert store.load_names(p) == {"zeus": "https://viya.example.com"}
+    assert store.save_name(p, "zeus", "https://other.example.com") == "https://viya.example.com"
+
+
+def test_unusable_entries_in_the_names_file_are_skipped(tmp_path):
+    p = tmp_path / "endpoints.json"
+    p.write_text(json.dumps({"ok": "https://a", "no url": "https://b", "num": 5, "nourl": "a.example.com"}))
+    assert store.load_names(p) == {"ok": "https://a"}
+    p.write_text("{broken")
+    assert store.load_names(p) == {}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://typed.example.com/", ("https://typed.example.com/", "url")),
+        ("Prod", ("https://viya-prod.example.com", "name")),
+        ("zeus", ("https://viya4-s2.zeus.example.com", "host")),
+        ("viya4-s2", ("https://viya4-s2.zeus.example.com", "host")),
+        ("viya4-s2.zeus.example.com", ("https://viya4-s2.zeus.example.com", "host")),
+    ],
+)
+def test_resolve_endpoint(value, expected):
+    names = {"prod": "https://viya-prod.example.com"}
+    known = ["https://viya4-s2.zeus.example.com", "https://viya-prod.example.com"]
+    assert store.resolve_endpoint(value, names, known) == expected
+
+
+@pytest.mark.parametrize("value", ["example", "viya", "zeu", ""])
+def test_resolve_endpoint_refuses_unclear_words(value):
+    known = ["https://viya4-s2.zeus.example.com", "https://viya-prod.example.com"]
+    with pytest.raises(store.EndpointNotFoundError):
+        store.resolve_endpoint(value, {}, known)
