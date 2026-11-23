@@ -3,21 +3,21 @@
 ## [1.22.0] - 2026-11-23
 
 ### Added
-- **Decision scoring view (MCP Apps)** on `get_mas_module_step_signature` and `score_data`. Looking up a published decision's inputs shows a form built from them, so a person can score a case without spelling out every value in the chat. After scoring, a card shows the outcome and its reason, the other outputs and the inputs, with Copy summary and a link that opens the decision in SAS Intelligent Decisioning. When the assistant scores a case itself, the same card shows the result. A read-only deployment shows the form without its Score button.
-- **`MCP_EMAIL_DRAFT`** (`off` by default, `outlook` or `mail`; chart: `server.emailDraft`) adds a **Draft email** button to the scoring card. It opens a draft of the result in Outlook on the web or in the default mail app, for the person to address and send. Nothing is sent by the server or the view. An unknown value stops the server with a reason.
-- **`get_mas_module_step_signature` names the module and the decision behind it.** The result has `module` (its name and where it was published from) and, for a module published from a decision, `decision` with the decision's name, revision and `open_url`.
-- **`list_decision_flows` and `get_decision_flow` return `open_url`**, the decision's page in SAS Intelligent Decisioning, so the assistant can answer "where is that decision?" with a link.
-- **`publish_decision_flow` takes `replace_existing`**, which replaces the code of a MAS module that already has the name.
+- **Decision scoring view (MCP Apps)** (#78) on `get_mas_module_step_signature` and `score_data`. Looking up a published decision's inputs shows a form built from them, so a person can score a case without spelling out every value in the chat. After scoring, a card shows the outcome and its reason, the other outputs and the inputs, with Copy summary and a link that opens the decision in SAS Intelligent Decisioning. When the assistant scores a case itself, the same card shows the result. A read-only deployment shows the form without its Score button.
+- **`MCP_EMAIL_DRAFT`** (#78) (`off` by default, `outlook` or `mail`; chart: `server.emailDraft`) adds a **Draft email** button to the scoring card. It opens a draft of the result in Outlook on the web or in the default mail app, for the person to address and send. Nothing is sent by the server or the view. An unknown value stops the server with a reason.
+- **`get_mas_module_step_signature` names the module and the decision behind it.** (#78) The result has `module` (its name and where it was published from) and, for a module published from a decision, `decision` with the decision's name, revision and `open_url`.
+- **`list_decision_flows` and `get_decision_flow` return `open_url`** (#78), the decision's page in SAS Intelligent Decisioning, so the assistant can answer "where is that decision?" with a link.
+- **`publish_decision_flow` takes `replace_existing`** (#78), which replaces the code of a MAS module that already has the name.
 
 ### Changed
-- **`publish_decision_flow` names the MAS module after `publish_name`**, as SAS Intelligent Decisioning does: `Loan_Pre_Approval` becomes the module `loan_pre_approval`, which `list_mas_modules` finds by name. Before, the module was named after the revision (`decision_<revision id>`).
-- **`COMPATIBILITY.md` covers the changed calls** of `get_mas_module_step_signature` and `publish_decision_flow`. Both are ✓ in every release checked.
+- **`publish_decision_flow` names the MAS module after `publish_name`** (#78), as SAS Intelligent Decisioning does: `Loan_Pre_Approval` becomes the module `loan_pre_approval`, which `list_mas_modules` finds by name. Before, the module was named after the revision (`decision_<revision id>`).
+- **`COMPATIBILITY.md` covers the changed calls** (#78) of `get_mas_module_step_signature` and `publish_decision_flow`. Both are ✓ in every release checked.
 
 ### Fixed
-- **Microsoft 365 Copilot can sign in again.** With `MCP_OAUTH_CLIENT_SECRETS=true`, the token endpoint accepts a client that names itself only in its Basic authorization header, as RFC 6749 allows. Microsoft's sign-in service started sending its client id that way in November 2026. The server answered `invalid_client: Missing client_id`, so Copilot's sign-in failed right after the SAS Logon step. Token refreshes are covered too.
+- **Microsoft 365 Copilot can sign in again.** (#78) With `MCP_OAUTH_CLIENT_SECRETS=true`, the token endpoint accepts a client that names itself only in its Basic authorization header, as RFC 6749 allows. Microsoft's sign-in service started sending its client id that way in November 2026. The server answered `invalid_client: Missing client_id`, so Copilot's sign-in failed right after the SAS Logon step. Token refreshes are covered too.
 
 ### Upgrading
-- **Publishing a decision again under a name that is already published** now fails with "already in use" unless the call passes `replace_existing=true`. Before, every publish created a new module named after the revision. Modules published by earlier versions keep their names.
+- **Publishing a decision again under a name that is already published** (#78) now fails with "already in use" unless the call passes `replace_existing=true`. Before, every publish created a new module named after the revision. Modules published by earlier versions keep their names.
 
 ## [1.21.0] - 2026-11-22
 
