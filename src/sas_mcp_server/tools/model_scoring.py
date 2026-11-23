@@ -10,6 +10,7 @@ import httpx
 from fastmcp import Context, FastMCP
 
 from ..helpers import model_helpers as mh
+from ..helpers.viya_links import decision_from_uri, decision_url
 from ..viya_client import (
     contains_filter,
     filter_literal,
@@ -54,6 +55,52 @@ def match_input_names(input_data: dict[str, Any], step_inputs: list[str]) -> dic
 
 def _inputs(input_data: dict[str, Any]) -> dict[str, Any]:
     return {"inputs": [{"name": k, "value": v} for k, v in input_data.items()]}
+
+
+def module_source_uri(module: dict[str, Any]) -> str | None:
+    """Where a MAS module came from: its ``sourceURI`` property, if it has one.
+
+    A decision published to MAS records ``/decisions/flows/<id>/revisions/<id>``.
+    """
+    for prop in module.get("properties") or []:
+        if isinstance(prop, dict) and str(prop.get("name", "")).lower() == "sourceuri":
+            return prop.get("value") or None
+    return None
+
+
+async def describe_module(client: httpx.AsyncClient, module_id: str) -> dict[str, Any]:
+    """The module's name, and the decision it was published from when it was one.
+
+    The decision's name is a courtesy: a decision the caller may not read, or
+    one deleted since, still yields its ID and link.
+    """
+    module = await get_json(f"/microanalyticScore/modules/{module_id}", client)
+    out: dict[str, Any] = {
+        "module": {
+            key: value
+            for key, value in (
+                ("id", module.get("id") or module_id),
+                ("name", module.get("name")),
+                ("description", module.get("description")),
+                ("source_uri", module_source_uri(module)),
+            )
+            if value
+        }
+    }
+    source = decision_from_uri(module_source_uri(module))
+    if source is not None:
+        decision_id, revision_id = source
+        decision: dict[str, Any] = {"id": decision_id, "open_url": decision_url(decision_id)}
+        if revision_id:
+            decision["revision_id"] = revision_id
+        try:
+            flow = await get_json(f"/decisions/flows/{decision_id}", client)
+            if flow.get("name"):
+                decision["name"] = flow["name"]
+        except httpx.HTTPStatusError:
+            pass
+        out["decision"] = decision
+    return out
 
 
 def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
@@ -110,14 +157,25 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         """Fetch a MAS module step's input/output variable signature.
 
         Call before ``score_data`` to know the exact variable names, types,
-        and order to pass as inputs, and what outputs to expect.
+        and order to pass as inputs, and what outputs to expect. ``module``
+        gives the module's name; for a published decision, ``decision`` names
+        the decision it came from, with ``open_url`` to open it in SAS
+        Intelligent Decisioning.
+
+        In a host that shows MCP Apps views (Microsoft 365 Copilot, Claude,
+        ChatGPT), the result is a form the person fills in and scores from,
+        with the result shown as a card they can email. There, when the
+        person wants to score one case, call this and let them use the form
+        rather than asking for each input in the chat.
 
         Args:
             module_id: The MAS module ID (see ``list_mas_modules``).
             step_id: The step within the module to inspect (default "execute").
         """
         async with viya_session("get_mas_module_step_signature", ctx) as client:
-            return await get_json(f"/microanalyticScore/modules/{module_id}/steps/{step_id}", client)
+            described = await describe_module(client, module_id)
+            step = await get_json(f"/microanalyticScore/modules/{module_id}/steps/{step_id}", client)
+            return {**step, **described}
 
     @mcp.tool()
     async def score_data(module_id: str, step_id: str, input_data: dict, ctx: Context) -> dict[str, Any]:
@@ -127,6 +185,9 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         inputs with a trailing underscore (``credit_score_``); the plain names
         are accepted and mapped, and the result's ``inputs_renamed`` says so.
         (``publish_decision_flow`` keeps the plain names.)
+
+        In a host that shows MCP Apps views, the result is a card the person
+        can turn into an email draft for a colleague.
 
         Args:
             module_id: MAS module ID.

@@ -81,6 +81,12 @@
           "default": "true"
         },
         {
+          "name": "MCP_EMAIL_DRAFT",
+          "description": "Email draft on the decision scoring view's result card: outlook (an Outlook on the web draft), mail (the default mail app) or off (no email controls). The person sends the draft themselves; nothing is sent by the server.",
+          "format": "string",
+          "default": "off"
+        },
+        {
           "name": "MCP_STATELESS_HTTP",
           "description": "Serve HTTP requests without an MCP session. Needed by clients that speak only the sessionless 2026-07-28 protocol revision (claude.ai custom connectors); the legacy handshake works either way.",
           "format": "string",

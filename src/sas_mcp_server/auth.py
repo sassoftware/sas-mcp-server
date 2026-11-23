@@ -10,9 +10,12 @@ nothing in ``config`` — that keeps the import one-directional (``config``
 imports ``auth``) and makes the class testable on its own.
 """
 
+import base64
+import binascii
 import json
 import logging
 from typing import Any
+from urllib.parse import parse_qsl, unquote, urlencode
 
 from fastmcp.server.auth import OAuthProxy
 from mcp.server.auth.provider import AccessToken
@@ -24,6 +27,7 @@ logger = logging.getLogger(__name__)
 # The token-endpoint authentication methods that involve a client secret.
 SECRET_AUTH_METHODS = ("client_secret_basic", "client_secret_post")
 _METADATA_PATH = "/.well-known/oauth-authorization-server"
+_TOKEN_PATH = "/token"
 
 
 class PermissiveOAuthProxy(OAuthProxy):
@@ -87,22 +91,29 @@ class PermissiveOAuthProxy(OAuthProxy):
         await self._client_store.put(key=client_id, value=stored)
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
-        """The proxy's routes; with *client_secrets*, the authorization-server
-        metadata also lists the secret-based methods, since a client that
-        requires one reads the metadata before it registers."""
+        """The proxy's routes; with *client_secrets*, two of them are wrapped.
+
+        The authorization-server metadata also lists the secret-based methods,
+        since a client that requires one reads the metadata before it
+        registers. The token endpoint accepts a ``client_secret_basic`` client
+        that names itself only in its Basic header (see :class:`_ClientIdFromBasic`).
+        """
         routes = super().get_routes(mcp_path)
         if not self._client_secrets:
             return routes
-        return [
-            Route(
-                route.path,
-                endpoint=_AdvertiseSecretMethods(route.app),
-                methods=sorted(route.methods or ["GET", "OPTIONS"]),
+        wrapped: list[Route] = []
+        for route in routes:
+            if isinstance(route, Route) and route.path.startswith(_METADATA_PATH):
+                endpoint: Any = _AdvertiseSecretMethods(route.app)
+            elif isinstance(route, Route) and route.path == _TOKEN_PATH:
+                endpoint = _ClientIdFromBasic(route.app)
+            else:
+                wrapped.append(route)
+                continue
+            wrapped.append(
+                Route(route.path, endpoint=endpoint, methods=sorted(route.methods or ["GET", "OPTIONS"]))
             )
-            if isinstance(route, Route) and route.path.startswith(_METADATA_PATH)
-            else route
-            for route in routes
-        ]
+        return wrapped
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         validated = await super().load_access_token(token)
@@ -164,3 +175,84 @@ class _AdvertiseSecretMethods:
             await send({"type": "http.response.body", "body": body})
 
         await self._app(scope, receive, amend)
+
+
+def _basic_client_id(authorization: bytes) -> str | None:
+    """The client id in a ``Basic`` Authorization header, else ``None``.
+
+    URL-decoded, as RFC 6749 §2.3.1 has the client encode it, and as the SDK's
+    authenticator decodes it before comparing it with the form's.
+    """
+    scheme, _, credentials = authorization.partition(b" ")
+    if scheme.lower() != b"basic":
+        return None
+    try:
+        decoded = base64.b64decode(credentials.strip(), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return None
+    client_id, colon, _ = decoded.partition(":")
+    return unquote(client_id) if colon and client_id else None
+
+
+class _ClientIdFromBasic:
+    """ASGI wrapper for the token route: a ``client_secret_basic`` client may
+    name itself in its Basic header alone.
+
+    RFC 6749 §2.3.1 puts the id and secret of such a client in the
+    Authorization header; the body need not repeat the id. The MCP SDK's
+    authenticator reads ``client_id`` from the form only and refuses the
+    request without it ("Missing client_id"). Microsoft 365 Copilot sent both
+    until November 2026 and now sends the header alone, so its sign-in failed
+    at the token exchange.
+
+    When the form has no ``client_id``, this copies the one from the Basic
+    header into it. The authenticator then checks the secret exactly as
+    before. A form that does name a client is left alone, so a mismatch with
+    the header is still refused.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        headers = list(scope.get("headers", []))
+        values = {name.lower(): value for name, value in headers}
+        client_id = _basic_client_id(values.get(b"authorization", b""))
+        is_form = values.get(b"content-type", b"").split(b";")[0].strip().lower() == (
+            b"application/x-www-form-urlencoded"
+        )
+        if scope.get("method") != "POST" or client_id is None or not is_form:
+            await self._app(scope, receive, send)
+            return
+
+        messages: list[dict[str, Any]] = []
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message["type"] != "http.request" or not message.get("more_body"):
+                break
+        if messages[-1]["type"] != "http.request":
+            # The client went away mid-body: replay what arrived, unchanged.
+            pending = iter(messages)
+
+            async def replay_as_received() -> dict[str, Any]:
+                return next(pending, None) or await receive()
+
+            await self._app(scope, replay_as_received, send)
+            return
+
+        body = b"".join(m.get("body", b"") for m in messages)
+        if not any(name == "client_id" for name, _ in parse_qsl(body.decode("latin-1"), keep_blank_values=True)):
+            body += (b"&" if body else b"") + urlencode({"client_id": client_id}).encode("ascii")
+            headers = [(name, value) for name, value in headers if name.lower() != b"content-length"]
+            headers.append((b"content-length", str(len(body)).encode("ascii")))
+        delivered = False
+
+        async def replay() -> dict[str, Any]:
+            nonlocal delivered
+            if delivered:
+                return await receive()
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        await self._app({**scope, "headers": headers}, replay, send)

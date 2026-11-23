@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING
 from fastmcp.apps import UI_MIME_TYPE, AppConfig
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
-from ..config import MCP_APPS
+from ..config import MCP_APPS, MCP_EMAIL_DRAFT
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -103,6 +103,12 @@ VIEWS: tuple[View, ...] = (
         title="Glossary import",
         tools=("import_glossary_terms",),
     ),
+    View(
+        key="decision-score",
+        title="Decision scoring",
+        tools=("get_mas_module_step_signature", "score_data"),
+        calls=("get_mas_module_step_signature", "score_data"),
+    ),
 )
 
 VIEW_FOR_TOOL: dict[str, View] = {tool: view for view in VIEWS for tool in view.tools}
@@ -148,7 +154,7 @@ def fingerprint(version: str, tiers: Iterable[int], read_only: bool) -> str:
     for name, data in _package_files(resources.files(__package__)):
         digest.update(name.encode())
         digest.update(data)
-    digest.update(f"|{version}|{sorted(set(tiers))}|{read_only}".encode())
+    digest.update(f"|{version}|{sorted(set(tiers))}|{read_only}|{_options()}".encode())
     return digest.hexdigest()[:8]
 
 
@@ -164,6 +170,14 @@ def app_config(
     if not on or tool not in VIEW_FOR_TOOL:
         return None
     return AppConfig(resource_uri=resource_uri(tool, fingerprint))
+
+
+def _options() -> dict[str, str]:
+    """Deployment settings a view reads from ``SAS_VIEW.options``.
+
+    Part of the fingerprint, because they change what a page shows.
+    """
+    return {"email": MCP_EMAIL_DRAFT}
 
 
 def _read(name: str) -> str:
@@ -195,6 +209,7 @@ def render_view(
             "title": view.title,
             "version": version,
             "can": sorted(available),
+            "options": _options(),
         }
     )
     return (

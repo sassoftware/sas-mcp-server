@@ -151,6 +151,18 @@ MCP_APPS = env_bool("MCP_APPS", True)
 # ``initialize`` handshake keeps working either way. Costs a fresh transport per
 # request, which is why it is not the default.
 MCP_STATELESS_HTTP = env_bool("MCP_STATELESS_HTTP", False)
+# Email draft in the decision scoring view (default: off). The result card can
+# offer a "Draft email" button that opens a draft of the result for the person
+# to address and send themselves; nothing is ever sent by the server or the
+# view. "outlook" opens an Outlook on the web draft (with a link to the default
+# mail app as well), "mail" opens the default mail app (a mailto: link), "off"
+# shows no email controls, only Copy summary.
+EMAIL_DRAFT_CHOICES = ("off", "outlook", "mail")
+MCP_EMAIL_DRAFT = os.getenv("MCP_EMAIL_DRAFT", "").strip().lower() or "off"
+if MCP_EMAIL_DRAFT not in EMAIL_DRAFT_CHOICES:
+    raise ConfigError(
+        f"MCP_EMAIL_DRAFT must be one of {', '.join(EMAIL_DRAFT_CHOICES)}, got {MCP_EMAIL_DRAFT!r}."
+    )
 # Default SAS Content folder for the assets the tools create (default: none).
 # Rule sets and decision flows are always stored in a folder: the one a call
 # names, else this one. With neither, the tool refuses and tells the model to

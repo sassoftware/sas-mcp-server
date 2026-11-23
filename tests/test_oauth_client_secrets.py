@@ -22,7 +22,12 @@ from key_value.aio.stores.memory import MemoryStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from sas_mcp_server.auth import SECRET_AUTH_METHODS, PermissiveOAuthProxy
+from sas_mcp_server.auth import (
+    SECRET_AUTH_METHODS,
+    PermissiveOAuthProxy,
+    _basic_client_id,
+    _ClientIdFromBasic,
+)
 
 # What Microsoft's registration service sent, verbatim.
 M365_REGISTRATION = {
@@ -148,3 +153,97 @@ def test_the_token_endpoint_enforces_the_secret(method):
     # then what fails, which is a different error.
     accepted = exchange(secret)
     assert accepted.json()["error"] == "invalid_grant", accepted.text
+
+
+# --- the Basic header alone names the client ---------------------------------------
+#
+# Since November 2026 Microsoft 365 Copilot's token request carries the client id in
+# the Basic header only, as RFC 6749 section 2.3.1 allows. The SDK reads it from the
+# form alone and answered "Missing client_id", so sign-in failed at the exchange.
+
+_EXCHANGE = {
+    "grant_type": "authorization_code",
+    "code": "not-a-real-code",
+    "redirect_uri": M365_REGISTRATION["redirect_uris"][0],
+    "code_verifier": "v" * 43,
+}
+_REFRESH = {"grant_type": "refresh_token", "refresh_token": "not-a-real-token"}
+
+
+def _register(http: TestClient) -> tuple[str, str]:
+    registered = http.post("/register", json=M365_REGISTRATION).json()
+    return registered["client_id"], registered["client_secret"]
+
+
+@pytest.mark.parametrize("form", [_EXCHANGE, _REFRESH], ids=["code", "refresh"])
+def test_the_basic_header_alone_names_the_client(form):
+    http = _client(client_secrets=True)
+    client_id, secret = _register(http)
+    # Past client authentication: the made-up code or token is what fails now.
+    accepted = http.post("/token", data=form, headers=_basic(client_id, secret))
+    assert accepted.json()["error"] == "invalid_grant", accepted.text
+    # The secret is still checked.
+    refused = http.post("/token", data=form, headers=_basic(client_id, "wrong-secret"))
+    assert refused.status_code == 401
+    assert refused.json()["error"] == "invalid_client"
+
+
+def test_a_client_id_in_the_form_must_still_match_the_header():
+    http = _client(client_secrets=True)
+    client_id, secret = _register(http)
+    other, _ = _register(http)
+    refused = http.post("/token", data={**_EXCHANGE, "client_id": other}, headers=_basic(client_id, secret))
+    assert refused.status_code == 401
+    assert refused.json()["error_description"] == "Client ID mismatch in Basic auth"
+
+
+def test_off_the_token_endpoint_is_left_as_it_is():
+    http = _client(client_secrets=False)
+    client_id = http.post("/register", json=M365_REGISTRATION).json()["client_id"]
+    response = http.post("/token", data=_EXCHANGE, headers=_basic(client_id, "anything"))
+    assert response.json()["error_description"] == "Missing client_id"
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        (b"Basic " + base64.b64encode(b"abc:secret"), "abc"),
+        (b"basic " + base64.b64encode(b"a%3Ab:secret"), "a:b"),
+        (b"Bearer " + base64.b64encode(b"abc:secret"), None),
+        (b"Basic " + base64.b64encode(b"no-colon"), None),
+        (b"Basic " + base64.b64encode(b":secret"), None),
+        (b"Basic not base64!", None),
+        (b"", None),
+    ],
+)
+def test_basic_client_id(header, expected):
+    assert _basic_client_id(header) == expected
+
+
+async def test_a_body_in_several_chunks_is_joined_before_the_id_is_added():
+    seen: dict = {}
+
+    async def app(scope, receive, send):
+        seen["headers"] = dict(scope["headers"])
+        seen["body"] = (await receive())["body"]
+
+    chunks = [
+        {"type": "http.request", "body": b"grant_type=refresh_token&", "more_body": True},
+        {"type": "http.request", "body": b"refresh_token=t", "more_body": False},
+    ]
+
+    async def receive():
+        return chunks.pop(0)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "headers": [
+            (b"authorization", b"Basic " + base64.b64encode(b"abc:secret")),
+            (b"content-type", b"application/x-www-form-urlencoded"),
+            (b"content-length", b"40"),
+        ],
+    }
+    await _ClientIdFromBasic(app)(scope, receive, None)
+    assert seen["body"] == b"grant_type=refresh_token&refresh_token=t&client_id=abc"
+    assert seen["headers"][b"content-length"] == str(len(seen["body"])).encode()

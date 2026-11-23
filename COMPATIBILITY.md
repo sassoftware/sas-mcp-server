@@ -1,18 +1,16 @@
 # SAS Viya MCP Server: Viya compatibility by tool
 
-_SAS Viya MCP Server 1.20.0. Checked against the public API specifications on developer.sas.com: the 22 tools new in 1.20.0 on 2026-11-13, the others on 2026-10-29._
+_SAS Viya MCP Server 1.22.0. Checked against the public API specifications on developer.sas.com for the releases it publishes, LTS 2025.03 to Stable 2026.11, with the API versions read on 2026-11-23. Tool calls: those changed in 1.22.0 checked on 2026-11-23, the 22 tools new in 1.20.0 on 2026-11-13, the others on 2026-10-29._
 
 Tools are grouped by the tiers used for `MCP_TIERS` in the [README](README.md#limiting-exposed-tools-tiers).
 
 ## Summary
 
-**130 of the 137 tools make no call that differs between LTS 2024.09 and Stable 2026.10.** Every endpoint, method, query parameter and media type they use exists unchanged in every release checked. No release requires a parameter that the current release does not.
+**135 of the 137 tools make no call that differs between LTS 2025.03 and Stable 2026.11.** Every endpoint, method, query parameter and media type they use exists unchanged in every release checked. No release requires a parameter that the current release does not.
 
-The seven tools that differ are in Tier 3 (Reports & Visualization), Tier 9 (Business Glossary) and Tier 11 (Model Lifecycle):
+The two tools that differ are in Tier 3 (Reports & Visualization) and Tier 11 (Model Lifecycle):
 
-- **Report authoring and management** (`create_report`, `apply_report_operations`, `copy_report`, `delete_report`) is limited on LTS 2024.09.
 - **`export_report` with `format=summary`** needs 2026.03 or later.
-- **Publishing a glossary term** (`update_glossary_term` with a state change) needs 2025.03 or later.
 - **Changing an existing KPI alert rule** (`set_kpi_alert_rule`) needs Stable 2026.07 or later. On the LTS releases, alert rules can be created, read and deleted.
 
 All 44 decisioning tools (Tier 7 and Tier 10) work the same on every release checked. So do the other 21 tools new in 1.20.0: the rest of Tier 11 (Model Lifecycle) and the additions to Tier 6 and Tier 2.
@@ -23,215 +21,212 @@ Tools whose release columns are all ✓ also carry spec-versus-code gaps. Those 
 
 ## Tier 0 — Compute Contexts & Code Execution
 
-| Tool                    | Viya services  | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ----------------------- | -------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `execute_sas_code`      | compute, files | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_compute_contexts` | compute        | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `reset_compute_session` | compute        | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                    | Viya services  | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ----------------------- | -------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `execute_sas_code`      | compute, files | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_compute_contexts` | compute        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `reset_compute_session` | compute        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 1 — Data Discovery
 
-| Tool                             | Viya services       | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| -------------------------------- | ------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `catalog_search`                 | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `catalog_search_helper`          | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `catalog_find_instance`          | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `catalog_run_adhoc_analysis`     | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `catalog_get_adhoc_analysis`     | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `catalog_download_table_profile` | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `catalog_list_agents`            | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `catalog_run_agent`              | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `catalog_get_agent_history`      | catalog             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_cas_servers`               | casManagement       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_caslibs`                   | casManagement       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_castables`                 | casManagement       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_source_tables`             | casManagement       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_castable_info`              | casManagement       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_castable_columns`           | casManagement       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_castable_data`              | dataTables, rowSets | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `query_data`                     | compute             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_compute_libraries`         | compute             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_compute_tables`            | compute             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_compute_columns`           | compute             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_compute_table_data`         | compute             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                             | Viya services       | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| -------------------------------- | ------------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `catalog_search`                 | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `catalog_search_helper`          | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `catalog_find_instance`          | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `catalog_run_adhoc_analysis`     | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `catalog_get_adhoc_analysis`     | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `catalog_download_table_profile` | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `catalog_list_agents`            | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `catalog_run_agent`              | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `catalog_get_agent_history`      | catalog             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_cas_servers`               | casManagement       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_caslibs`                   | casManagement       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_castables`                 | casManagement       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_source_tables`             | casManagement       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_castable_info`              | casManagement       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_castable_columns`           | casManagement       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_castable_data`              | dataTables, rowSets | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `query_data`                     | compute             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_compute_libraries`         | compute             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_compute_tables`            | compute             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_compute_columns`           | compute             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_compute_table_data`         | compute             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 2 — Data Operations & Files
 
-| Tool                      | Viya services | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ------------------------- | ------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `upload_data`             | casManagement | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `upload_inline_data`      | casManagement | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `promote_table_to_memory` | casManagement | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_files`              | files         | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `upload_file`             | files         | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `download_file`           | files         | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `find_folder`             | folders       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_folder`           | folders       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `save_castable`           | casManagement | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `drop_castable`           | casManagement | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                      | Viya services | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ------------------------- | ------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `upload_data`             | casManagement | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `upload_inline_data`      | casManagement | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `promote_table_to_memory` | casManagement | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_files`              | files         | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `upload_file`             | files         | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `download_file`           | files         | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `find_folder`             | folders       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_folder`           | folders       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `save_castable`           | casManagement | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `drop_castable`           | casManagement | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 3 — Reports & Visualization
 
-| Tool                      | Viya services            | 2024.09 LTS          | 2025.03 LTS    | 2025.09 LTS    | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ------------------------- | ------------------------ | -------------------- | -------------- | -------------- | ----------- | ------- | ------- | ------- | ------- |
-| `list_reports`            | reports                  | ✓                    | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_report`              | reports                  | ✓                    | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `export_report`           | visualAnalytics          | ⚠ no `summary`       | ⚠ no `summary` | ⚠ no `summary` | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `describe_report_objects` | none (built-in catalog)  | ✓                    | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_report`           | reports, visualAnalytics | ⚠ A                  | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `apply_report_operations` | reports, visualAnalytics | ⚠ B                  | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_report_outline`      | reports                  | ✓                    | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `copy_report`             | visualAnalytics          | ✗ no copy endpoint   | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `delete_report`           | visualAnalytics          | ✗ no delete endpoint | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                      | Viya services            | 2025.03 LTS    | 2025.09 LTS    | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ------------------------- | ------------------------ | -------------- | -------------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `list_reports`            | reports                  | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_report`              | reports                  | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `export_report`           | visualAnalytics          | ⚠ no `summary` | ⚠ no `summary` | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `describe_report_objects` | none (built-in catalog)  | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_report`           | reports, visualAnalytics | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `apply_report_operations` | reports, visualAnalytics | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_report_outline`      | reports                  | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `copy_report`             | visualAnalytics          | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `delete_report`           | visualAnalytics          | ✓              | ✓              | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
-- **A:** Creates reports with most objects. Cannot add page titles, text or images, set data item names and formats, or add 8 chart types. Forecasting objects fail.
-- **B:** Adds pages and most objects. Cannot change existing objects or data, add page titles, text or images, set data item names and formats, or add 8 chart types.
 - Details of each gap are in [What the differences are](#what-the-differences-are-by-api).
 
 ## Tier 4 — Batch Jobs & Async Execution
 
-| Tool               | Viya services       | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ------------------ | ------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `submit_batch_job` | jobExecution        | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_job_status`   | jobExecution        | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_jobs`        | jobExecution        | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `cancel_job`       | jobExecution        | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_job_log`      | files, jobExecution | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool               | Viya services       | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ------------------ | ------------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `submit_batch_job` | jobExecution        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_job_status`   | jobExecution        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_jobs`        | jobExecution        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `cancel_job`       | jobExecution        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_job_log`      | files, jobExecution | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 5 — Automated Machine Learning
 
-| Tool                         | Viya services                       | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ---------------------------- | ----------------------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `list_ml_projects`           | mlPipelineAutomation                | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_ml_project`          | casManagement, mlPipelineAutomation | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `run_ml_project`             | mlPipelineAutomation                | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `register_ml_champion_model` | mlPipelineAutomation                | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `publish_ml_champion_model`  | mlPipelineAutomation                | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                         | Viya services                       | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ---------------------------- | ----------------------------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `list_ml_projects`           | mlPipelineAutomation                | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_ml_project`          | casManagement, mlPipelineAutomation | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `run_ml_project`             | mlPipelineAutomation                | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `register_ml_champion_model` | mlPipelineAutomation                | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `publish_ml_champion_model`  | mlPipelineAutomation                | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 6 — Model Management & Scoring
 
-| Tool                            | Viya services                                                                                         | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `list_registered_models`        | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_publishing_destinations`  | modelPublish                                                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_mas_modules`              | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_mas_module_step_signature` | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `score_data`                    | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_model`                     | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_model_versions`           | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `test_score_model`              | casManagement, compute, dataTables, files, modelRepository, rowSets, scoreDefinitions, scoreExecution | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `score_table`                   | modelRepository, scoreDefinitions, scoreExecution                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_score_execution`           | dataTables, files, rowSets, scoreExecution                                                            | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_published_models`         | modelPublish                                                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                            | Viya services                                                                                         | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `list_registered_models`        | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_publishing_destinations`  | modelPublish                                                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_mas_modules`              | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_mas_module_step_signature` | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `score_data`                    | microanalyticScore                                                                                    | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_model`                     | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_model_versions`           | modelRepository                                                                                       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `test_score_model`              | casManagement, compute, dataTables, files, modelRepository, rowSets, scoreDefinitions, scoreExecution | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `score_table`                   | modelRepository, scoreDefinitions, scoreExecution                                                     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_score_execution`           | dataTables, files, rowSets, scoreExecution                                                            | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_published_models`         | modelPublish                                                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 7 — Decisioning Foundation (SAS Intelligent Decisioning)
 
-| Tool                               | Viya services                                                          | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ---------------------------------- | ---------------------------------------------------------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `create_business_ruleset`          | businessRules, folders                                                 | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_business_ruleset`          | businessRules, folders                                                 | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_business_ruleset`             | businessRules                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_business_rulesets`           | businessRules                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `delete_business_ruleset`          | businessRules                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `lock_business_ruleset_revision`   | businessRules                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_business_ruleset_revisions`  | businessRules                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_business_rule`             | businessRules, referenceData                                           | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_business_rule`             | businessRules, referenceData                                           | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_business_rule`                | businessRules                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_business_rules`              | businessRules                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `delete_business_rule`             | businessRules                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_decision_flow`             | businessRules, decisions, files, folders, modelRepository              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_decision_flow`             | businessRules, decisions, files, folders, modelRepository              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_decision_flow`                | decisions                                                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_decision_flows`              | decisions                                                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `delete_decision_flow`             | decisions                                                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_decision_flow_code`           | decisions                                                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `lock_decision_flow_revision`      | decisions                                                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_decision_flow_revisions`     | decisions                                                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_decision_flow_revision`       | decisions                                                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `publish_decision_flow`            | decisions, microanalyticScore, modelPublish                            | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `validate_decision_expression`     | decisions                                                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_decisioning_assets`          | businessRules, decisions, referenceData                                | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_decisioning_asset`            | businessRules, decisions, files, folders, referenceData, relationships | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_decisioning_asset_code`       | businessRules, decisions, files                                        | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_decisioning_asset_revisions` | businessRules, decisions                                               | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `lock_decisioning_asset_revision`  | businessRules, decisions, files                                        | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `copy_decisioning_asset`           | businessRules, decisions, files, folders, referenceData, relationships | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `delete_decisioning_asset`         | businessRules, decisions, referenceData, relationships                 | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_lookup_table`                 | businessRules, folders, referenceData, relationships                   | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_lookup_table`              | folders, referenceData                                                 | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_lookup_table`              | folders, referenceData                                                 | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `activate_lookup_table`            | referenceData                                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                               | Viya services                                                          | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ---------------------------------- | ---------------------------------------------------------------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `create_business_ruleset`          | businessRules, folders                                                 | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_business_ruleset`          | businessRules, folders                                                 | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_business_ruleset`             | businessRules                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_business_rulesets`           | businessRules                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `delete_business_ruleset`          | businessRules                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `lock_business_ruleset_revision`   | businessRules                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_business_ruleset_revisions`  | businessRules                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_business_rule`             | businessRules, referenceData                                           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_business_rule`             | businessRules, referenceData                                           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_business_rule`                | businessRules                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_business_rules`              | businessRules                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `delete_business_rule`             | businessRules                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_decision_flow`             | businessRules, decisions, files, folders, modelRepository              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_decision_flow`             | businessRules, decisions, files, folders, modelRepository              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_decision_flow`                | decisions                                                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_decision_flows`              | decisions                                                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `delete_decision_flow`             | decisions                                                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_decision_flow_code`           | decisions                                                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `lock_decision_flow_revision`      | decisions                                                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_decision_flow_revisions`     | decisions                                                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_decision_flow_revision`       | decisions                                                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `publish_decision_flow`            | decisions, microanalyticScore, modelPublish                            | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `validate_decision_expression`     | decisions                                                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_decisioning_assets`          | businessRules, decisions, referenceData                                | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_decisioning_asset`            | businessRules, decisions, files, folders, referenceData, relationships | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_decisioning_asset_code`       | businessRules, decisions, files                                        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_decisioning_asset_revisions` | businessRules, decisions                                               | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `lock_decisioning_asset_revision`  | businessRules, decisions, files                                        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `copy_decisioning_asset`           | businessRules, decisions, files, folders, referenceData, relationships | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `delete_decisioning_asset`         | businessRules, decisions, referenceData, relationships                 | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_lookup_table`                 | businessRules, folders, referenceData, relationships                   | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_lookup_table`              | folders, referenceData                                                 | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_lookup_table`              | folders, referenceData                                                 | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `activate_lookup_table`            | referenceData                                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 Decisioning asset summaries (from `get_decisioning_asset`, `copy_decisioning_asset`, and from create and update results too large to return in full) include `hasWarnings` and `hasWarningsInSubDecisions` only from 2026.03 (decisions API v27), because earlier releases do not return them. The tools work the same otherwise.
 
 ## Tier 8 — Workbench (Execute Code Only)
 
-| Tool               | Viya services  | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ------------------ | -------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `execute_sas_code` | compute, files | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool               | Viya services  | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ------------------ | -------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `execute_sas_code` | compute, files | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 Same tool as in Tier 0. This tier exposes it on its own.
 
 ## Tier 9 — Business Glossary (SAS Data Governance)
 
-| Tool                        | Viya services                 | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| --------------------------- | ----------------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `search_glossary_terms`     | catalog, glossary             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_glossary_terms`       | glossary                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_glossary_term`         | catalog, glossary             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_glossary_term_types`  | glossary                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_glossary_term_type`    | glossary                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_term_assets`          | catalog, glossary             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_table_terms`          | catalog                       | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_glossary_term`      | glossary                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_glossary_term`      | glossary                      | ✗ C         | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `delete_glossary_term`      | glossary                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `assign_glossary_term`      | catalog, glossary             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `unassign_glossary_term`    | catalog, glossary             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_glossary_term_type` | glossary                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_glossary_term_type` | glossary                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `delete_glossary_term_type` | glossary                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `import_glossary_terms`     | files, glossary, jobExecution | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                        | Viya services                 | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| --------------------------- | ----------------------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `search_glossary_terms`     | catalog, glossary             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_glossary_terms`       | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_glossary_term`         | catalog, glossary             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_glossary_term_types`  | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_glossary_term_type`    | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_term_assets`          | catalog, glossary             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_table_terms`          | catalog                       | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_glossary_term`      | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_glossary_term`      | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `delete_glossary_term`      | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `assign_glossary_term`      | catalog, glossary             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `unassign_glossary_term`    | catalog, glossary             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_glossary_term_type` | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_glossary_term_type` | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `delete_glossary_term_type` | glossary                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `import_glossary_terms`     | files, glossary, jobExecution | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
-- **C:** Cannot change a term's draft state, so terms cannot be published (glossary API v1). Other updates work.
 
 ## Tier 10 — Decisioning Advanced (SAS Intelligent Decisioning)
 
-| Tool                                  | Viya services                                          | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ------------------------------------- | ------------------------------------------------------ | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `create_segmentation_tree`            | decisions, folders                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_segmentation_tree`            | decisions, folders                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_segmentation_tree_from_table` | dataTables, decisions, folders, referenceData, rowSets | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_code_file`                    | decisions, files, folders                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_code_file`                    | decisions, files, folders                              | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_value_list`                   | folders, referenceData                                 | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_value_list_entries`           | referenceData                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_custom_function`              | businessRules                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `update_custom_function`              | businessRules                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `validate_custom_function`            | businessRules                                          | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                                  | Viya services                                          | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ------------------------------------- | ------------------------------------------------------ | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `create_segmentation_tree`            | decisions, folders                                     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_segmentation_tree`            | decisions, folders                                     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_segmentation_tree_from_table` | dataTables, decisions, folders, referenceData, rowSets | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_code_file`                    | decisions, files, folders                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_code_file`                    | decisions, files, folders                              | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_value_list`                   | folders, referenceData                                 | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_value_list_entries`           | referenceData                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_custom_function`              | businessRules                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `update_custom_function`              | businessRules                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `validate_custom_function`            | businessRules                                          | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 Tier 10 is meant to run with Tier 7, which puts this content into decisions and reads, locks, copies and deletes it.
 
 ## Tier 11 — Model Lifecycle (SAS Model Manager)
 
-| Tool                            | Viya services                                                                                                       | 2024.09 LTS | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- |
-| `list_model_repositories`       | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `list_model_projects`           | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_model_project`          | folders, modelRepository                                                                                            | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `set_project_champion`          | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `describe_analytic_store`       | compute                                                                                                             | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `register_model`                | compute, modelRepository                                                                                            | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `publish_model`                 | modelManagement, modelPublish, modelRepository                                                                      | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `validate_published_model`      | casManagement, compute, dataTables, files, modelPublish, modelRepository, rowSets, scoreDefinitions, scoreExecution | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `create_performance_definition` | casManagement, modelManagement, modelRepository                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `run_performance_definition`    | modelManagement, modelRepository                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `get_project_kpis`              | modelManagement, modelRepository                                                                                    | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
-| `set_kpi_alert_rule`            | modelManagement, modelRepository                                                                                    | ⚠ D         | ⚠ D         | ⚠ D         | ⚠ D         | ✓       | ✓       | ✓       | ✓       |
-| `delete_kpi_alert_rule`         | modelManagement                                                                                                     | ✓           | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       |
+| Tool                            | Viya services                                                                                                       | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `list_model_repositories`       | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_model_projects`           | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_model_project`          | folders, modelRepository                                                                                            | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `set_project_champion`          | modelRepository                                                                                                     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `describe_analytic_store`       | compute                                                                                                             | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `register_model`                | compute, modelRepository                                                                                            | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `publish_model`                 | modelManagement, modelPublish, modelRepository                                                                      | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `validate_published_model`      | casManagement, compute, dataTables, files, modelPublish, modelRepository, rowSets, scoreDefinitions, scoreExecution | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `create_performance_definition` | casManagement, modelManagement, modelRepository                                                                     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `run_performance_definition`    | modelManagement, modelRepository                                                                                    | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `get_project_kpis`              | modelManagement, modelRepository                                                                                    | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `set_kpi_alert_rule`            | modelManagement, modelRepository                                                                                    | ⚠ A         | ⚠ A         | ⚠ A         | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `delete_kpi_alert_rule`         | modelManagement                                                                                                     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
-- **D:** Sets new alert rules, but cannot change an existing one: the Model Management API has no `PUT` for alert rules before v13 (2026.07). A change is a call for a KPI, variable and direction that already have a rule, or a call with `alert_rule_id`. On these releases, remove the rule with `delete_kpi_alert_rule` and set it again.
+- **A:** Sets new alert rules, but cannot change an existing one: the Model Management API has no `PUT` for alert rules before v13 (2026.07). A change is a call for a KPI, variable and direction that already have a rule, or a call with `alert_rule_id`. On these releases, remove the rule with `delete_kpi_alert_rule` and set it again.
 - `register_model` and `describe_analytic_store` run PROC REGISTERMODEL and PROC ASTORE in a compute session. PROC REGISTERMODEL arrived in 2024.04 and PROC ASTORE before it, so both are in every release here.
 - Python models are not supported by these tools in any release.
 
@@ -241,35 +236,23 @@ Tier 10 is meant to run with Tier 7, which puts this content into decisions and 
 
 ### Visual Analytics API (Tier 3)
 
-**LTS 2024.09** lacks:
-
-- the `copy` and `DELETE` report endpoints
-- the `updateObject` and `updateData` operations
-- `dataItems` on `addData` (renames, formats, geography)
-- the `text` and `image` objects, which `addPage`'s `title` is built from
-- eight object types:
-    - Bayesian network
-    - forest
-    - gradient boosting
-    - neural network
-    - nonparametric logistic regression
-    - geo line
-    - geo line coordinate
-    - geo network
-
-It also spells the forecasting object `forcasting`, so a `forecasting` object is rejected there.
-
 **LTS 2025.03 and 2025.09** have no `summary` export.
-
-### Glossary API (Tier 9)
-
-**LTS 2024.09** has no `PUT /terms/{id}/draft/state`, so a term cannot be published through the tool.
 
 ### Model Management API (Tier 11)
 
-**LTS 2024.09 to 2026.03** (Model Management API v11 and v12) have no `PUT /projects/{projectId}/alertRules/{alertRuleId}`, so an existing alert rule cannot be changed. Creating, listing and deleting rules, and the health check that reports which rules a model breaks, are the same in every release.
+**LTS 2025.03 to 2026.03** (Model Management API v11 and v12) have no `PUT /projects/{projectId}/alertRules/{alertRuleId}`, so an existing alert rule cannot be changed. Creating, listing and deleting rules, and the health check that reports which rules a model breaks, are the same in every release.
 
 ---
+
+## Changes since the 1.20.0 matrix (2026-11-13)
+
+- **Two tools make new calls, both ✓ in every release:**
+    - `get_mas_module_step_signature` also reads the module (`GET /microanalyticScore/modules/{moduleId}`) and, for a module published from a decision, the decision (`GET /decisions/flows/{decisionId}`).
+    - `publish_decision_flow` adds `reuseExistingModules=true` to `POST /modelPublish/models` when the call passes `replace_existing`.
+- `score_data`, `list_decision_flows` and `get_decision_flow` make the same calls as before. Their results gain a view or an `open_url`.
+- **New column: Stable 2026.11.** Every one of the matrix's 22 services has the same API version on 2026.11 as on 2026.10, so every tool works there as on 2026.10.
+- **LTS 2024.09 is dropped**, because developer.sas.com no longer publishes it. The limits that existed only there go with it: report authoring and management (`create_report`, `apply_report_operations`, `copy_report`, `delete_report`) and publishing a glossary term (`update_glossary_term`). Notes A to C went with them, and the alert-rule note D is now A.
+- The API version of every service was read again for each remaining release. None has changed since the 1.20.0 matrix, including the versions behind the two remaining differences (Visual Analytics v7, v7, v8; Model Management v11, v12, v12, v13).
 
 ## Changes since the 1.19.0 matrix (2026-10-29)
 
@@ -277,7 +260,7 @@ It also spells the forecasting object `forcasting`, so a `forecasting` object is
     - all thirteen tools of the new Tier 11, Model Lifecycle (SAS Model Manager);
     - in Tier 6: `get_model`, `list_model_versions`, `test_score_model`, `score_table`, `get_score_execution` and `list_published_models`;
     - in Tier 2: `create_folder`, `save_castable` and `drop_castable`.
-- **`set_kpi_alert_rule`** cannot change an existing alert rule on the four LTS releases, which have no `PUT` for alert rules (note D under Tier 11).
+- **`set_kpi_alert_rule`** cannot change an existing alert rule on the four LTS releases, which have no `PUT` for alert rules (note A under Tier 11, D before the 2026.11 refresh).
 - **No changed calls in existing tools.** `publish_ml_champion_model` and `publish_decision_flow` now take their default destination from the `MCP_DEFAULT_PUBLISH_DESTINATION` setting. The calls they make are the same.
 - **No new release.** Stable 2026.11 is not on developer.sas.com yet, so the release columns are unchanged. The API version listed for each release was read again for every service in the matrix. The versions behind the differences above have not changed.
 
@@ -286,7 +269,7 @@ It also spells the forecasting object `forcasting`, so a `forecasting` object is
 - **Inventory:** every Viya REST call each tool can make was listed from the source code. That includes conditional branches, retries, polling and rollback calls: 564 calls across 114 tools for 1.19.0, and 138 more for the 22 tools new in 1.20.0. `describe_report_objects` makes no call.
 - **Spec match:** each call's path, method, query parameters, request media type and Accept type was checked against the API version that developer.sas.com lists for each release.
 - **Request bodies:** for Visual Analytics, the operation names, object types and data-item properties the tools send were also compared. For decisions, the step types and other enumerated values were compared too. For the tools new in 1.20.0, the top-level properties and enumerated values of every request body were compared. Where an older release lacks a property, the tools were checked not to send it.
-- **Verdicts:** a cell is ✓ when a call's result in that release is the same as in 2026.10.
+- **Verdicts:** a cell is ✓ when a call's result in that release is the same as in the newest release, 2026.11 (in the 1.20.0 matrix, 2026.10).
 - **Limits:**
     - Response fields were not compared, apart from the validation summary noted under Tier 7.
     - Behaviour was tested live on one release (2026.03 and later; 2026.10 for the tools new in 1.20.0), not on every release in the matrix.

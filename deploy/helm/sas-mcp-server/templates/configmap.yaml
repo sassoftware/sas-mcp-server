@@ -20,6 +20,7 @@ data:
   MCP_READ_ONLY: {{ .Values.server.readOnly | quote }}
   MCP_LANDING_PAGE: {{ .Values.server.landingPage | quote }}
   MCP_APPS: {{ .Values.server.apps | quote }}
+  MCP_EMAIL_DRAFT: {{ .Values.server.emailDraft | quote }}
   MCP_STATELESS_HTTP: {{ .Values.server.statelessHttp | quote }}
   MCP_OAUTH_CLIENT_SECRETS: {{ .Values.server.oauthClientSecrets | quote }}
   VIYA_CLIENT_TIMEOUT: {{ .Values.server.clientTimeout | quote }}
