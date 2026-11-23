@@ -11,7 +11,7 @@
 
 ### Changed
 - **`publish_decision_flow` names the MAS module after `publish_name`** (#78), as SAS Intelligent Decisioning does: `Loan_Pre_Approval` becomes the module `loan_pre_approval`, which `list_mas_modules` finds by name. Before, the module was named after the revision (`decision_<revision id>`).
-- **`COMPATIBILITY.md` covers the changed calls** (#78) of `get_mas_module_step_signature` and `publish_decision_flow`. Both are ✓ in every release checked.
+- **`COMPATIBILITY.md` covers the changed calls** (#78) of `get_mas_module_step_signature` and `publish_decision_flow`, both ✓ in every release checked. It also follows developer.sas.com: Stable 2026.11 is added and LTS 2024.09, no longer published, is dropped. 135 of the 137 tools now make no call that differs between LTS 2025.03 and Stable 2026.11. The two that differ are `export_report` with `format=summary` (needs 2026.03) and changing an existing alert rule with `set_kpi_alert_rule` (needs 2026.07).
 
 ### Fixed
 - **Microsoft 365 Copilot can sign in again.** (#78) With `MCP_OAUTH_CLIENT_SECRETS=true`, the token endpoint accepts a client that names itself only in its Basic authorization header, as RFC 6749 allows. Microsoft's sign-in service started sending its client id that way in November 2026. The server answered `invalid_client: Missing client_id`, so Copilot's sign-in failed right after the SAS Logon step. Token refreshes are covered too.
