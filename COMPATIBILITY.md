@@ -1,6 +1,6 @@
 # SAS Viya MCP Server: Viya compatibility by tool
 
-_SAS Viya MCP Server 1.20.0. Checked against the public API specifications on developer.sas.com: the 22 tools new in 1.20.0 on 2026-11-13, the others on 2026-10-29._
+_SAS Viya MCP Server 1.22.0. Checked against the public API specifications on developer.sas.com: the tools whose calls changed in 1.22.0 on 2026-11-23, the 22 tools new in 1.20.0 on 2026-11-13, the others on 2026-10-29._
 
 Tools are grouped by the tiers used for `MCP_TIERS` in the [README](README.md#limiting-exposed-tools-tiers).
 
@@ -270,6 +270,14 @@ It also spells the forecasting object `forcasting`, so a `forecasting` object is
 **LTS 2024.09 to 2026.03** (Model Management API v11 and v12) have no `PUT /projects/{projectId}/alertRules/{alertRuleId}`, so an existing alert rule cannot be changed. Creating, listing and deleting rules, and the health check that reports which rules a model breaks, are the same in every release.
 
 ---
+
+## Changes since the 1.20.0 matrix (2026-11-13)
+
+- **Two tools make new calls, both ✓ in every release:**
+    - `get_mas_module_step_signature` also reads the module (`GET /microanalyticScore/modules/{moduleId}`) and, for a module published from a decision, the decision (`GET /decisions/flows/{decisionId}`).
+    - `publish_decision_flow` adds `reuseExistingModules=true` to `POST /modelPublish/models` when the call passes `replace_existing`.
+- `score_data`, `list_decision_flows` and `get_decision_flow` make the same calls as before. Their results gain a view or an `open_url`.
+- **developer.sas.com has changed.** Stable 2026.11 is now published, and LTS 2024.09 is no longer listed. The services behind the changed calls use the same API versions on 2026.11 as on 2026.10 (decisions v29, microanalyticScore v8, modelPublish v13). The matrix's release columns are otherwise unchanged until the full check against 2026.11 has been done.
 
 ## Changes since the 1.19.0 matrix (2026-10-29)
 
