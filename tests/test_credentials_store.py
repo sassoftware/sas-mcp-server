@@ -500,3 +500,34 @@ def test_resolve_endpoint_refuses_unclear_words(value):
     known = ["https://viya4-s2.zeus.example.com", "https://viya-prod.example.com"]
     with pytest.raises(store.EndpointNotFoundError):
         store.resolve_endpoint(value, {}, known)
+
+
+def test_an_abandoned_lock_is_cleared_before_a_waiting_writer_gives_up():
+    """A server killed mid-update must not stop the others saving their tokens."""
+    assert store._LOCK_STALE_AFTER < store._LOCK_TIMEOUT
+
+
+def test_a_writer_waits_out_a_killed_servers_lock_and_saves(tmp_path, monkeypatch):
+    p = tmp_path / "credentials.json"
+    lock = tmp_path / "credentials.json.lock"
+    lock.write_text("")
+    clock = {"now": time.time()}
+    monkeypatch.setattr(store.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(store.time, "monotonic", lambda: clock["now"])  # the wait's deadline too
+
+    def sleep(seconds):
+        clock["now"] += 1.0  # each wait moves the lock's age on by a second
+
+    monkeypatch.setattr(store.time, "sleep", sleep)
+    store.update_block(p, "https://a", {"access-token": "A"})
+    assert json.loads(p.read_text()) == {"https://a": {"access-token": "A"}}
+    assert not lock.exists()
+
+
+def test_another_tools_file_gets_no_lock_file(tmp_path, monkeypatch):
+    """The sas-viya CLI does not honour our lock; don't create one in its folder."""
+    monkeypatch.setattr(store, "_acquire", lambda lock: pytest.fail(f"locked {lock}"))
+    p = tmp_path / "credentials.json"
+    p.write_text("{}")
+    store.update_block(p, "Default", {"access-token": "T"}, harden=False)
+    assert _files(tmp_path) == ["credentials.json"]

@@ -438,7 +438,7 @@ After that, `uv run sas-mcp-login dev`, `uv run sas-mcp-login --logout prod` and
 - **Adding a second deployment:** log in to each deployment with `sas-mcp-login --endpoint <url>`, including the one you used before. A `Default` block that has not recorded its endpoint yet is no longer used once the file holds another endpoint's login, because it could have been issued by either deployment and its refresh token must not be sent to the wrong one. `sas-mcp-login` says so when that happens.
 - **Remove a login:** `uv run sas-mcp-login --logout dev` (or `--logout --endpoint https://viya-dev.example.com`) removes that endpoint's block, and a `Default` block recorded for it. A `Default` block that is not bound to an endpoint is kept and the command says so; delete the `Default` key from the file to remove it.
 - The `sas-viya` CLI cache (`~/.sas/credentials.json`) holds no endpoint. A server with a login of its own never reads it; one without sends it to whichever endpoint the server is configured for. With several deployments, use `sas-mcp-login` or point each entry at its own cache with `SAS_CLI_CONFIG`.
-- Several servers can refresh at the same time: the file is updated under a lock file, `credentials.json.lock`, next to it.
+- Several servers can refresh at the same time: the file is updated under a lock file, `credentials.json.lock`, next to it. A lock left behind by a server that was killed mid-update is cleared after 10 seconds. The `sas-viya` CLI's file is updated without one, since the CLI does not use it.
 - The file holds access and refresh tokens in plain text. It is created readable only by your user (on Windows by restricting its ACL, best effort). Keep it out of backups and shared folders.
 
 ---

@@ -105,10 +105,13 @@ def _blocks_for_update(path: Path) -> dict[str, Any]:
 
 
 # How long a writer waits for another process's update, and after how long a lock
-# file is taken to be left behind by a process that died mid-update. An update holds
-# the lock for milliseconds (a few seconds at most, when icacls is slow on Windows).
+# file is taken to be left behind by a process that died mid-update (MCP clients kill
+# servers abruptly on restart). An update holds the lock for milliseconds, and about
+# six seconds at most (icacls' 5 s timeout on Windows plus the rename retries). The
+# stale age stays below the wait, so a writer that finds an abandoned lock clears it
+# and saves its tokens instead of giving up.
 _LOCK_TIMEOUT = 15.0
-_LOCK_STALE_AFTER = 60.0
+_LOCK_STALE_AFTER = 10.0
 
 
 def _acquire(lock: Path) -> int | None:
@@ -266,15 +269,16 @@ def update_block(path: Path, key: str, block: dict[str, Any], *, harden: bool = 
 
     *harden* restricts the file to the current user (mode 0600, and an owner-only ACL on
     Windows). Pass ``False`` for a file that belongs to another tool, such as the SAS
-    Viya CLI's own cache: its permissions are kept as they are.
+    Viya CLI's own cache: its permissions are kept as they are, and no lock file is
+    created next to it, since that tool would not honour one.
 
-    The read and the write happen under a lock file, so concurrent updates from several
-    servers cannot undo each other. Raises :class:`OSError` (including
+    For our own file, the read and the write happen under a lock file, so concurrent
+    updates from several servers cannot undo each other. Raises :class:`OSError` (including
     :class:`TimeoutError` when the lock stays taken) or :class:`ValueError` (a file
     that is not UTF-8 text) and leaves the file untouched.
     """
     path = _resolved(path)
-    with _locked(path):
+    with _locked(path) if harden else contextlib.nullcontext():
         data = _blocks_for_update(path)
         data[key] = block
         _write_atomic(path, data, harden=harden)
