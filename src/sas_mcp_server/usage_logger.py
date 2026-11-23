@@ -18,11 +18,11 @@ import json
 import logging
 import os
 import re
-import subprocess
-import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
+
+from .fs_perms import win_harden
 
 module_logger = logging.getLogger(__name__)
 
@@ -176,32 +176,6 @@ def bounded_redact(obj: Any, max_bytes: int) -> tuple[Any, bool]:
         return _REDACTED, True
 
 
-def _win_harden(path: Path) -> None:
-    """Best-effort Windows ACL lock-down (POSIX chmod is a no-op on win32).
-
-    Removes inherited ACEs and grants only the current user Full control, so a
-    log that may contain SAS code, table rows, and PII is not group/world
-    readable on shared or roaming-profile hosts. Silently best-effort.
-
-    Only ever call this on a path we own the lifecycle of — the log FILE itself,
-    or a directory this process just created. Never call it on a pre-existing,
-    potentially shared directory: ``/inheritance:r`` strips inheritance so that
-    NEW sibling subdirectories inherit an empty DACL and become unusable.
-    """
-    if sys.platform != "win32":
-        return
-    user = os.environ.get("USERNAME")
-    if not user:
-        return
-    with contextlib.suppress(Exception):
-        subprocess.run(
-            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
-            capture_output=True,
-            check=False,
-            timeout=5,
-        )
-
-
 def resolve_log_path(raw: str) -> Path:
     """Expand ~, create the parent dir, and tighten perms ONLY on a directory
     this call creates itself.
@@ -209,7 +183,7 @@ def resolve_log_path(raw: str) -> Path:
     We must never re-permission a directory that already exists. If a user points
     ``COLLECTION_LOG_PATH`` at a shared or standard location (e.g. ``~`` or the
     system temp dir), chmod-ing it to 0700 (POSIX) or stripping its ACL
-    inheritance (Windows, via ``_win_harden``) would damage a directory shared
+    inheritance (Windows, via :func:`~sas_mcp_server.fs_perms.win_harden`) would damage a directory shared
     with other software. On Windows this is especially harmful: once inheritance
     is stripped, sibling subdirectories created afterwards inherit an empty DACL
     and become unusable. So we lock down the leaf parent only when we just created
@@ -228,7 +202,7 @@ def resolve_log_path(raw: str) -> Path:
         # current user; a directory we did not create is left as-is.
         with contextlib.suppress(OSError):
             os.chmod(parent, 0o700)
-        _win_harden(parent)
+        win_harden(parent)
     return path
 
 
@@ -275,7 +249,7 @@ class UsageLogger:
         # file (not just the dir) keeps the privacy guarantee even when the
         # parent dir pre-existed and was therefore intentionally left untouched
         # by resolve_log_path. Safe: it only affects this one file.
-        _win_harden(self.path)
+        win_harden(self.path)
         self._logger.handlers = [handler]
 
     @classmethod
