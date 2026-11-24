@@ -32,12 +32,20 @@ from .viya_client import logger, make_client, raise_for_viya_status
 
 
 async def get_context_id(client: httpx.AsyncClient, context_name: str) -> str:
-    """Return the id of the named compute context, raising if it is absent."""
+    """Return the id of the named compute context, raising if it is absent.
+
+    The Compute API ignores a ``name`` query parameter and answers with every
+    context the caller can see, so the lookup has to use ``filter``. The name is
+    also matched exactly on the items: taking the first one would run the tool
+    in whichever context happens to sort first.
+    """
     url = f"{VIYA_ENDPOINT}/compute/contexts"
-    resp = await client.get(url, params={"name": context_name})
+    quoted = context_name.replace("\\", "\\\\").replace('"', '\\"')
+    resp = await client.get(url, params={"filter": f'eq(name,"{quoted}")'})
     raise_for_viya_status(resp)
     coll = resp.json()
-    items = coll.get("items", [])
+    # an item without a name cannot be checked; one with a different name is never ours
+    items = [i for i in coll.get("items", []) if i.get("name", context_name) == context_name]
     if not items:
         raise RuntimeError(f"Compute context not found: {context_name}")
     return items[0]["id"]

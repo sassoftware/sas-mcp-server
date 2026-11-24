@@ -3086,7 +3086,7 @@ async def test_list_compute_libraries_request(mcp_server_with_mock_client):
     libs_call = next(call for call in calls if "/compute/sessions/test-session-id/data" in call[0][0])
 
     assert context_call[0][0].endswith("/compute/contexts")
-    assert context_call[1]["params"]["name"] == "Test Context"
+    assert context_call[1]["params"] == {"filter": 'eq(name,"Test Context")'}
 
     post_url = mock_client.post.call_args[0][0]
     assert "/compute/contexts/test-context-id/sessions" in post_url
@@ -3134,7 +3134,7 @@ async def test_list_compute_tables_request(mcp_server_with_mock_client):
     tables_call = next(call for call in calls if "/compute/sessions/test-session-id/data/Public" in call[0][0])
 
     assert context_call[0][0].endswith("/compute/contexts")
-    assert context_call[1]["params"]["name"] == "Test Context"
+    assert context_call[1]["params"] == {"filter": 'eq(name,"Test Context")'}
 
     post_url = mock_client.post.call_args[0][0]
     assert "/compute/contexts/test-context-id/sessions" in post_url
@@ -3185,7 +3185,7 @@ async def test_list_compute_columns_request(mcp_server_with_mock_client):
     )
 
     assert context_call[0][0].endswith("/compute/contexts")
-    assert context_call[1]["params"]["name"] == "Test Context"
+    assert context_call[1]["params"] == {"filter": 'eq(name,"Test Context")'}
 
     post_url = mock_client.post.call_args[0][0]
     assert "/compute/contexts/test-context-id/sessions" in post_url

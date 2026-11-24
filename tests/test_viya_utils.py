@@ -67,6 +67,25 @@ async def test_get_context_id_success(
 
 
 @pytest.mark.asyncio
+async def test_get_context_id_filters_by_name_and_matches_exactly(mock_httpx_client, mock_env_vars):
+    """Compute ignores a ``name`` parameter and lists every context; the first one
+    must never be taken for the one asked for."""
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={"items": [
+        {"id": "ctx-first", "name": "PIP Agent compute context"},
+        {"id": "ctx-wanted", "name": "SAS Job Execution compute context"},
+    ]})
+    mock_httpx_client.get.return_value = mock_response
+
+    context_id = await get_context_id(mock_httpx_client, "SAS Job Execution compute context")
+
+    assert context_id == "ctx-wanted"
+    params = mock_httpx_client.get.call_args.kwargs["params"]
+    assert params == {"filter": 'eq(name,"SAS Job Execution compute context")'}
+
+
+@pytest.mark.asyncio
 async def test_get_context_id_not_found(mock_httpx_client, mock_env_vars):
     """Test context ID retrieval when context is not found."""
     mock_response = AsyncMock()
