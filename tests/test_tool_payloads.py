@@ -3058,7 +3058,7 @@ async def test_list_compute_contexts_request(mcp_server_with_mock_client):
 
 async def test_list_compute_libraries_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
-    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id", "name": "Test Context"}]})
     libs_resp = _make_mock_response({"items": [], "count": 0})
     original_get = mock_client.get.return_value
 
@@ -3101,7 +3101,7 @@ async def test_list_compute_libraries_request(mcp_server_with_mock_client):
 
 async def test_list_compute_tables_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
-    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id", "name": "Test Context"}]})
     tables_resp = _make_mock_response({"items": [], "count": 0})
     original_get = mock_client.get.return_value
 
@@ -3149,7 +3149,7 @@ async def test_list_compute_tables_request(mcp_server_with_mock_client):
 
 async def test_list_compute_columns_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
-    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id", "name": "Test Context"}]})
     columns_resp = _make_mock_response({"items": [], "count": 0})
     original_get = mock_client.get.return_value
 
@@ -3201,7 +3201,7 @@ async def test_list_compute_columns_request(mcp_server_with_mock_client):
 async def test_compute_session_is_reused_across_calls(mcp_server_with_mock_client):
     """Two compute tool calls reuse one session: created once, then validated."""
     mcp, mock_client = mcp_server_with_mock_client
-    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id", "name": "Test Context"}]})
     data_resp = _make_mock_response({"items": [], "count": 0})
     state_resp = _make_mock_response(status_code=200)
 
@@ -3234,7 +3234,7 @@ async def test_compute_session_is_reused_across_calls(mcp_server_with_mock_clien
 async def test_reset_compute_session_request(mcp_server_with_mock_client):
     """reset_compute_session deletes the cached session and reports it."""
     mcp, mock_client = mcp_server_with_mock_client
-    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id", "name": "Test Context"}]})
     data_resp = _make_mock_response({"items": [], "count": 0})
 
     def route_get(url, **kwargs):
@@ -3723,7 +3723,7 @@ async def test_catalog_download_table_profile_not_found(mcp_server_with_mock_cli
 
 def _stub_compute_session(mock_client):
     """Route the compute-context lookup + session create the tool needs."""
-    context_resp = _make_mock_response({"items": [{"id": "ctx-id"}]})
+    context_resp = _make_mock_response({"items": [{"id": "ctx-id", "name": "SAS Job Execution compute context"}]})
     original_get = mock_client.get.return_value
 
     def route_get(url, **kwargs):
@@ -3864,7 +3864,7 @@ async def test_query_data_returns_view_sql_without_executing_it(mcp_server_with_
 async def test_get_compute_table_data_request(mcp_server_with_mock_client):
     """Rows come from the compute session's data API, zipped onto column names."""
     mcp, mock_client = mcp_server_with_mock_client
-    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id", "name": "Test Context"}]})
     columns_resp = _make_mock_response(
         {
             "items": [

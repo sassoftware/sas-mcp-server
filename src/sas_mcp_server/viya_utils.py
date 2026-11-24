@@ -44,8 +44,8 @@ async def get_context_id(client: httpx.AsyncClient, context_name: str) -> str:
     resp = await client.get(url, params={"filter": f'eq(name,"{quoted}")'})
     raise_for_viya_status(resp)
     coll = resp.json()
-    # an item without a name cannot be checked; one with a different name is never ours
-    items = [i for i in coll.get("items", []) if i.get("name", context_name) == context_name]
+    # an item without a name cannot be checked, so it is never taken for ours
+    items = [i for i in coll.get("items", []) if i.get("name") == context_name]
     if not items:
         raise RuntimeError(f"Compute context not found: {context_name}")
     return items[0]["id"]

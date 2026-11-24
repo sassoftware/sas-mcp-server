@@ -150,7 +150,7 @@ class FakeViya:
     async def get(self, url, params=None, headers=None):
         path = urlparse(url).path
         if path.endswith("/compute/contexts"):
-            return _response("GET", url, json={"items": [{"id": "ctx"}]})
+            return _response("GET", url, json={"items": [{"id": "ctx", "name": "SAS Job Execution compute context"}]})
         if path.endswith("/state"):
             return _response("GET", url, text="completed")
         if path.endswith("/log"):
