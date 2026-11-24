@@ -296,6 +296,60 @@ def test_all_expired_no_refresh_falls_back_to_device(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _renew_viya_token (submit_batch_job renews a token that is still valid)
+# ---------------------------------------------------------------------------
+
+
+def test_renew_refreshes_a_token_that_has_not_expired(tmp_path, monkeypatch):
+    cli = _write_creds(tmp_path / "cli.json", access="STILLVALID", expiry=_iso(10), refresh="RT")
+    monkeypatch.setattr(stdio_server, "_sas_cli_credentials_path", lambda: cli)
+    monkeypatch.setattr(stdio_server, "_helper_credentials_path", lambda: tmp_path / "absent.json")
+    with patch("sas_mcp_server.stdio_server.httpx.post", return_value=_refresh_ok()) as post:
+        assert stdio_server._renew_viya_token() == "NEWTOK"
+        assert post.call_args[1]["data"]["refresh_token"] == "RT"
+    assert json.loads(cli.read_text())["Default"]["access-token"] == "NEWTOK"
+
+
+def test_renew_does_not_switch_to_another_source(tmp_path, monkeypatch):
+    """A valid token whose refresh fails is kept; the next source is not tried."""
+    cli = _write_creds(tmp_path / "cli.json", access="STILLVALID", expiry=_iso(10), refresh="BADRT")
+    helper = _write_creds(tmp_path / "helper.json", access="OTHER", expiry=_iso(60), refresh="RT2")
+    monkeypatch.setattr(stdio_server, "_sas_cli_credentials_path", lambda: cli)
+    monkeypatch.setattr(stdio_server, "_helper_credentials_path", lambda: helper)
+    bad = MagicMock(status_code=401)
+    bad.text = "invalid_grant"
+    with patch("sas_mcp_server.stdio_server.httpx.post", return_value=bad) as post:
+        assert stdio_server._renew_viya_token() is None
+    assert post.call_count == 1
+    assert json.loads(helper.read_text())["Default"]["access-token"] == "OTHER"
+
+
+def test_renew_never_starts_a_device_code_sign_in(tmp_path, monkeypatch):
+    cli = _write_creds(tmp_path / "cli.json", access="EXPIRED", expiry=_iso(-30))
+    monkeypatch.setattr(stdio_server, "_sas_cli_credentials_path", lambda: cli)
+    monkeypatch.setattr(stdio_server, "_helper_credentials_path", lambda: tmp_path / "absent.json")
+    monkeypatch.setattr(
+        stdio_server, "_native_device_code_token", MagicMock(side_effect=AssertionError("device flow"))
+    )
+    assert stdio_server._renew_viya_token() is None
+
+
+def test_renew_with_auth_disabled_returns_none():
+    with patch.object(stdio_server, "AUTH_ENABLED", False):
+        assert stdio_server._renew_viya_token() is None
+
+
+def test_stdio_server_registers_its_renewer():
+    from sas_mcp_server import token_info
+
+    token_info.set_token_renewer(stdio_server._renew_viya_token)
+    try:
+        assert token_info.can_renew()
+    finally:
+        token_info.set_token_renewer(None)
+
+
+# ---------------------------------------------------------------------------
 # _native_device_code_token (RFC 8628)
 # ---------------------------------------------------------------------------
 

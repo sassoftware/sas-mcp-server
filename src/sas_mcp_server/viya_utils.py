@@ -189,6 +189,22 @@ class _ComputeSessionCache:
                     "Could not delete compute session %s on shutdown", sid, exc_info=True
                 )
 
+    def session_ids(self) -> set[str]:
+        """Ids of every session this server keeps warm, for any user."""
+        return {sid for sid, _ in self._sessions.values()}
+
+    def forget(self, session_id: str) -> bool:
+        """Drop *session_id* from the cache without deleting it; ``True`` if it was cached.
+
+        For a session deleted some other way, so the next call does not try
+        to reuse it.
+        """
+        for key, (sid, _) in list(self._sessions.items()):
+            if sid == session_id:
+                self._sessions.pop(key, None)
+                return True
+        return False
+
     def clear(self) -> None:
         """Forget all cached sessions without deleting them server-side.
 
@@ -225,6 +241,16 @@ async def reset_cached_session(
     return await _SESSION_CACHE.reset(client, context_name, _token_user_key(token))
 
 
+def cached_session_ids() -> set[str]:
+    """Ids of the compute sessions this server keeps warm."""
+    return _SESSION_CACHE.session_ids()
+
+
+def forget_cached_session(session_id: str) -> bool:
+    """Stop reusing *session_id*; ``True`` if this server had it cached."""
+    return _SESSION_CACHE.forget(session_id)
+
+
 async def shutdown_session_cache() -> None:
     """Delete all cached compute sessions server-side (call from server lifespan)."""
     await _SESSION_CACHE.shutdown()
@@ -233,6 +259,41 @@ async def shutdown_session_cache() -> None:
 def clear_session_cache() -> None:
     """Forget all cached compute sessions (test isolation helper)."""
     _SESSION_CACHE.clear()
+
+
+def _session_summary(item: dict, cached: set[str]) -> dict:
+    """The fields of one compute session that say what it is and whether it is busy."""
+    raw_attributes = item.get("attributes")
+    attributes = raw_attributes if isinstance(raw_attributes, dict) else {}
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "state": item.get("state"),
+        "owner": item.get("owner"),
+        "created": item.get("creationTimeStamp"),
+        "context_id": attributes.get("contextId"),
+        "cached_by_this_server": item.get("id") in cached,
+    }
+
+
+async def list_compute_sessions(
+    client: httpx.AsyncClient, limit: int = 50, start: int = 0
+) -> tuple[list[dict], int]:
+    """The caller's compute sessions as summaries, and the total count Viya reports.
+
+    Covers every session the caller owns: the one ``execute_sas_code`` keeps
+    warm, and those that Job Execution started for batch jobs.
+    """
+    resp = await client.get(
+        f"{VIYA_ENDPOINT}/compute/sessions",
+        params={"start": start, "limit": limit},
+        headers={"Accept": "application/vnd.sas.collection+json"},
+    )
+    raise_for_viya_status(resp)
+    data = resp.json()
+    items = [item for item in data.get("items", []) if isinstance(item, dict)]
+    cached = cached_session_ids()
+    return [_session_summary(item, cached) for item in items], int(data.get("count", len(items)) or 0)
 
 
 async def submit_job(client: httpx.AsyncClient, session_id: str, code: str) -> str:

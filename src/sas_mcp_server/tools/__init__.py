@@ -25,7 +25,7 @@ from typing import Any, cast
 
 from fastmcp import Context, FastMCP
 
-from ..config import MCP_APPS, MCP_READ_ONLY, MCP_TIERS
+from ..config import MCP_APPS, MCP_READ_ONLY, MCP_TIERS, SAS_MCP_EXPECT_HOST, VIYA_ENDPOINT
 from ..exceptions import ConfigError
 from ..helpers.telemetry_helpers import server_version
 from ..ui import app_config, fingerprint, register_views
@@ -50,8 +50,10 @@ from ._access import (
     OPEN_WORLD_TOOLS,
     READ_ONLY_TOOLS,
     WRITE_TOOLS,
+    HostGuardMiddleware,
     ReadOnlyGate,
     annotations_for,
+    host_check,
 )
 
 Registrar = Callable[[FastMCP, Callable[[Context], Awaitable[str]]], None]
@@ -208,6 +210,7 @@ def register_tools(
     tiers: str | Iterable[int] | None = None,
     read_only: bool | None = None,
     apps: bool | None = None,
+    expect_host: str | None = None,
 ) -> None:
     """Register the enabled tiers' tools on *mcp*.
 
@@ -226,6 +229,11 @@ def register_tools(
             :mod:`sas_mcp_server.ui`) advertise it and the view's ``ui://``
             resource is registered; when false, no view metadata or resource
             exists. ``None`` uses the ``MCP_APPS`` env var.
+        expect_host: The SAS Viya host this server is meant to reach. When it
+            does not match ``VIYA_ENDPOINT``, every tool that is not read-only
+            refuses with a structured error (see
+            :class:`~sas_mcp_server.tools._access.HostGuardMiddleware`). ``None``
+            uses the ``SAS_MCP_EXPECT_HOST`` env var; empty means no check.
     """
     enabled = resolve_enabled_tiers(tiers)
     ro = MCP_READ_ONLY if read_only is None else bool(read_only)
@@ -244,6 +252,15 @@ def register_tools(
             "flow, and listing, reading, locking, copying or deleting them, needs Tier %d: add %d to MCP_TIERS.",
             DECISIONING_ADVANCED, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION,
         )
+    expected = SAS_MCP_EXPECT_HOST if expect_host is None else expect_host.strip()
+    if expected:
+        check = host_check(VIYA_ENDPOINT, expected)
+        mcp.add_middleware(HostGuardMiddleware(check))
+        if check["matches"] is False:
+            logger.warning(
+                "Connected to %s but SAS_MCP_EXPECT_HOST is %s: tools that write or run code will refuse.",
+                check["connected_host"], expected,
+            )
     seen: list[str] = []
     version = server_version() or ""
     # One fingerprint for the whole registration: the tools advertise it in

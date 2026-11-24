@@ -3921,6 +3921,79 @@ async def test_get_compute_table_data_request(mcp_server_with_mock_client):
     assert result.data["column_types"] == {"Name": "char", "Age": "num"}
 
 
+# -----------------------------------------------------------------------
+# `code` is accepted for `sas_code`
+# -----------------------------------------------------------------------
+
+
+async def test_submit_batch_job_accepts_code_for_sas_code(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await client.call_tool("submit_batch_job", {"code": "data alias; run;"})
+    assert mock_client.post.call_args[1]["json"]["jobDefinition"]["code"] == "data alias; run;"
+
+
+async def test_execute_sas_code_accepts_code_for_sas_code(mcp_server_with_mock_client):
+    mcp, _ = mcp_server_with_mock_client
+    run = AsyncMock(return_value={"snippet_id": "1", "state": "completed", "log": "", "listing": ""})
+    with patch("sas_mcp_server.tools.compute.run_one_snippet", run):
+        async with Client(mcp) as client:
+            await client.call_tool("execute_sas_code", {"code": "data alias; run;", "html_results": False})
+    assert run.call_args[0][0] == "data alias; run;"
+
+
+async def test_workbench_execute_sas_code_accepts_code_for_sas_code():
+    from fastmcp import FastMCP
+
+    from sas_mcp_server.tools import register_tools
+
+    mcp = FastMCP("workbench")
+
+    async def get_token(ctx):
+        return "t"
+
+    register_tools(mcp, get_token, tiers="8")
+    run = AsyncMock(return_value={"snippet_id": "1", "state": "completed", "log": "", "listing": ""})
+    with patch("sas_mcp_server.tools.workbench.run_one_snippet", run):
+        async with Client(mcp) as client:
+            await client.call_tool("execute_sas_code", {"code": "data alias; run;"})
+    assert run.call_args[0][0] == "data alias; run;"
+
+
+async def test_sas_code_and_code_together_are_refused(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "submit_batch_job", {"sas_code": "data a; run;", "code": "data b; run;"}, raise_on_error=False
+        )
+    assert result.is_error
+    mock_client.post.assert_not_called()
+
+
+async def test_missing_sas_code_error_names_sas_code(mcp_server_with_mock_client):
+    mcp, _ = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool("submit_batch_job", {"job_name": "x"}, raise_on_error=False)
+    assert result.is_error
+    assert "sas_code" in result.content[0].text
+
+
+async def test_code_alias_leaves_the_published_schema_alone(mcp_server_with_mock_client):
+    mcp, _ = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        tool_map = {t.name: t for t in await client.list_tools()}
+    for name in ("execute_sas_code", "submit_batch_job"):
+        schema = tool_map[name].input_schema
+        assert "sas_code" in schema["properties"]
+        assert "code" not in schema["properties"]
+        assert "sas_code" in schema["required"]
+
+
+# -----------------------------------------------------------------------
+# Compute sessions: list and delete
+# -----------------------------------------------------------------------
+
+
 def _not_found():
     missing = _make_mock_response(status_code=404)
     missing.content = b""
@@ -3928,6 +4001,214 @@ def _not_found():
         side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=missing)
     )
     return missing
+
+
+async def _warm_session(client, mock_client):
+    """Make test-session-id the session this server keeps warm."""
+    context_resp = _make_mock_response({"items": [{"id": "test-context-id"}]})
+    data_resp = _make_mock_response({"items": [], "count": 0})
+
+    def route_get(url, **kwargs):
+        if url.endswith("/compute/contexts"):
+            return context_resp
+        return data_resp
+
+    mock_client.get.side_effect = route_get
+    mock_client.post.return_value = _make_mock_response({"id": "test-session-id"}, status_code=201)
+    await client.call_tool("list_compute_libraries", {"compute_context_name": "Test Context"})
+    mock_client.get.side_effect = None
+
+
+async def test_list_compute_sessions_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await _warm_session(client, mock_client)
+        mock_client.get.return_value = _make_mock_response(
+            {
+                "count": 3,
+                "items": [
+                    {
+                        "id": "test-session-id",
+                        "name": "sas-mcp-shared",
+                        "state": "idle",
+                        "owner": "alice",
+                        "creationTimeStamp": "2026-11-23T09:00:00Z",
+                        "attributes": {"contextId": "ctx-1"},
+                    },
+                    {"id": "job-session", "name": "Job Execution", "state": "running", "owner": "alice"},
+                ],
+            }
+        )
+        result = (await client.call_tool("list_compute_sessions", {"limit": 2})).data
+
+    url = mock_client.get.call_args[0][0]
+    assert url.endswith("/compute/sessions")
+    assert mock_client.get.call_args[1]["params"] == {"start": 0, "limit": 2}
+    first, second = result["sessions"]
+    assert first == {
+        "id": "test-session-id",
+        "name": "sas-mcp-shared",
+        "state": "idle",
+        "owner": "alice",
+        "created": "2026-11-23T09:00:00Z",
+        "context_id": "ctx-1",
+        "cached_by_this_server": True,
+    }
+    assert second["state"] == "running"
+    assert second["context_id"] is None
+    assert second["cached_by_this_server"] is False
+    assert result["count"] == 3
+    assert result["has_more"] is True
+
+
+async def test_delete_compute_session_ends_the_warm_session_and_forgets_it(mcp_server_with_mock_client):
+    from sas_mcp_server.viya_utils import cached_session_ids
+
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await _warm_session(client, mock_client)
+        assert cached_session_ids() == {"test-session-id"}
+        result = (await client.call_tool("delete_compute_session", {"session_id": "test-session-id"})).data
+
+    assert mock_client.delete.call_args[0][0].endswith("/compute/sessions/test-session-id")
+    assert result == {"status": "deleted", "session_id": "test-session-id", "was_cached_session": True}
+    assert cached_session_ids() == set()
+
+
+async def test_delete_compute_session_of_another_session(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("delete_compute_session", {"session_id": "job-session"})).data
+    assert mock_client.delete.call_args[0][0].endswith("/compute/sessions/job-session")
+    assert result["status"] == "deleted"
+    assert result["was_cached_session"] is False
+
+
+async def test_delete_compute_session_already_gone(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.delete.return_value = _not_found()
+    async with Client(mcp) as client:
+        result = (await client.call_tool("delete_compute_session", {"session_id": "gone"})).data
+    assert result["status"] == "not_found"
+
+
+async def test_delete_compute_session_passes_other_errors_through(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    forbidden = _make_mock_response(status_code=403)
+    forbidden.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError("403", request=MagicMock(), response=forbidden)
+    )
+    mock_client.delete.return_value = forbidden
+    async with Client(mcp) as client:
+        result = await client.call_tool("delete_compute_session", {"session_id": "s"}, raise_on_error=False)
+    assert result.is_error
+
+
+async def test_delete_compute_session_refuses_the_fixed_session(mcp_server_with_mock_client, monkeypatch):
+    from sas_mcp_server.tools import compute
+
+    monkeypatch.setattr(compute, "COMPUTE_SESSION_ID", "0001")
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = (await client.call_tool("delete_compute_session", {"session_id": "0001"})).data
+    assert result["status"] == "refused"
+    mock_client.delete.assert_not_called()
+
+
+async def test_session_limits_are_in_the_descriptions(mcp_server_with_mock_client):
+    mcp, _ = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        tool_map = {t.name: t for t in await client.list_tools()}
+    execute = tool_map["execute_sas_code"].description
+    assert "one job at a time" in execute
+    assert "submit_batch_job" in execute
+    assert "MERGE" in execute
+    assert "session of its own" in tool_map["submit_batch_job"].description
+
+
+async def test_workbench_description_states_the_session_limits():
+    from fastmcp import FastMCP
+
+    from sas_mcp_server.tools import register_tools
+
+    mcp = FastMCP("workbench")
+
+    async def get_token(ctx):
+        return "t"
+
+    register_tools(mcp, get_token, tiers="8")
+    async with Client(mcp) as client:
+        (tool,) = await client.list_tools()
+    assert "one job at a time" in tool.description
+    assert "MERGE" in tool.description
+
+
+# -----------------------------------------------------------------------
+# get_job_status when the job record is gone
+# -----------------------------------------------------------------------
+
+
+async def test_get_job_status_reports_a_gone_record_and_the_sessions(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    sessions = _make_mock_response(
+        {"count": 1, "items": [{"id": "job-session", "name": "Job Execution", "state": "running"}]}
+    )
+
+    def route_get(url, **kwargs):
+        if "/jobExecution/jobs/" in url:
+            return _not_found()
+        if url.endswith("/compute/sessions"):
+            return sessions
+        return mock_client.get.return_value
+
+    mock_client.get.side_effect = route_get
+    async with Client(mcp) as client:
+        result = (await client.call_tool("get_job_status", {"job_id": "job-789"})).data
+    mock_client.get.side_effect = None
+
+    assert result["status"] == "not_found"
+    assert result["job_id"] == "job-789"
+    assert "delete_compute_session" in result["message"]
+    assert [s["id"] for s in result["compute_sessions"]] == ["job-session"]
+
+
+async def test_get_job_status_gone_record_leaves_out_the_warm_session(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await _warm_session(client, mock_client)
+        sessions = _make_mock_response(
+            {
+                "count": 2,
+                "items": [{"id": "test-session-id", "state": "idle"}, {"id": "job-session", "state": "running"}],
+            }
+        )
+
+        def route_get(url, **kwargs):
+            if "/jobExecution/jobs/" in url:
+                return _not_found()
+            return sessions
+
+        mock_client.get.side_effect = route_get
+        result = (await client.call_tool("get_job_status", {"job_id": "job-789"})).data
+    mock_client.get.side_effect = None
+    assert [s["id"] for s in result["compute_sessions"]] == ["job-session"]
+
+
+async def test_get_job_status_gone_record_when_sessions_cannot_be_listed(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+
+    def route_get(url, **kwargs):
+        if "/jobExecution/jobs/" in url:
+            return _not_found()
+        raise httpx.ConnectError("refused")
+
+    mock_client.get.side_effect = route_get
+    async with Client(mcp) as client:
+        result = (await client.call_tool("get_job_status", {"job_id": "job-789"})).data
+    mock_client.get.side_effect = None
+    assert result["status"] == "not_found"
+    assert "refused" in result["compute_sessions_error"]
+    assert "compute_sessions" not in result
 
 
 async def test_get_job_status_missing_record(mcp_server_with_mock_client):

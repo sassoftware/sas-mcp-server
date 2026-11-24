@@ -516,6 +516,35 @@ async def test_compute_discovery_workflow(integration_mcp_server):
 # -----------------------------------------------------------------------
 
 
+async def test_server_status(integration_mcp_server, viya_credentials):
+    """server_status names the endpoint under test and the user the token belongs to."""
+    async with Client(integration_mcp_server) as client:
+        status = (await client.call_tool("server_status", {})).data
+    assert status["viya_endpoint"] == viya_credentials["endpoint"].rstrip("/")
+    assert status["user"], status
+    assert status["token"]["seconds_left"] > 0, status
+    assert status["writes_refused"] is False
+
+
+async def test_compute_session_list_and_delete(integration_mcp_server):
+    """list_compute_sessions shows the warm session; delete_compute_session ends it once."""
+    async with Client(integration_mcp_server) as client:
+        warm = (
+            await client.call_tool("execute_sas_code", {"sas_code": "data _null_; run;", "html_results": False})
+        ).data
+        assert warm["state"] in ("completed", "warning"), warm["log"]
+
+        listed = (await client.call_tool("list_compute_sessions", {"limit": 100})).data
+        ours = [s for s in listed["sessions"] if s["cached_by_this_server"]]
+        assert len(ours) == 1, listed
+        session_id = ours[0]["id"]
+
+        deleted = (await client.call_tool("delete_compute_session", {"session_id": session_id})).data
+        assert deleted == {"status": "deleted", "session_id": session_id, "was_cached_session": True}
+        again = (await client.call_tool("delete_compute_session", {"session_id": session_id})).data
+        assert again["status"] == "not_found"
+
+
 async def test_compute_session_reuse_and_reset(integration_mcp_server):
     """Prove session reuse, deletion, and recreation end to end.
 
@@ -2402,6 +2431,9 @@ TOOL_COVERAGE = {
     "list_compute_columns": "test_compute_discovery_workflow",
     "get_compute_table_data": "test_compute_discovery_workflow",
     "reset_compute_session": "test_compute_session_reuse_and_reset",
+    "server_status": "test_server_status",
+    "list_compute_sessions": "test_compute_session_list_and_delete",
+    "delete_compute_session": "test_compute_session_list_and_delete",
     "catalog_search": "test_catalog_table_profile_loop",
     "catalog_search_helper": "test_catalog_table_profile_loop",
     "catalog_find_instance": "test_catalog_table_profile_loop",

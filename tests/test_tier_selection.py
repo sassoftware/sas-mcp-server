@@ -50,7 +50,7 @@ def test_env_var_drives_default(monkeypatch):
 
 async def test_register_all_tiers_registers_everything():
     names = await _register(None)
-    assert len(names) == 137
+    assert len(names) == 140
     assert "execute_sas_code" in names
     assert "publish_decision_flow" in names
     assert "apply_report_operations" in names
@@ -59,7 +59,7 @@ async def test_register_all_tiers_registers_everything():
 
 async def test_register_subset_excludes_other_tiers():
     names = await _register("0-4")
-    assert len(names) == 48
+    assert len(names) == 51
     assert "execute_sas_code" in names  # tier 0
     assert "list_jobs" in names  # tier 4
     assert "list_mas_modules" not in names  # tier 6

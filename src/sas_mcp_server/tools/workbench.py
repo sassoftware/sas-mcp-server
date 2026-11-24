@@ -9,14 +9,26 @@ from fastmcp import Context, FastMCP
 
 from ..viya_client import logger
 from ..viya_utils import run_one_snippet
+from ._common import SasCode
 
 
 def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
     """Register Tier 8 (Workbench) tools on *mcp*."""
 
     @mcp.tool()
-    async def execute_sas_code(sas_code: str, ctx: Context, html_results: bool = True) -> dict[str, str]:
+    async def execute_sas_code(sas_code: SasCode, ctx: Context, html_results: bool = True) -> dict[str, str]:
         """Execute SAS code in a reusable Viya compute session.
+
+        Limits of the session:
+
+        - It runs one job at a time. A second call waits until the first ends,
+          so a long job blocks every other call. Where the
+          deployment offers ``submit_batch_job``, run long work there: it gets
+          a session of its own.
+        - Its memory is capped by the deployment's compute pod. A PROC SQL
+          join or a hash object can exhaust it on tables well under a million
+          rows and end the session. Sort both tables and MERGE them in a DATA
+          step, or do the join in CAS.
 
         Args:
             sas_code (str): the SAS code snippet to be executed using the Viya Job Execution API Service

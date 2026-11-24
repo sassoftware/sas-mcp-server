@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 137 tools across 12 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 140 tools across 12 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Interactive views (MCP Apps) for data, SAS logs, glossary editing and scoring a decision in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
@@ -177,7 +177,7 @@ MCP_TIERS=0-3 uv run app
 
 ### Read-only mode
 
-Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 64 of the 137 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 66 of the 140 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
 
 This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
 
@@ -197,9 +197,21 @@ The definition is strict: a tool qualifies only if it can neither write nor star
 | `score_data`, `catalog_run_agent`, `catalog_run_adhoc_analysis` | Start server-side jobs and leave run records, though they return data |
 | `promote_table_to_memory` | Mutates CAS in-memory state |
 | `test_score_model`, `validate_published_model`, `describe_analytic_store` | Run a SAS session or a score job, though they return data and leave nothing behind |
-| `cancel_job`, `reset_compute_session` | Destroy something the caller owns |
+| `cancel_job`, `reset_compute_session`, `delete_compute_session` | Destroy something the caller owns |
 
 Classification is fail-closed: a tool that is not explicitly classified as read-only is withheld. The list lives in [`src/sas_mcp_server/tools/_access.py`](src/sas_mcp_server/tools/_access.py), and a test asserts it covers every registered tool, so a newly added tool cannot silently land in read-only mode.
+
+### Expected-host check
+
+A launcher that runs one server per environment can point it at the wrong one, and a job then runs on a deployment nobody meant to touch. Set `SAS_MCP_EXPECT_HOST` to the host the server should reach (`hc-build.example.com`, or a URL). If it does not match the host of `VIYA_ENDPOINT`, every tool that is not read-only returns this instead of running, and asks SAS Viya for nothing:
+
+```json
+{"status": "refused", "reason": "unexpected_host", "tool": "submit_batch_job",
+ "connected_host": "other.example.com", "expected_host": "hc-build.example.com",
+ "gated_by": "SAS_MCP_EXPECT_HOST", "message": "..."}
+```
+
+Read tools keep working, so `server_status` and the list and get tools can show what the server is connected to. The check uses the read-only classification above: a tool outside the read-only set is refused. Host names are compared without case, and ports only when the value names one. Unset (the default), nothing is checked. For the check to catch a wrong environment, the launcher has to set the variable from a different source than the one that chose `VIYA_ENDPOINT`, for example from the project's own setting.
 
 ### Tool annotations (what clients are told)
 
@@ -208,7 +220,7 @@ The same classification is **advertised** to every client as [MCP tool annotatio
 | Hint | Derived from |
 |---|---|
 | `readOnlyHint` | exactly the read-only set above — one table, so what a client is told and what `MCP_READ_ONLY` enforces cannot drift |
-| `destructiveHint` | tools that can remove or overwrite existing state: arbitrary code (`execute_sas_code`, `submit_batch_job`), `delete_*`, `cancel_job`, `reset_compute_session`, the `update_*` PUTs, `apply_report_operations`, `create_report`/`copy_report` (their `replace` conflict policy), `publish_ml_champion_model`, `register_model`/`publish_model`/`save_castable` (their `replace`), `drop_castable`, `score_table`, `set_project_champion`, `create_performance_definition` (its `replace`), `set_kpi_alert_rule` (updates the rule for the same KPI in place) |
+| `destructiveHint` | tools that can remove or overwrite existing state: arbitrary code (`execute_sas_code`, `submit_batch_job`), `delete_*`, `cancel_job`, `reset_compute_session`, `delete_compute_session`, the `update_*` PUTs, `apply_report_operations`, `create_report`/`copy_report` (their `replace` conflict policy), `publish_ml_champion_model`, `register_model`/`publish_model`/`save_castable` (their `replace`), `drop_castable`, `score_table`, `set_project_champion`, `create_performance_definition` (its `replace`), `set_kpi_alert_rule` (updates the rule for the same KPI in place) |
 | `idempotentHint` | reads, the `update_*` PUTs, deletes, `cancel_job`, `reset_compute_session`, `promote_table_to_memory`, and the tools that report what an earlier call made instead of acting again (`create_folder`, `create_model_project`, `save_castable`, `drop_castable`, `set_project_champion`, `create_performance_definition`, `set_kpi_alert_rule`) |
 | `openWorldHint` | only tools that can reach beyond Viya: arbitrary code, the upload tools' `url` source, and `publish_model` (Git and container-registry destinations) |
 
@@ -257,9 +269,12 @@ A view's own controls call other tools (the Results tab reads the page through `
 The headings below match the numbered **tiers** above, so `MCP_TIERS` maps directly to the tools you expose (e.g. `MCP_TIERS=0-3` gives Tiers 0–3).
 
 #### Tier 0 — Compute Contexts & Code Execution
-- **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output), plus a link to the [HTML results](#html-results) unless `html_results=false`. Runs in a reusable, per-user compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls — use **reset_compute_session** to start fresh.
+- **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output), plus a link to the [HTML results](#html-results) unless `html_results=false`. Runs in a reusable, per-user compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls — use **reset_compute_session** to start fresh. The code goes in `sas_code`; `code` is accepted too, here and in `submit_batch_job`, because agents reach for it. The session runs one job at a time, so a long job blocks the next call; `submit_batch_job` runs in a session of its own. Its memory is capped by the deployment's compute pod, and a PROC SQL join or hash object can exhaust it where a sorted DATA step MERGE does not.
 - **list_compute_contexts**: List available compute contexts
+- **server_status**: Name the SAS Viya endpoint this server talks to, the environment profile that started it (`SAS_MCP_PROFILE`), the user its token belongs to, when the token expires and whether the server can renew it, and the result of the [expected-host check](#expected-host-check). It returns no secrets. Read-only, so it works when the check refuses writes
 - **reset_compute_session**: Delete the cached compute session for a context, discarding its SAS state and forcing a fresh session on the next call
+- **list_compute_sessions**: List your compute sessions: the one `execute_sas_code` keeps warm (marked `cached_by_this_server`) and those Job Execution started for batch jobs, with their state
+- **delete_compute_session**: End a compute session and whatever runs in it. Its pod goes away and the database connections it held close. Use it for a session a cancelled job left behind
 
 #### Tier 1 — Data Discovery
 *SAS Data Governance (metadata discovery & profiling):*
@@ -313,10 +328,10 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **delete_report**: Delete a report and its content.
 
 #### Tier 4 — Batch Jobs & Async Execution
-- **submit_batch_job**: Submit a SAS job for async execution
-- **get_job_status**: Check job state. A missing record returns `not_found` and the requested job ID
+- **submit_batch_job**: Submit a SAS job for async execution. The result adds `token_lifetime`, which says when the access token expires and how many seconds it has left. Before submitting, the stdio server renews a token with less than 30 minutes left, or less than `expected_runtime_minutes` when the call gives it. It warns when the token may still run out before the job ends. In HTTP mode the MCP client owns the token, so the result reports its lifetime and does not renew it
+- **get_job_status**: Check job state. For a job whose record is gone (cancelled or expired), it returns `not_found` and your compute sessions that may still be running its code, instead of a bare 404
 - **list_jobs**: List recent/running jobs
-- **cancel_job**: Delete the job record. Its compute session may still be running
+- **cancel_job**: Delete the job record. Its compute session may still be running. Use `list_compute_sessions` to inspect your sessions
 - **get_job_log**: Retrieve job log
 
 #### Tier 5 — Automated Machine Learning
@@ -699,7 +714,7 @@ tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
 
-Every one of the 137 tools and 9 prompt templates has an integration test, enforced by the
+Every one of the 140 tools and 9 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most
