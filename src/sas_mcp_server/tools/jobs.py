@@ -49,7 +49,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
     @mcp.tool()
     async def get_job_status(job_id: str, ctx: Context) -> dict[str, Any]:
-        """Check the status of a submitted job.
+        """Check job state. A missing record returns status="not_found" and the requested job ID.
 
         Args:
             job_id: ID of the job.
