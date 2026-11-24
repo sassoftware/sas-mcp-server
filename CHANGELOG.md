@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `cancel_job` reports that it deleted the job record. The compute session may still be running.
+- `get_job_status` returns `not_found` when Job Execution has no record for the requested ID.
+
 ## [1.22.0] - 2026-11-23
 
 ### Added
