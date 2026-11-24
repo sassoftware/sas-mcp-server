@@ -5,12 +5,11 @@
 ### Added
 - **`server_status`** (Tier 0, read-only) names the SAS Viya endpoint and host the server talks to, the environment profile that started it (`SAS_MCP_PROFILE`), the user its token belongs to, the token's expiry and seconds left, and whether the server can renew it. It returns no part of the token.
 - **`SAS_MCP_EXPECT_HOST`** (unset by default) names the host the server should reach. When it differs from the host of `VIYA_ENDPOINT`, every tool that is not read-only returns `status: refused`, `reason: unexpected_host` with both hosts, and sends nothing to SAS Viya. Read tools keep working.
-- **`list_compute_sessions` and `delete_compute_session`** (Tier 0). The list shows the caller's sessions, marking the one `execute_sas_code` reuses. Delete ends a session, such as one a cancelled job left running, and the server stops reusing it.
+- **`list_compute_sessions` and `delete_compute_session`** (Tier 0). The list shows the caller's sessions, marking the one `execute_sas_code` reuses. Delete reports whether Viya completed or accepted the request.
 - **`submit_batch_job` returns `token_lifetime`** and takes `expected_runtime_minutes`. The stdio server renews a token with less than 30 minutes left, or less than the expected run time, before it submits.
 - **`code` is accepted for `sas_code`** on `execute_sas_code` and `submit_batch_job`. The published schema still lists only `sas_code`.
 
 ### Changed
-- **`get_job_status` explains a job record that is gone.** A 404 returns `not_found`, why records disappear, and the compute sessions that may still be running the job's code.
 - **The `execute_sas_code` and `submit_batch_job` descriptions state the compute session's limits.** A session runs one job at a time and its memory is capped by the compute pod.
 
 ### Fixed

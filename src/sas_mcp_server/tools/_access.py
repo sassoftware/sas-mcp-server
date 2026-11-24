@@ -454,11 +454,9 @@ def _host_and_port(value: str) -> tuple[str, int | None]:
     if "://" not in text:
         text = f"https://{text}"
     parts = urlsplit(text)
-    try:
-        port = parts.port
-    except ValueError:
-        port = None
-    return (parts.hostname or "").lower(), port
+    if not parts.hostname or parts.netloc.endswith(":"):
+        raise ValueError("Expected a host with an optional numeric port")
+    return parts.hostname.lower(), parts.port
 
 
 def host_check(endpoint: str, expected: str | None) -> dict[str, Any]:
@@ -473,7 +471,10 @@ def host_check(endpoint: str, expected: str | None) -> dict[str, Any]:
     connected = host if port in (None, default_port) else f"{host}:{port}"
     if not expected:
         return {"connected_host": connected, "expected_host": None, "matches": None}
-    want_host, want_port = _host_and_port(expected)
+    try:
+        want_host, want_port = _host_and_port(expected)
+    except ValueError:
+        return {"connected_host": connected, "expected_host": expected, "matches": False}
     matches = want_host == host and (want_port is None or want_port == (port or default_port))
     return {"connected_host": connected, "expected_host": expected, "matches": matches}
 

@@ -38,7 +38,7 @@ __all__ = [
 # before a batch job is submitted.
 RENEW_BELOW_SECONDS = 30 * 60
 
-_renewer: Callable[[], str | None] | None = None
+_renewer: Callable[[str], str | None] | None = None
 
 
 def jwt_claims(token: str | None) -> dict[str, Any]:
@@ -78,7 +78,7 @@ def token_lifetime(token: str | None, now: datetime | None = None) -> dict[str, 
     }
 
 
-def set_token_renewer(renewer: Callable[[], str | None] | None) -> None:
+def set_token_renewer(renewer: Callable[[str], str | None] | None) -> None:
     """Register the function that renews the server's token, or ``None`` to clear it.
 
     *renewer* is synchronous, returns the new access token or ``None`` when it
@@ -93,12 +93,12 @@ def can_renew() -> bool:
     return _renewer is not None
 
 
-async def renew_token() -> str | None:
+async def renew_token(token: str) -> str | None:
     """Renew the token through the registered renewer; ``None`` when that is not possible."""
     renewer = _renewer
     if renewer is None:
         return None
-    return await asyncio.to_thread(renewer)
+    return await asyncio.to_thread(renewer, token)
 
 
 async def ensure_token_lifetime(
@@ -118,7 +118,7 @@ async def ensure_token_lifetime(
     needed = max(RENEW_BELOW_SECONDS, (expected_runtime_minutes or 0) * 60)
     renewed = False
     if lifetime["seconds_left"] < needed and can_renew():
-        fresh = await renew_token()
+        fresh = await renew_token(token)
         fresh_lifetime = token_lifetime(fresh) if fresh else None
         if fresh and fresh_lifetime is not None:
             token, lifetime, renewed = fresh, fresh_lifetime, True
@@ -127,11 +127,11 @@ async def ensure_token_lifetime(
         result["warning"] = (
             f"The access token expires in {lifetime['seconds_left'] // 60} minutes, before the "
             f"{expected_runtime_minutes} minutes this job is expected to run. Steps that call CAS or "
-            "other SAS Viya services can fail once it expires. Sign in again, then resubmit."
+            "other SAS Viya services may fail after expiry. Monitor the submitted job with get_job_status."
         )
     elif lifetime["seconds_left"] < RENEW_BELOW_SECONDS:
         result["warning"] = (
-            f"The access token expires in {lifetime['seconds_left'] // 60} minutes and could not be "
-            "renewed. Sign in again before submitting long work."
+            f"The access token expires in {lifetime['seconds_left'] // 60} minutes. "
+            "Monitor the submitted job with get_job_status."
         )
     return token, result

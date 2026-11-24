@@ -70,6 +70,7 @@ async def _server(token: str, *, expect_host: str = "", tiers="0,4"):
         ("https://hc-build.example.com", "hc-build.example.com:443", True),
         ("https://hc-build.example.com:8443", "hc-build.example.com", True),
         ("https://hc-build.example.com:8443", "hc-build.example.com:443", False),
+        ("https://hc-build.example.com:8443", "hc-build.example.com:typo", False),
         ("https://other.example.com", "hc-build.example.com", False),
         ("https://hc-build.example.com.evil.test", "hc-build.example.com", False),
     ],
@@ -91,12 +92,12 @@ def test_host_check_names_a_non_default_port():
 
 
 async def test_server_status_reports_endpoint_user_and_token_expiry(monkeypatch):
+    monkeypatch.setattr(tools, "VIYA_ENDPOINT", "https://hc-build.example.com")
     monkeypatch.setattr(compute, "VIYA_ENDPOINT", "https://hc-build.example.com")
     monkeypatch.setattr(compute, "SAS_MCP_PROFILE", "hc-build")
-    monkeypatch.setattr(compute, "SAS_MCP_EXPECT_HOST", "hc-build.example.com")
     exp = int(time.time()) + 3600
     token = make_jwt({"sub": "u1", "exp": exp})
-    mcp, _ = await _server(token)
+    mcp, _ = await _server(token, expect_host="hc-build.example.com")
     with _identities("alice"):
         async with Client(mcp) as client:
             status = (await client.call_tool("server_status", {})).data
@@ -135,7 +136,6 @@ async def test_server_status_without_a_token_still_names_the_endpoint(monkeypatc
 
 
 async def test_wrong_host_refuses_writes_without_requesting_a_token(monkeypatch):
-    monkeypatch.setattr(compute, "SAS_MCP_EXPECT_HOST", "hc-build.example.com")
     mcp, calls = await _server("test-token", expect_host="hc-build.example.com")
     async with Client(mcp) as client:
         for tool, args in (
@@ -156,7 +156,6 @@ async def test_wrong_host_refuses_writes_without_requesting_a_token(monkeypatch)
 
 
 async def test_wrong_host_keeps_read_tools_working(monkeypatch):
-    monkeypatch.setattr(compute, "SAS_MCP_EXPECT_HOST", "hc-build.example.com")
     mcp, _ = await _server("test-token", expect_host="hc-build.example.com")
     with _identities():
         async with Client(mcp) as client:
@@ -219,7 +218,7 @@ def _jwt_expiring_in(seconds: int) -> str:
 
 async def test_ensure_token_lifetime_renews_a_token_about_to_expire():
     short, long_ = _jwt_expiring_in(600), _jwt_expiring_in(4 * 3600)
-    token_info.set_token_renewer(lambda: long_)
+    token_info.set_token_renewer(lambda token: long_)
     token, lifetime = await token_info.ensure_token_lifetime(short)
     assert token == long_
     assert lifetime["renewed"] is True
@@ -249,10 +248,11 @@ async def test_ensure_token_lifetime_renews_for_the_expected_run_time():
 
 
 async def test_ensure_token_lifetime_warns_when_even_a_renewed_token_is_too_short():
-    token_info.set_token_renewer(lambda: _jwt_expiring_in(4 * 3600))
+    token_info.set_token_renewer(lambda token: _jwt_expiring_in(4 * 3600))
     _, lifetime = await token_info.ensure_token_lifetime(_jwt_expiring_in(600), expected_runtime_minutes=300)
     assert lifetime["renewed"] is True
     assert "300 minutes" in lifetime["warning"]
+    assert "resubmit" not in lifetime["warning"]
 
 
 async def test_ensure_token_lifetime_without_a_renewer_warns():
@@ -261,12 +261,12 @@ async def test_ensure_token_lifetime_without_a_renewer_warns():
     assert token == short
     assert lifetime["renewed"] is False
     assert lifetime["renewal_available"] is False
-    assert "could not be renewed" in lifetime["warning"]
+    assert "Monitor the submitted job" in lifetime["warning"]
 
 
 async def test_ensure_token_lifetime_keeps_the_token_when_renewal_fails():
     short = _jwt_expiring_in(600)
-    token_info.set_token_renewer(lambda: None)
+    token_info.set_token_renewer(lambda token: None)
     token, lifetime = await token_info.ensure_token_lifetime(short)
     assert token == short
     assert lifetime["renewed"] is False
@@ -289,7 +289,7 @@ def _jobs_client():
 
 async def test_submit_batch_job_submits_with_the_renewed_token():
     short, long_ = _jwt_expiring_in(600), _jwt_expiring_in(4 * 3600)
-    token_info.set_token_renewer(lambda: long_)
+    token_info.set_token_renewer(lambda token: long_)
     mcp, _ = await _server(short, tiers="4")
     client = _jobs_client()
     with patch("sas_mcp_server.tools.jobs.make_client", return_value=client) as make_client:
@@ -317,3 +317,17 @@ async def test_submit_batch_job_reports_the_lifetime_without_renewing():
     assert job["token_lifetime"]["renewed"] is False
     assert 7000 < job["token_lifetime"]["seconds_left"] <= 7200
     assert "warning" not in job["token_lifetime"]
+
+
+async def test_short_lifetime_warning_identifies_the_already_submitted_job():
+    mcp, _ = await _server(_jwt_expiring_in(300), tiers="4")
+    client = _jobs_client()
+    with patch("sas_mcp_server.tools.jobs.make_client", return_value=client):
+        async with Client(mcp) as mcp_client:
+            job = (await mcp_client.call_tool("submit_batch_job", {
+                "sas_code": "run;", "expected_runtime_minutes": 60,
+            })).data
+    client.post.assert_awaited_once()
+    assert job["id"] == "job-1"
+    assert "Monitor the submitted job" in job["token_lifetime"]["warning"]
+    assert "resubmit" not in job["token_lifetime"]["warning"]

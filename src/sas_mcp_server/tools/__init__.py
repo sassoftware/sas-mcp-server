@@ -253,8 +253,8 @@ def register_tools(
             DECISIONING_ADVANCED, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION,
         )
     expected = SAS_MCP_EXPECT_HOST if expect_host is None else expect_host.strip()
+    check = host_check(VIYA_ENDPOINT, expected)
     if expected:
-        check = host_check(VIYA_ENDPOINT, expected)
         mcp.add_middleware(HostGuardMiddleware(check))
         if check["matches"] is False:
             logger.warning(
@@ -272,6 +272,8 @@ def register_tools(
             continue
         # Wrapped per tier so TOOL_TIERS learns the tier each tool came from.
         recorder = _TierRecorder(target, tier, apps=with_apps, seen=seen, fingerprint=fp)
+        if tier == 0:
+            compute.register_status(cast(FastMCP, recorder), get_token, check)
         _TIER_REGISTRARS[tier](cast(FastMCP, recorder), get_token)
     if gate is not None:
         logger.info(

@@ -4044,6 +4044,7 @@ async def test_list_compute_sessions_request(mcp_server_with_mock_client):
     url = mock_client.get.call_args[0][0]
     assert url.endswith("/compute/sessions")
     assert mock_client.get.call_args[1]["params"] == {"start": 0, "limit": 2}
+    assert mock_client.get.call_args.kwargs["headers"]["Accept-Item"] == "application/vnd.sas.compute.session+json"
     first, second = result["sessions"]
     assert first == {
         "id": "test-session-id",
@@ -4082,6 +4083,16 @@ async def test_delete_compute_session_of_another_session(mcp_server_with_mock_cl
     assert mock_client.delete.call_args[0][0].endswith("/compute/sessions/job-session")
     assert result["status"] == "deleted"
     assert result["was_cached_session"] is False
+
+
+@pytest.mark.parametrize(("code", "expected"), [(202, "pending"), (404, "not_found")])
+async def test_delete_cached_session_reports_actual_outcome(mcp_server_with_mock_client, code, expected):
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        await _warm_session(client, mock_client)
+        mock_client.delete.return_value = _make_mock_response(status_code=code)
+        result = (await client.call_tool("delete_compute_session", {"session_id": "test-session-id"})).data
+    assert result == {"status": expected, "session_id": "test-session-id", "was_cached_session": True}
 
 
 async def test_delete_compute_session_already_gone(mcp_server_with_mock_client):
@@ -4148,69 +4159,6 @@ async def test_workbench_description_states_the_session_limits():
 # -----------------------------------------------------------------------
 
 
-async def test_get_job_status_reports_a_gone_record_and_the_sessions(mcp_server_with_mock_client):
-    mcp, mock_client = mcp_server_with_mock_client
-    sessions = _make_mock_response(
-        {"count": 1, "items": [{"id": "job-session", "name": "Job Execution", "state": "running"}]}
-    )
-
-    def route_get(url, **kwargs):
-        if "/jobExecution/jobs/" in url:
-            return _not_found()
-        if url.endswith("/compute/sessions"):
-            return sessions
-        return mock_client.get.return_value
-
-    mock_client.get.side_effect = route_get
-    async with Client(mcp) as client:
-        result = (await client.call_tool("get_job_status", {"job_id": "job-789"})).data
-    mock_client.get.side_effect = None
-
-    assert result["status"] == "not_found"
-    assert result["job_id"] == "job-789"
-    assert "delete_compute_session" in result["message"]
-    assert [s["id"] for s in result["compute_sessions"]] == ["job-session"]
-
-
-async def test_get_job_status_gone_record_leaves_out_the_warm_session(mcp_server_with_mock_client):
-    mcp, mock_client = mcp_server_with_mock_client
-    async with Client(mcp) as client:
-        await _warm_session(client, mock_client)
-        sessions = _make_mock_response(
-            {
-                "count": 2,
-                "items": [{"id": "test-session-id", "state": "idle"}, {"id": "job-session", "state": "running"}],
-            }
-        )
-
-        def route_get(url, **kwargs):
-            if "/jobExecution/jobs/" in url:
-                return _not_found()
-            return sessions
-
-        mock_client.get.side_effect = route_get
-        result = (await client.call_tool("get_job_status", {"job_id": "job-789"})).data
-    mock_client.get.side_effect = None
-    assert [s["id"] for s in result["compute_sessions"]] == ["job-session"]
-
-
-async def test_get_job_status_gone_record_when_sessions_cannot_be_listed(mcp_server_with_mock_client):
-    mcp, mock_client = mcp_server_with_mock_client
-
-    def route_get(url, **kwargs):
-        if "/jobExecution/jobs/" in url:
-            return _not_found()
-        raise httpx.ConnectError("refused")
-
-    mock_client.get.side_effect = route_get
-    async with Client(mcp) as client:
-        result = (await client.call_tool("get_job_status", {"job_id": "job-789"})).data
-    mock_client.get.side_effect = None
-    assert result["status"] == "not_found"
-    assert "refused" in result["compute_sessions_error"]
-    assert "compute_sessions" not in result
-
-
 async def test_get_job_status_missing_record(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
     mock_client.get.return_value = _not_found()
@@ -4218,6 +4166,8 @@ async def test_get_job_status_missing_record(mcp_server_with_mock_client):
         result = (await client.call_tool("get_job_status", {"job_id": "job-789"})).data
     assert result["status"] == "not_found"
     assert result["job_id"] == "job-789"
+    assert "compute_sessions" not in result
+    mock_client.get.assert_awaited_once()
 
 
 async def test_get_job_status_passes_other_errors_through(mcp_server_with_mock_client):

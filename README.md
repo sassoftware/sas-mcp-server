@@ -273,8 +273,8 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **list_compute_contexts**: List available compute contexts
 - **server_status**: Name the SAS Viya endpoint this server talks to, the environment profile that started it (`SAS_MCP_PROFILE`), the user its token belongs to, when the token expires and whether the server can renew it, and the result of the [expected-host check](#expected-host-check). It returns no secrets. Read-only, so it works when the check refuses writes
 - **reset_compute_session**: Delete the cached compute session for a context, discarding its SAS state and forcing a fresh session on the next call
-- **list_compute_sessions**: List your compute sessions: the one `execute_sas_code` keeps warm (marked `cached_by_this_server`) and those Job Execution started for batch jobs, with their state
-- **delete_compute_session**: End a compute session and whatever runs in it. Its pod goes away and the database connections it held close. Use it for a session a cancelled job left behind
+- **list_compute_sessions**: Inspect sessions visible to the caller, including their owner, state, and whether this server caches them.
+- **delete_compute_session**: Request deletion of a session by ID. Viya reports pending when current work must finish first.
 
 #### Tier 1 — Data Discovery
 *SAS Data Governance (metadata discovery & profiling):*
@@ -329,9 +329,9 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 
 #### Tier 4 — Batch Jobs & Async Execution
 - **submit_batch_job**: Submit a SAS job for async execution. The result adds `token_lifetime`, which says when the access token expires and how many seconds it has left. Before submitting, the stdio server renews a token with less than 30 minutes left, or less than `expected_runtime_minutes` when the call gives it. It warns when the token may still run out before the job ends. In HTTP mode the MCP client owns the token, so the result reports its lifetime and does not renew it
-- **get_job_status**: Check job state. For a job whose record is gone (cancelled or expired), it returns `not_found` and your compute sessions that may still be running its code, instead of a bare 404
+- **get_job_status**: Check job state. A missing record returns `not_found` and the requested job ID
 - **list_jobs**: List recent/running jobs
-- **cancel_job**: Delete the job record. Its compute session may still be running. Use `list_compute_sessions` to inspect your sessions
+- **cancel_job**: Delete the job record. Its compute session may still be running
 - **get_job_log**: Retrieve job log
 
 #### Tier 5 — Automated Machine Learning

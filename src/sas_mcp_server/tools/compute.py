@@ -6,25 +6,66 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-import httpx
 from fastmcp import Context, FastMCP
 
-from ..config import COMPUTE_SESSION_ID, CONTEXT_NAME, SAS_MCP_EXPECT_HOST, SAS_MCP_PROFILE, VIYA_ENDPOINT
+from ..config import COMPUTE_SESSION_ID, CONTEXT_NAME, SAS_MCP_PROFILE, VIYA_ENDPOINT
 from ..helpers.telemetry_helpers import server_version
 from ..token_info import can_renew, token_lifetime
 from ..user_log import resolve_user_id
 from ..viya_client import (
     contains_filter,
-    delete_resource,
     get_paged_items,
     logger,
     make_client,
+    raise_for_viya_status,
     return_items,
 )
 from ..viya_utils import forget_cached_session, list_compute_sessions, reset_cached_session, run_one_snippet
-from ._access import host_check
 from ._common import SasCode, make_session_helpers
 
+
+def register_status(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]], check: dict[str, Any]) -> None:
+    @mcp.tool()
+    async def server_status(ctx: Context) -> dict[str, Any]:
+        """Report which SAS Viya deployment this server is connected to, and as whom.
+
+        Call it before the first write or job of a task, and whenever results
+        look as if they came from another environment. It returns no secrets.
+
+        Returns:
+            ``viya_endpoint`` and ``host``: where every tool call goes.
+            ``profile``: the environment profile that started the server
+            (``SAS_MCP_PROFILE``), or null when the launcher did not say.
+            ``expected_host`` and ``host_matches``: the ``SAS_MCP_EXPECT_HOST``
+            check, null when it is not set. ``writes_refused`` is true when the
+            check fails: tools that write or run code then refuse, and read
+            tools keep working.
+            ``user``: the SAS Viya user id the calls run as, null when it could
+            not be looked up.
+            ``token``: ``expires_at`` and ``seconds_left`` of the access token,
+            and ``renewal_available`` (whether this server can renew it
+            itself), or ``error`` when no token could be obtained.
+            ``server_version``.
+        """
+        logger.info("--- TOOL USED: server_status ---")
+        status: dict[str, Any] = {
+            "viya_endpoint": VIYA_ENDPOINT,
+            "host": check["connected_host"],
+            "profile": SAS_MCP_PROFILE or None,
+            "expected_host": check["expected_host"],
+            "host_matches": check["matches"],
+            "writes_refused": check["matches"] is False,
+            "user": None,
+            "server_version": server_version(),
+        }
+        try:
+            token = await get_token(ctx)
+        except Exception as exc:  # noqa: BLE001 - the endpoint is worth reporting without a token
+            status["token"] = {"error": f"{type(exc).__name__}: {exc}"}
+            return status
+        status["user"] = await resolve_user_id(token)
+        status["token"] = {**(token_lifetime(token) or {}), "renewal_available": can_renew()}
+        return status
 
 def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
     """Register Tier 0 (Compute Contexts & Code Execution) tools on *mcp*."""
@@ -103,49 +144,6 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         return await run_one_snippet(sas_code, "1", token, html_results=html_results)
 
     @mcp.tool()
-    async def server_status(ctx: Context) -> dict[str, Any]:
-        """Report which SAS Viya deployment this server is connected to, and as whom.
-
-        Call it before the first write or job of a task, and whenever results
-        look as if they came from another environment. It returns no secrets.
-
-        Returns:
-            ``viya_endpoint`` and ``host``: where every tool call goes.
-            ``profile``: the environment profile that started the server
-            (``SAS_MCP_PROFILE``), or null when the launcher did not say.
-            ``expected_host`` and ``host_matches``: the ``SAS_MCP_EXPECT_HOST``
-            check, null when it is not set. ``writes_refused`` is true when the
-            check fails: tools that write or run code then refuse, and read
-            tools keep working.
-            ``user``: the SAS Viya user id the calls run as, null when it could
-            not be looked up.
-            ``token``: ``expires_at`` and ``seconds_left`` of the access token,
-            and ``renewal_available`` (whether this server can renew it
-            itself), or ``error`` when no token could be obtained.
-            ``server_version``.
-        """
-        logger.info("--- TOOL USED: server_status ---")
-        check = host_check(VIYA_ENDPOINT, SAS_MCP_EXPECT_HOST)
-        status: dict[str, Any] = {
-            "viya_endpoint": VIYA_ENDPOINT,
-            "host": check["connected_host"],
-            "profile": SAS_MCP_PROFILE or None,
-            "expected_host": check["expected_host"],
-            "host_matches": check["matches"],
-            "writes_refused": check["matches"] is False,
-            "user": None,
-            "server_version": server_version(),
-        }
-        try:
-            token = await get_token(ctx)
-        except Exception as exc:  # noqa: BLE001 - the endpoint is worth reporting without a token
-            status["token"] = {"error": f"{type(exc).__name__}: {exc}"}
-            return status
-        status["user"] = await resolve_user_id(token)
-        status["token"] = {**(token_lifetime(token) or {}), "renewal_available": can_renew()}
-        return status
-
-    @mcp.tool()
     async def list_compute_contexts(
         ctx: Context, limit: int = 50, start: int = 0, filter_name: str | None = None
     ) -> list[dict[str, Any]]:
@@ -165,12 +163,9 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
     @mcp.tool(name="list_compute_sessions")
     async def list_compute_sessions_tool(ctx: Context, limit: int = 50, start: int = 0) -> dict[str, Any]:
-        """List your SAS compute sessions: the warm one this server reuses and any batch job's.
+        """List the SAS compute sessions visible to your account.
 
-        A job that was cancelled, or whose record is gone, can leave its
-        session running, and the session holds a pod and any database
-        connections it opened. Use this to find such sessions and
-        ``delete_compute_session`` to end one.
+        Verify which job owns a session before requesting deletion.
 
         Args:
             limit: Maximum sessions to return (default 50).
@@ -189,10 +184,9 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
     @mcp.tool()
     async def delete_compute_session(session_id: str, ctx: Context) -> dict[str, Any]:
-        """End a SAS compute session, stopping whatever it is running.
+        """Request deletion of a SAS compute session.
 
-        Its SAS process exits, so its pod goes away and the database
-        connections it held close. Any job still running in it fails. Find
+        A busy session can finish its current work before Viya releases it. Find
         session ids with ``list_compute_sessions``. Deleting the session that
         ``execute_sas_code`` reuses discards its WORK tables and macro
         variables, like ``reset_compute_session``; the next call starts a new
@@ -202,7 +196,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             session_id: Id of the compute session to delete.
 
         Returns:
-            ``status``: ``deleted``, ``not_found`` (already gone) or
+            ``status``: ``deleted``, ``not_found`` (already gone), pending (deletion accepted) or
             ``refused`` (the fixed ``COMPUTE_SESSION_ID`` session).
             ``was_cached_session``: whether it was the session this server
             reused.
@@ -213,18 +207,19 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 "session_id": session_id,
                 "message": "This is the fixed COMPUTE_SESSION_ID session; it is managed outside this server.",
             }
-        async with viya_session("delete_compute_session", ctx) as client:
-            try:
-                await delete_resource(f"/compute/sessions/{session_id}", client)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code != 404:
-                    raise
-                forget_cached_session(session_id)
-                return {"status": "not_found", "session_id": session_id, "was_cached_session": False}
+        logger.info("--- TOOL USED: delete_compute_session ---")
+        token = await get_token(ctx)
+        async with make_client(token) as client:
+            response = await client.delete(f"{VIYA_ENDPOINT}/compute/sessions/{session_id}")
+            if response.status_code == 404:
+                status = "not_found"
+            else:
+                raise_for_viya_status(response)
+                status = "pending" if response.status_code == 202 else "deleted"
         return {
-            "status": "deleted",
+            "status": status,
             "session_id": session_id,
-            "was_cached_session": forget_cached_session(session_id),
+            "was_cached_session": forget_cached_session(session_id, token),
         }
 
     @mcp.tool()

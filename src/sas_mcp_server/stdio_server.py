@@ -46,6 +46,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Lock
 
 import httpx
 from dotenv import load_dotenv
@@ -445,33 +446,37 @@ def _get_viya_token() -> str:
     return _native_device_code_token()
 
 
-def _renew_viya_token() -> str | None:
-    """Refresh the token the server is using now, even when it has not expired yet.
+_renew_lock = Lock()
+_last_renewal: tuple[str, str] | None = None
 
-    Takes the same source :func:`_get_viya_token` would, and returns the new
-    access token, or ``None`` when that source has no refresh token or the
-    exchange fails. Never falls back to the device-code sign-in, and never to
-    another source while the current one still holds a valid token.
-    """
+
+def _renew_viya_token(current_token: str) -> str | None:
+    """Renew only the cached login used by this request, coalescing concurrent renewals."""
+    global _last_renewal
     if not AUTH_ENABLED:
         return None
     endpoint = normalize_endpoint(VIYA_ENDPOINT)
-    files: dict[Path, dict] = {}
-    for path, client_id, key, legacy_default in _token_sources(files, endpoint):
-        if path not in files:
-            files[path] = _read_credentials_file(path)
-        data = files[path]
-        if legacy_default and not _legacy_default_usable(data, path, endpoint):
-            continue
-        creds = _load_credentials(path, key, data)
-        if creds is None:
-            continue
-        bind = endpoint if legacy_default else None
-        token = _refresh_cached_token(path, client_id, key, endpoint=bind, data=data)
-        if token:
-            return token
-        if creds.get("access-token") and not _token_expired(creds):
-            return None  # this source is the one in use; it just cannot be renewed
+    with _renew_lock:
+        files: dict[Path, dict] = {}
+        for path, client_id, key, legacy_default in _token_sources(files, endpoint):
+            if path not in files:
+                files[path] = _read_credentials_file(path)
+            data = files[path]
+            if legacy_default and not _legacy_default_usable(data, path, endpoint):
+                continue
+            creds = _load_credentials(path, key, data)
+            if creds is None:
+                continue
+            cached = creds.get("access-token")
+            if _last_renewal == (current_token, cached) and isinstance(cached, str) and not _token_expired(creds):
+                return cached
+            if cached != current_token:
+                continue
+            bind = endpoint if legacy_default else None
+            fresh = _refresh_cached_token(path, client_id, key, endpoint=bind, data=data)
+            if fresh:
+                _last_renewal = (current_token, fresh)
+            return fresh
     return None
 
 

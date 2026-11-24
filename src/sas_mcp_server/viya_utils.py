@@ -193,14 +193,14 @@ class _ComputeSessionCache:
         """Ids of every session this server keeps warm, for any user."""
         return {sid for sid, _ in self._sessions.values()}
 
-    def forget(self, session_id: str) -> bool:
+    def forget(self, session_id: str, user_key: str) -> bool:
         """Drop *session_id* from the cache without deleting it; ``True`` if it was cached.
 
         For a session deleted some other way, so the next call does not try
         to reuse it.
         """
         for key, (sid, _) in list(self._sessions.items()):
-            if sid == session_id:
+            if key[0] == user_key and sid == session_id:
                 self._sessions.pop(key, None)
                 return True
         return False
@@ -246,9 +246,9 @@ def cached_session_ids() -> set[str]:
     return _SESSION_CACHE.session_ids()
 
 
-def forget_cached_session(session_id: str) -> bool:
+def forget_cached_session(session_id: str, token: str) -> bool:
     """Stop reusing *session_id*; ``True`` if this server had it cached."""
-    return _SESSION_CACHE.forget(session_id)
+    return _SESSION_CACHE.forget(session_id, _token_user_key(token))
 
 
 async def shutdown_session_cache() -> None:
@@ -279,15 +279,18 @@ def _session_summary(item: dict, cached: set[str]) -> dict:
 async def list_compute_sessions(
     client: httpx.AsyncClient, limit: int = 50, start: int = 0
 ) -> tuple[list[dict], int]:
-    """The caller's compute sessions as summaries, and the total count Viya reports.
+    """Summaries of sessions visible to the caller, and the total count Viya reports.
 
-    Covers every session the caller owns: the one ``execute_sas_code`` keeps
+    The list can include the session ``execute_sas_code`` keeps
     warm, and those that Job Execution started for batch jobs.
     """
     resp = await client.get(
         f"{VIYA_ENDPOINT}/compute/sessions",
         params={"start": start, "limit": limit},
-        headers={"Accept": "application/vnd.sas.collection+json"},
+        headers={
+            "Accept": "application/vnd.sas.collection+json",
+            "Accept-Item": "application/vnd.sas.compute.session+json",
+        },
     )
     raise_for_viya_status(resp)
     data = resp.json()

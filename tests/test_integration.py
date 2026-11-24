@@ -537,10 +537,15 @@ async def test_compute_session_list_and_delete(integration_mcp_server):
         listed = (await client.call_tool("list_compute_sessions", {"limit": 100})).data
         ours = [s for s in listed["sessions"] if s["cached_by_this_server"]]
         assert len(ours) == 1, listed
+        assert ours[0]["owner"] and ours[0]["state"], ours[0]
         session_id = ours[0]["id"]
 
         deleted = (await client.call_tool("delete_compute_session", {"session_id": session_id})).data
-        assert deleted == {"status": "deleted", "session_id": session_id, "was_cached_session": True}
+        assert deleted["session_id"] == session_id and deleted["was_cached_session"] is True
+        assert deleted["status"] in {"pending", "deleted"}
+        if deleted["status"] == "pending":
+            # The server may drain work before releasing the session.
+            return
         again = (await client.call_tool("delete_compute_session", {"session_id": session_id})).data
         assert again["status"] == "not_found"
 

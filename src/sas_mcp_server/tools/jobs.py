@@ -21,32 +21,7 @@ from ..viya_client import (
     raise_for_viya_status,
     return_items,
 )
-from ..viya_utils import list_compute_sessions
 from ._common import SasCode, make_session_helpers
-
-# Sessions listed beside a job record that is gone; enough to spot a leftover.
-_GONE_JOB_SESSION_LIMIT = 20
-
-
-async def _job_record_gone(client: httpx.AsyncClient, job_id: str) -> dict[str, Any]:
-    """What the server can say about a job whose record no longer exists."""
-    result: dict[str, Any] = {
-        "status": "not_found",
-        "job_id": job_id,
-        "message": (
-            "No Job Execution record has this id. cancel_job deletes the record, and Job Execution "
-            "deletes a job once it expires. The compute session the job ran in can still be running: "
-            "compute_sessions lists your sessions other than the one execute_sas_code reuses. End a "
-            "leftover with delete_compute_session."
-        ),
-    }
-    try:
-        sessions, _ = await list_compute_sessions(client, limit=_GONE_JOB_SESSION_LIMIT)
-    except httpx.HTTPError as exc:
-        result["compute_sessions_error"] = str(exc)
-    else:
-        result["compute_sessions"] = [s for s in sessions if not s["cached_by_this_server"]]
-    return result
 
 
 def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
@@ -111,12 +86,6 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
         Args:
             job_id: ID of the job.
-
-        Returns:
-            The Job Execution job record (``state``, ``results``, ...). When
-            the record no longer exists: ``status`` ``not_found``, a message,
-            and ``compute_sessions``, your sessions that may still be running
-            the job's code.
         """
         async with viya_session("get_job_status", ctx) as client:
             try:
@@ -124,7 +93,11 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code != 404:
                     raise
-                return await _job_record_gone(client, job_id)
+                return {
+                    "status": "not_found",
+                    "job_id": job_id,
+                    "message": "Job Execution has no record with this ID. It may have expired or been deleted.",
+                }
 
     @mcp.tool()
     async def list_jobs(ctx: Context, limit: int = 20) -> list[dict[str, Any]]:
