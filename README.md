@@ -5,7 +5,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 ## Features
 
 - 137 tools across 12 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
-- Interactive views (MCP Apps) for data, SAS logs and glossary editing in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
+- Interactive views (MCP Apps) for data, SAS logs, glossary editing and scoring a decision in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
 - HTTP-based MCP server compatible with MCP clients
@@ -88,7 +88,9 @@ sas-viya auth loginCode
 uv run sas-mcp-login
 ```
 
-Both flows write an access token to a local cache (`~/.sas/credentials.json` and `~/.sas-mcp-server/credentials.json` respectively); the stdio server reads whichever it finds. When the token expires, re-run the same command.
+Both flows write an access token to a local cache (`~/.sas/credentials.json` and `~/.sas-mcp-server/credentials.json` respectively), and the server refreshes it on its own. Sign in again only when the refresh token has expired too. [Signing in with `sas-mcp-login`](examples/configuration.md#signing-in-with-sas-mcp-login) walks through the login and every option (`--name`, `--list`, `--logout`, the two-step login without a terminal).
+
+To use several SAS Viya deployments, configure one stdio server entry per deployment, each with its own `VIYA_ENDPOINT`, and log in to each (`uv run sas-mcp-login --endpoint https://your-viya-server.com`). `sas-mcp-login` stores each token in `~/.sas-mcp-server/credentials.json` under the endpoint it was issued for, so the logins do not overwrite each other, and a server reads only the login stored for its own endpoint. When a server has a login of its own, it uses only that one. Without one it falls back to the `sas-viya` CLI cache and to a `Default` block stored by an earlier version, which carry no endpoint; an untagged `Default` block is used only while the file holds no other endpoint's login. See [examples/configuration.md](examples/configuration.md#several-sas-viya-deployments-stdio).
 
 Then configure your MCP client to launch the server directly (see below).
 
@@ -215,7 +217,7 @@ Clients use these to shape their approval UX — e.g. Claude groups read-only to
 
 ### Interactive views (MCP Apps)
 
-Some results read badly as text however well the tool shapes them: a hundred rows of a table, a SAS log, a form's worth of typed attributes. Ten tools therefore also carry a small HTML view, using the [MCP Apps extension](https://modelcontextprotocol.io/extensions/apps/overview), that a supporting client renders in a sandboxed frame beside the result:
+Some results read badly as text however well the tool shapes them: a hundred rows of a table, a SAS log, a form's worth of typed attributes. Twelve tools therefore also carry a small HTML view, using the [MCP Apps extension](https://modelcontextprotocol.io/extensions/apps/overview), that a supporting client renders in a sandboxed frame beside the result:
 
 | View | Tools | What it does |
 |---|---|---|
@@ -223,6 +225,7 @@ Some results read badly as text however well the tool shapes them: a hundred row
 | SAS log | `execute_sas_code`, `get_job_log`, `submit_batch_job` | Colour-coded `ERROR` / `WARNING` / `NOTE` lines, jump to the next problem, problems-only and hide-notes filters, the listing on its own tab, and SAS's own HTML output on a Results tab (see [HTML results](#html-results)). A submitted batch job is polled from the view until it ends, then its log is fetched. |
 | Glossary term editor | `get_glossary_term_type`, `get_glossary_term` | A form generated from the term type — a real checkbox for a boolean, a date picker, a multi-select — so attribute values cannot be mistyped. Creates or updates the term and tells the assistant what was saved. A term that is still a draft can be published from here, which is the only way the API allows it. |
 | Glossary browser | `list_glossary_terms` | The whole glossary as a navigable tree beside a detail pane: search across names, definitions, descriptions and attribute values; filter by term type or "has assets"; breadcrumbs, children cards, attributes, assigned assets, and a sunburst of the hierarchy. The tree pane can be resized by dragging the divider or hidden altogether. The listing's own filters become the starting filters; the rest of the glossary is loaded by the view in pages, so the model still holds only the first page. A draft — invisible to everyone but its author, which is why the tree is where you notice one — can be published from its detail pane. |
+| Decision scoring | `get_mas_module_step_signature`, `score_data` | A form generated from the published module's inputs, so a person can score one case without spelling out every value in the chat. The result is a card: the outcome highlighted, its reason, the other outputs and the inputs, a link that opens the decision in SAS Intelligent Decisioning when the module was published from one, and, when the deployment turns it on with `MCP_EMAIL_DRAFT` (`outlook` or `mail`), a **Draft email** button that opens a draft of the result in Outlook on the web or the default mail app, for the person to address and send. Nothing is sent from the view. Without it, the card offers Copy summary. When the assistant scores a case itself, the same card shows its result. |
 | Glossary import | `import_glossary_terms` | With `dry_run=true`, the rows in the order they would be sent, with resolved parent paths and the CSV's own `Definition` and `Description` columns kept apart, and an Import button. After a real import, each row's outcome and the id of the term it became — including whether the term was new or already there, which the import job itself counts as successful either way. |
 
 Every view has a ⤢ button that opens it fullscreen where the host offers that (Claude does), which is where a wide table or a long log is meant to be read; the button does not appear on a host without it.

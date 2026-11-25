@@ -16,7 +16,7 @@ The server supports six authentication paths across HTTP and stdio modes. Pick o
 **Defaults and ordering**
 
 - **HTTP mode** always runs PKCE. The raw-bearer path is additive and opt-in via `ALLOW_RAW_BEARER=true`; when off, only PKCE clients can authenticate.
-- **stdio mode** tries the cache files in order: `sas-viya` CLI cache → `sas-mcp-login` cache → native device-code. The first hit wins.
+- **stdio mode** uses the server's own `sas-mcp-login` login when there is one, and only that. Without one it tries the `sas-viya` CLI cache, then an older `sas-mcp-login` login, then the native device-code flow. See [Which login the server uses](#which-login-the-server-uses).
 - **No-auth override**: set `VIYA_AUTH=false` to bypass all auth flows in both HTTP and stdio modes.
 
 **Removed**
@@ -343,20 +343,103 @@ This writes `~/.sas/credentials.json`. If you keep the SAS profile somewhere oth
 SAS_CLI_CONFIG=/path/whose/.sas/credentials.json/lives/here
 ```
 
-**Option 2 — built-in `sas-mcp-login` helper** (no external CLI, no admin client registration; requires Viya 2022.11+):
+**Option 2 — built-in `sas-mcp-login` helper** (no external CLI, no admin client registration; requires Viya 2022.11+). See the next section.
+
+#### Signing in with `sas-mcp-login`
+
+Run it from the folder you cloned the server into:
 
 ```sh
-uv run sas-mcp-login
+uv run sas-mcp-login --endpoint https://your-viya-server.com --name prod
 ```
 
-The helper runs OAuth 2.0 Authorization Code + PKCE against the built-in `vscode` Viya OAuth client, opens your browser, and writes the token to `~/.sas-mcp-server/credentials.json`. After signing in, SAS Logon displays the authorization code on a results page; copy it and paste it back into the terminal.
+1. The helper prints a SAS Logon address and opens it in your browser.
+2. Sign in as usual (including any single sign-on or MFA prompt).
+3. SAS Logon then shows a page with an **authorization code**. Copy it.
+4. Paste the code at the `Authorization code:` prompt in the terminal and press Enter.
+5. The helper prints `Token cached at: ~/.sas-mcp-server/credentials.json (for https://your-viya-server.com)`, and with `--name`, the short command for next time.
 
-The stdio server reads whichever cache file exists, in this order:
+The token is stored under the endpoint's URL, so logging in to another deployment never replaces it. Restart nothing: the stdio server reads the file on every tool call.
 
-1. `~/.sas/credentials.json` (or `$SAS_CLI_CONFIG/.sas/credentials.json`)
-2. `~/.sas-mcp-server/credentials.json`
+**When you need to sign in again.** The server refreshes the access token on its own while the refresh token is valid, so you only sign in again when that has expired too (its lifetime is set by your SAS administrator), when it was revoked, or when you switch user. The server then logs `No usable cached credentials for <endpoint>` with the command to run, and falls back to the device-code sign-in, which shows an address and a code, or fails where SAS Logon doesn't allow it. `uv run sas-mcp-login --list` shows each login's state.
 
-When the token expires, re-run the same command you used originally.
+**Without a terminal prompt** (the Claude Code `!` prefix, CI, some IDE terminals), the helper can't ask for the code. It saves its state and prints the second command instead:
+
+```sh
+uv run sas-mcp-login prod                 # step 1: prints the address, saves the state, exits
+uv run sas-mcp-login prod --code <CODE>   # step 2: exchanges the code you copied
+```
+
+Only one login can be pending at a time. Naming the endpoint in step 2 makes the helper refuse a code that belongs to a login you started for another deployment in between.
+
+**Options**
+
+| Option | What it does |
+| --- | --- |
+| `ENDPOINT_OR_NAME`, or `--endpoint <value>` | The deployment to sign in to. A full URL (`https://viya.example.com`), a name saved with `--name`, or one part of the host name of a deployment you have logged in to before (`zeus` for `https://viya4-s2.zeus.example.com`, as long as no other stored deployment has that part). Defaults to `VIYA_ENDPOINT` from the environment or `.env`. |
+| `--name <name>` | Saves a short name for the endpoint once the login succeeds, so later commands can say `sas-mcp-login prod`. Letters, digits, `.`, `_` and `-`; stored in lower case. Giving an existing name to another endpoint moves it, and the helper says so. |
+| `--list` | Lists the stored logins: name, endpoint, and whether the login is valid, expired but refreshable, or expired. Never prints tokens. |
+| `--logout` | Removes the stored login for the endpoint (`sas-mcp-login --logout prod`). Other deployments' logins are kept, and so is the name, so `sas-mcp-login prod` signs you in again. It does not revoke the token in SAS Logon. |
+| `--code <code>` | Second step of the login without a terminal prompt (above). |
+| `--no-browser` | Prints the SAS Logon address without opening a browser, for example on a remote machine. |
+| `--insecure` | Skips TLS certificate checks for this login, for a deployment with a self-signed certificate. `SSL_VERIFY=false` in `.env` does the same. The stdio server also needs `SSL_VERIFY=false` for such a deployment. |
+| `--client-id <id>` | The OAuth client to sign in with. Default `vscode`, which Viya 2022.11 and later have built in. Change it only if your administrator registered another public client; the server must refresh with the same one (`AUTH_HELPER_CLIENT_ID`). |
+| `--redirect-uri <uri>` | Only if your client has a registered redirect address. Without it, SAS Logon shows the code on a page, which is what you want in almost every case. |
+
+**Files** (all in `~/.sas-mcp-server/`, readable only by you):
+
+- `credentials.json` holds the access and refresh tokens, one block per endpoint (plus `Default` from versions before per-endpoint logins). Keep it out of backups and shared folders.
+- `endpoints.json` holds the names you saved, as `{"prod": "https://..."}`. No secrets; you can edit it by hand. The stdio server doesn't read it: `VIYA_ENDPOINT` in a server entry is always the full URL.
+- `login-state.json` exists only while a two-step login is pending.
+- `credentials.json.lock` exists for a moment while a login or a token refresh updates the file.
+
+#### Which login the server uses
+
+On each tool call a stdio server looks for a token in this order and uses the first that works, refreshing it first if it has expired:
+
+1. **Its own login:** the block in `~/.sas-mcp-server/credentials.json` for its `VIYA_ENDPOINT`. When this block exists, it is the only one used: if it can't be refreshed, the server does not fall back to another deployment's token.
+2. **The `sas-viya` CLI cache**, `~/.sas/credentials.json` (or `$SAS_CLI_CONFIG/.sas/credentials.json`), only without a login of its own.
+3. **The `Default` block** written by versions before per-endpoint logins: when it records this endpoint, or records none and the file holds no other deployment's login.
+4. **The device-code flow**, as a last resort (see [the authentication table](#authentication-modes--at-a-glance)).
+
+#### Several SAS Viya deployments (stdio)
+
+Run one server entry per deployment, each with its own `VIYA_ENDPOINT` and a distinct `MCP_SERVER_NAME`, and log in to each one:
+
+```json
+{
+    "mcpServers": {
+        "sas-viya-dev": {
+            "command": "uv",
+            "args": ["run", "--no-sync", "app-stdio"],
+            "cwd": "/path/to/sas-mcp-server",
+            "env": { "VIYA_ENDPOINT": "https://viya-dev.example.com", "MCP_SERVER_NAME": "SAS Viya (dev)" }
+        },
+        "sas-viya-prod": {
+            "command": "uv",
+            "args": ["run", "--no-sync", "app-stdio"],
+            "cwd": "/path/to/sas-mcp-server",
+            "env": { "VIYA_ENDPOINT": "https://viya-prod.example.com", "MCP_SERVER_NAME": "SAS Viya (prod)" }
+        }
+    }
+}
+```
+
+```sh
+uv run sas-mcp-login --endpoint https://viya-dev.example.com --name dev
+uv run sas-mcp-login --endpoint https://viya-prod.example.com --name prod
+```
+
+After that, `uv run sas-mcp-login dev`, `uv run sas-mcp-login --logout prod` and `uv run sas-mcp-login --list` are enough.
+
+`sas-mcp-login` adds a block for the endpoint to `~/.sas-mcp-server/credentials.json` and keeps the others; the key is the endpoint URL (lower-cased, without a default port or trailing slash). A server reads the block for its own `VIYA_ENDPOINT`. When that block exists it is the only cached login the server uses: a login that has expired or been revoked is never replaced by another deployment's token. The lookup order is this endpoint's block, then (only without one) the `sas-viya` CLI cache, then the legacy `Default` block.
+
+- **Existing setups keep working.** A `Default` block written by an earlier version is still used when no block exists for the server's endpoint, and the server logs a warning that it is not bound to an endpoint. Once it has refreshed that token, it records the endpoint in the block, and a server for any other endpoint then ignores it.
+- **Adding a second deployment:** log in to each deployment with `sas-mcp-login --endpoint <url>`, including the one you used before. A `Default` block that has not recorded its endpoint yet is no longer used once the file holds another endpoint's login, because it could have been issued by either deployment and its refresh token must not be sent to the wrong one. `sas-mcp-login` says so when that happens.
+- **Remove a login:** `uv run sas-mcp-login --logout dev` (or `--logout --endpoint https://viya-dev.example.com`) removes that endpoint's block, and a `Default` block recorded for it. A `Default` block that is not bound to an endpoint is kept and the command says so; delete the `Default` key from the file to remove it.
+- The `sas-viya` CLI cache (`~/.sas/credentials.json`) holds no endpoint. A server with a login of its own never reads it; one without sends it to whichever endpoint the server is configured for. With several deployments, use `sas-mcp-login` or point each entry at its own cache with `SAS_CLI_CONFIG`.
+- Several servers can refresh at the same time: the file is updated under a lock file, `credentials.json.lock`, next to it. A lock left behind by a server that was killed mid-update is cleared after 10 seconds. The `sas-viya` CLI's file is updated without one, since the CLI does not use it.
+- The file holds access and refresh tokens in plain text. It is created readable only by your user (on Windows by restricting its ACL, best effort). Keep it out of backups and shared folders.
 
 ---
 

@@ -1,0 +1,355 @@
+<style>
+  #body { overflow: auto; }
+  #wrap { max-width: 760px; }
+  :root[data-display="fullscreen"] #wrap { max-width: 980px; margin: 0 auto; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0 14px; }
+  .fields label.field input { width: 100%; }
+  .type { font-family: var(--mono); color: var(--ink-2); font-size: 11px; font-weight: 400; }
+  .verdict {
+    display: flex; align-items: center; gap: 6px 18px; flex-wrap: wrap; margin: 2px 0 12px; padding: 12px 14px;
+    border-radius: var(--radius); background: var(--accent-bg); border: 1px solid transparent;
+  }
+  .verdict .what { font-size: var(--fs-sm); color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+  .verdict .value { font-size: 22px; font-weight: 650; line-height: 1.2; color: var(--accent); }
+  .verdict .reason { flex: 1 1 220px; min-width: 0; }
+  .verdict.ok { background: var(--ok-bg); } .verdict.ok .value { color: var(--ok); }
+  .verdict.warn { background: var(--warn-bg); } .verdict.warn .value { color: var(--warn); }
+  .verdict.bad { background: var(--bad-bg); } .verdict.bad .value { color: var(--bad); }
+  dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 18px; margin: 0 0 10px; }
+  dl.kv dt { color: var(--ink-2); }
+  dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  details { margin: 0 0 10px; }
+  summary { cursor: pointer; color: var(--ink-2); font-size: var(--fs-sm); margin-bottom: 4px; }
+  .share { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; }
+  .share h2 { margin-bottom: 6px; }
+  .share input[type="email"] { flex: 1 1 220px; min-width: 160px; }
+  .linkish { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font-size: var(--fs-sm); }
+  .linkish:hover:not(:disabled) { background: none; }
+  .foot { margin-top: 10px; }
+</style>
+<div id="root">
+  <div class="head">
+    <div>
+      <h1 id="title">Score a decision</h1>
+      <div id="meta" class="small muted"></div>
+    </div>
+    <div class="row" id="badges"></div>
+  </div>
+  <div id="banner" class="banner" hidden></div>
+  <div id="body" class="fill">
+    <div id="wrap">
+      <div id="waiting" class="empty">Loading…</div>
+      <form id="form" hidden autocomplete="off">
+        <div id="fields" class="fields"></div>
+        <div class="row">
+          <button id="score" class="primary" type="submit">Score</button>
+          <button id="clear" type="button">Clear</button>
+          <span id="status" class="small muted"></span>
+        </div>
+      </form>
+      <section id="result" hidden>
+        <div id="verdict" class="verdict"></div>
+        <dl id="outputs" class="kv"></dl>
+        <details id="inputs-box"><summary>Inputs</summary><dl id="inputs" class="kv"></dl></details>
+        <div id="result-note" class="small muted"></div>
+        <div class="share">
+          <h2 id="share-title">Share the result</h2>
+          <div class="row">
+            <input id="to" type="email" placeholder="colleague@example.com" aria-label="Colleague's email address">
+            <button id="email" class="primary" type="button">Draft email</button>
+            <button id="copy" type="button">Copy summary</button>
+          </div>
+          <div class="row small">
+            <button id="mailto" class="linkish" type="button">Use my default mail app instead</button>
+            <span id="share-note" class="muted"></span>
+          </div>
+        </div>
+        <div class="row foot">
+          <button id="again" type="button" hidden>Score another case</button>
+          <span id="scored-at" class="small muted"></span>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+<script type="module">
+  const { el } = sas;
+  const $ = (id) => document.getElementById(id);
+  // Which output carries the answer, and which explains it, going by name.
+  const HEADLINE = /(outcome|decision|result|status|approv|action|offer|recommend|segment|class|label|band|grade|tier|eligib)/i;
+  const REASON = /(reason|explanation|message|comment|note|why|rationale)/i;
+  const NUMERIC = /^(decimal|double|integer|int|bigint|float|number|numeric)$/i;
+  const OUTLOOK = "https://outlook.office.com/mail/deeplink/compose";
+  // MCP_EMAIL_DRAFT on the server: "outlook", "mail" or "off" (no email controls).
+  const EMAIL = ["outlook", "mail"].includes(globalThis.SAS_VIEW?.options?.email) ? SAS_VIEW.options.email : "off";
+  const state = { moduleId: "", stepId: "execute", step: null, meta: {}, inputs: {}, result: null, scoredAt: null };
+
+  function label(name) {
+    const text = String(name || "").replace(/_+$/, "").replace(/_+/g, " ").trim();
+    return text ? text[0].toUpperCase() + text.slice(1) : String(name || "");
+  }
+  function show(value) {
+    if (value == null || value === "") return "—";
+    if (typeof value === "number") return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
+  function kindOf(value) {
+    const s = String(value ?? "").toLowerCase();
+    if (/(declin|reject|denied|deny|fail|refus|block|inelig|fraud)/.test(s)) return "bad";
+    if (/(refer|review|manual|pend|hold|escalat)/.test(s)) return "warn";
+    if (/(approv|accept|pass|grant|allow|eligib|^ok$|^yes$)/.test(s)) return "ok";
+    return "info";
+  }
+  const title = () => state.meta.decision?.name || label(state.meta.module?.name || state.moduleId) || "Decision";
+  const decisionLink = () => state.meta.decision?.open_url || "";
+  const inputsOf = (step) => (Array.isArray(step?.inputs) ? step.inputs : []);
+  const unsupported = (input) => Number(input.dim) > 0 || !(NUMERIC.test(input.type) || /^string$/i.test(input.type));
+  const outputsOf = (result) => (Array.isArray(result?.outputs) ? result.outputs.filter((o) => o && typeof o.name === "string") : []);
+
+  function pick(outputs) {
+    const strings = outputs.filter((o) => typeof o.value === "string" && o.value !== "");
+    const headline = strings.find((o) => HEADLINE.test(o.name) && !REASON.test(o.name))
+      || strings.find((o) => !REASON.test(o.name)) || null;
+    const reason = strings.find((o) => o !== headline && REASON.test(o.name)) || null;
+    return { headline, reason, rest: outputs.filter((o) => o !== headline && o !== reason) };
+  }
+
+  function renderHead() {
+    $("title").textContent = title();
+    const bits = [];
+    if (state.meta.decision) bits.push("SAS Intelligent Decisioning");
+    if (state.moduleId) bits.push(`MAS module ${state.moduleId}`);
+    if (state.stepId && state.stepId !== "execute") bits.push(`step ${state.stepId}`);
+    $("meta").textContent = bits.join(" · ");
+    // replaceChildren() turns null into the text "null", so pass nothing instead.
+    $("badges").replaceChildren(...(decisionLink() && sas.canOpenLinks
+      ? [el("button", { type: "button", title: decisionLink(), onclick: () => sas.openLink(decisionLink()) }, "Open decision ↗")]
+      : []));
+  }
+
+  // --- the form ---------------------------------------------------------------
+  function buildForm(prefill) {
+    const inputs = inputsOf(state.step);
+    const fields = $("fields");
+    fields.replaceChildren();
+    for (const input of inputs) {
+      const numeric = NUMERIC.test(input.type);
+      const value = prefill && prefill[input.name] != null ? String(prefill[input.name]) : "";
+      fields.append(el("label", { class: "field" },
+        // The type only for an input the form cannot take: elsewhere it is noise.
+        el("span", { class: "name" }, label(input.name),
+          unsupported(input) ? el("span", { class: "type" }, ` ${input.type || "?"}${Number(input.dim) > 0 ? "[]" : ""}`) : null),
+        el("input", {
+          type: numeric ? "number" : "text", step: numeric ? "any" : null, inputmode: numeric ? "decimal" : null,
+          name: input.name, value, autocomplete: "off", disabled: unsupported(input),
+        }),
+      ));
+    }
+    const odd = inputs.filter(unsupported);
+    const scorable = sas.can("score_data") && !odd.length;
+    $("score").disabled = !scorable;
+    if (!sas.can("score_data")) {
+      sas.banner("This deployment does not offer scoring (score_data), so the inputs are shown for reference.", "warn");
+    } else if (odd.length) {
+      sas.banner(`The form cannot take ${odd.map((i) => i.name).join(", ")} (arrays or tables). Ask in the chat to score this module.`, "warn");
+    } else {
+      sas.banner("");
+    }
+    if (!inputs.length) fields.append(el("div", { class: "muted small" }, "This step takes no inputs."));
+    $("waiting").hidden = true;
+    $("result").hidden = true;
+    $("form").hidden = false;
+  }
+
+  function collect() {
+    const form = $("form");
+    const data = {};
+    const bad = [];
+    for (const input of inputsOf(state.step)) {
+      const raw = String(form.elements[input.name]?.value ?? "").trim();
+      if (raw === "") continue;
+      if (NUMERIC.test(input.type)) {
+        const n = Number(raw);
+        if (Number.isFinite(n)) data[input.name] = n;
+        else bad.push(label(input.name));
+      } else {
+        data[input.name] = raw;
+      }
+    }
+    return { data, bad };
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    const { data, bad } = collect();
+    if (bad.length) { sas.banner(`Not a number: ${bad.join(", ")}.`, "bad"); return; }
+    sas.banner("");
+    sas.busy(true);
+    $("status").textContent = "Scoring…";
+    try {
+      const result = await sas.call("score_data", { module_id: state.moduleId, step_id: state.stepId, input_data: data });
+      state.inputs = data;
+      state.scoredAt = new Date();
+      showResult(result);
+      // The model did not see this call; tell it what the person now sees.
+      await sas.context(
+        `The person scored ${title()} (MAS module ${state.moduleId}) with the form.\n${summaryText()}`,
+        { module_id: state.moduleId, step_id: state.stepId, inputs: data, outputs: outputsOf(result) },
+      );
+    } catch (err) {
+      sas.banner(`Not scored: ${sas.errorText(err)}`, "bad");
+    } finally {
+      sas.busy(false);
+      $("status").textContent = "";
+    }
+  }
+
+  // --- the result ---------------------------------------------------------------
+  function showResult(result) {
+    state.result = result;
+    const { headline, reason, rest } = pick(outputsOf(result));
+    const verdict = $("verdict");
+    verdict.className = `verdict ${headline ? kindOf(headline.value) : "info"}`;
+    verdict.replaceChildren(
+      el("div", {},
+        el("div", { class: "what" }, headline ? label(headline.name) : "Result"),
+        el("div", { class: "value" }, headline ? headline.value : label(result?.executionState || "scored"))),
+      ...(reason ? [el("div", { class: "reason" }, reason.value)] : []),
+    );
+    const outputs = $("outputs");
+    outputs.replaceChildren(...rest.flatMap((o) => [el("dt", {}, label(o.name)), el("dd", {}, show(o.value))]));
+    outputs.hidden = !rest.length;
+    const given = Object.entries(state.inputs || {});
+    $("inputs").replaceChildren(...given.flatMap(([k, v]) => [el("dt", {}, label(k)), el("dd", {}, show(v))]));
+    $("inputs-box").hidden = !given.length;
+    const notes = [];
+    if (result?.executionState && result.executionState !== "completed") notes.push(`MAS reports the run as ${result.executionState}.`);
+    const empty = inputsOf(state.step).filter((i) => !(i.name in (state.inputs || {}))).map((i) => label(i.name));
+    if (empty.length) notes.push(`Scored with ${empty.join(", ")} left empty.`);
+    $("result-note").textContent = notes.join(" ");
+    $("scored-at").textContent = state.scoredAt ? `Scored ${state.scoredAt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` : "";
+    $("again").hidden = !(state.step && sas.can("score_data"));
+    const mail = EMAIL !== "off";
+    $("share-title").textContent = mail ? "Send to a colleague" : "Share the result";
+    $("to").hidden = !mail;
+    $("email").hidden = !mail;
+    $("mailto").hidden = !(EMAIL === "outlook" && sas.canOpenLinks);
+    $("waiting").hidden = true;
+    $("form").hidden = true;
+    $("result").hidden = false;
+    renderHead();
+  }
+
+  // --- sharing ------------------------------------------------------------------
+  function resultLines() {
+    const { headline, reason, rest } = pick(outputsOf(state.result));
+    return [
+      ...(headline ? [`${label(headline.name)}: ${headline.value}`] : []),
+      ...(reason ? [`${label(reason.name)}: ${reason.value}`] : []),
+      ...rest.map((o) => `${label(o.name)}: ${show(o.value)}`),
+    ];
+  }
+  const inputLines = () => Object.entries(state.inputs || {}).map(([k, v]) => `${label(k)}: ${show(v)}`);
+  function summaryText() {
+    const inputs = inputLines();
+    return [...resultLines(), ...(inputs.length ? ["", "Inputs", ...inputs] : [])].join("\n");
+  }
+  function email() {
+    const { headline } = pick(outputsOf(state.result));
+    const inputs = inputLines();
+    const when = (state.scoredAt || new Date()).toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+    const subject = headline ? `${title()}: ${headline.value}` : `${title()} result`;
+    const body = [
+      "Hi,",
+      "",
+      `Here is the ${title()} result${inputs.length ? " for the case below" : ""}.`,
+      "",
+      ...resultLines(),
+      ...(inputs.length ? ["", "Inputs:", ...inputs.map((line) => `- ${line}`)] : []),
+      "",
+      `Scored with SAS Viya on ${when}.`,
+      ...(decisionLink() ? [`The decision in SAS Intelligent Decisioning: ${decisionLink()}`] : []),
+    ].join("\r\n");
+    return { subject, body };
+  }
+  const enc = encodeURIComponent;
+  function recipient() {
+    const box = $("to");
+    const to = box.value.trim();
+    if (to && !box.checkValidity()) { $("share-note").textContent = "That does not look like an email address."; return null; }
+    return to;
+  }
+  async function draft(kind) {
+    const to = recipient();
+    if (to === null) return;
+    const { subject, body } = email();
+    const url = kind === "mailto"
+      ? `mailto:${enc(to)}?subject=${enc(subject)}&body=${enc(body)}`
+      : `${OUTLOOK}?${to ? `to=${enc(to)}&` : ""}subject=${enc(subject)}&body=${enc(body)}`;
+    const opened = sas.canOpenLinks && (await sas.openLink(url));
+    $("share-note").textContent = opened
+      ? "The draft opens in a new window: check it, then press Send."
+      : "This app could not open the draft. Copy the summary and paste it into an email instead.";
+  }
+  async function copy() {
+    const text = `${title()}\n${summaryText()}${decisionLink() ? `\n\n${decisionLink()}` : ""}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      $("share-note").textContent = "Copied.";
+    } catch {
+      const area = el("textarea", { readonly: true, style: "position:fixed;opacity:0" }, text);
+      document.body.append(area);
+      area.select();
+      const done = document.execCommand && document.execCommand("copy");
+      area.remove();
+      $("share-note").textContent = done ? "Copied." : "This app blocks the clipboard here.";
+    }
+  }
+
+  $("form").addEventListener("submit", submit);
+  $("clear").addEventListener("click", () => { $("form").reset(); sas.banner(""); });
+  $("again").addEventListener("click", () => { $("share-note").textContent = ""; buildForm(state.inputs); });
+  $("email").addEventListener("click", () => draft(EMAIL === "mail" ? "mailto" : "outlook"));
+  $("mailto").addEventListener("click", () => draft("mailto"));
+  $("copy").addEventListener("click", copy);
+
+  sas.onInput((args) => {
+    state.moduleId = args?.module_id || state.moduleId;
+    state.stepId = args?.step_id || state.stepId;
+    $("waiting").textContent = sas.tool === "score_data" ? "Scoring…" : "Loading the inputs…";
+    renderHead();
+  });
+
+  sas.onResult(async (data) => {
+    sas.busy(false);
+    if (!data || typeof data !== "object") { sas.banner(String(data ?? "No result."), "bad"); return; }
+    if (sas.tool === "get_mas_module_step_signature") {
+      state.step = data;
+      state.meta = { module: data.module, decision: data.decision };
+      state.moduleId = data.moduleId || data.module?.id || sas.input?.module_id || "";
+      state.stepId = data.id || sas.input?.step_id || "execute";
+      renderHead();
+      buildForm();
+      return;
+    }
+    // score_data: the model scored it. Show the card, then fetch the module's
+    // name, decision link and inputs, which the result itself does not carry.
+    state.moduleId = data.moduleId || data.metadata?.module_id || sas.input?.module_id || "";
+    state.stepId = data.stepId || data.metadata?.step_id || sas.input?.step_id || "execute";
+    const given = sas.input?.input_data;
+    state.inputs = given && typeof given === "object" ? given : {};
+    state.scoredAt = new Date();
+    showResult(data);
+    if (state.moduleId && sas.can("get_mas_module_step_signature")) {
+      try {
+        const step = await sas.call("get_mas_module_step_signature", { module_id: state.moduleId, step_id: state.stepId });
+        state.step = step;
+        state.meta = { module: step.module, decision: step.decision };
+        showResult(state.result);
+      } catch (err) {
+        console.info("module details unavailable", err?.message || err);
+      }
+    }
+  });
+</script>

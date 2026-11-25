@@ -49,6 +49,10 @@ server:
   # must be connected, is in the README). Additive; text-only clients are
   # unaffected.
   apps: true
+  # Email draft on the decision scoring view's result card: "outlook" (an
+  # Outlook on the web draft), "mail" (the default mail app) or "off" (no
+  # email controls). The person sends the draft; nothing is sent by the server.
+  emailDraft: "off"
   # Serve requests without an MCP session. Required for clients that speak
   # only the sessionless 2026-07-28 protocol revision, such as claude.ai's
   # custom-connector backend; the legacy handshake works either way.

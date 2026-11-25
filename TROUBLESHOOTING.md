@@ -135,8 +135,10 @@ Run one of the bootstrap commands:
 
 ```sh
 sas-viya auth loginCode      # if you have the SAS Viya CLI
-uv run sas-mcp-login          # zero-prereq helper using the built-in vscode client
+uv run sas-mcp-login --endpoint <VIYA_ENDPOINT>   # zero-prereq helper using the built-in vscode client
 ```
+
+The server logs `No usable cached credentials for <endpoint>` (or `Using the legacy 'Default' token ...`) with the exact command to run. Tokens from `sas-mcp-login` are stored per endpoint, so log in once for each deployment you use.
 
 If your `sas-viya` profile lives outside `$HOME`, set `SAS_CLI_CONFIG` to its parent directory in `.env`. See [`examples/configuration.md`](examples/configuration.md#authentication-modes--at-a-glance) for the full auth chain.
 
@@ -214,14 +216,16 @@ The install is editable, so code changes from `git pull` still apply on the next
 
 You run `uv run sas-mcp-login` inside a wrapper that does not provide an interactive stdin (CI runners, the Claude Code `!` prefix, `nohup ... &`, etc.) and the helper prints the URL then aborts at the `Authorization code:` prompt.
 
+The helper now takes the two-step path by itself when stdin is not a terminal, including on Windows when stdin is the `NUL` device (`< /dev/null` in Git Bash and many tool runners), which Windows reports as a terminal and which used to end in `Aborted.`. It prints the follow-up command and exits.
+
 ### Fix
 
-Use the two-step variant. The first invocation persists PKCE state to `~/.sas-mcp-server/login-state.json` and exits cleanly; the second exchanges the code:
+If it still prompts and aborts, run the two steps yourself. The first invocation persists PKCE state to `~/.sas-mcp-server/login-state.json` and exits cleanly; the second exchanges the code:
 
 ```sh
-uv run sas-mcp-login                            # opens browser, prints URL, exits
+uv run sas-mcp-login --endpoint <VIYA_ENDPOINT>  # opens browser, prints URL, exits
 # sign in, copy the code from the SAS Logon results page
-uv run sas-mcp-login --code <PASTE-CODE-HERE>   # completes the exchange
+uv run sas-mcp-login --endpoint <VIYA_ENDPOINT> --code <PASTE-CODE-HERE>   # completes the exchange
 ```
 
 ---
