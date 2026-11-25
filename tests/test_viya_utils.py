@@ -43,10 +43,16 @@ def _resp(json_data=None, status_code=200):
     return resp
 
 
+def _asked_name(kwargs):
+    """The context name a lookup asked for, read back from its filter."""
+    flt = (kwargs.get("params") or {}).get("filter", "")
+    return flt[len('eq(name,"'):-2]
+
+
 def _route_context(url, *args, **kwargs):
     """Default ``client.get`` router: context lookup returns one ctx, else 200."""
     if url.endswith("/contexts"):
-        return _resp({"items": [{"id": "ctx-1"}]})
+        return _resp({"items": [{"id": "ctx-1", "name": _asked_name(kwargs)}]})
     return _resp()
 
 
@@ -64,6 +70,26 @@ async def test_get_context_id_success(
 
     assert context_id == "test-context-id"
     mock_httpx_client.get.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_context_id_filters_by_name_and_matches_exactly(mock_httpx_client, mock_env_vars):
+    """Compute ignores a ``name`` parameter and lists every context; the first one
+    must never be taken for the one asked for."""
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={"items": [
+        {"id": "ctx-unnamed"},
+        {"id": "ctx-first", "name": "PIP Agent compute context"},
+        {"id": "ctx-wanted", "name": "SAS Job Execution compute context"},
+    ]})
+    mock_httpx_client.get.return_value = mock_response
+
+    context_id = await get_context_id(mock_httpx_client, "SAS Job Execution compute context")
+
+    assert context_id == "ctx-wanted"
+    params = mock_httpx_client.get.call_args.kwargs["params"]
+    assert params == {"filter": 'eq(name,"SAS Job Execution compute context")'}
 
 
 @pytest.mark.asyncio
@@ -247,7 +273,7 @@ async def test_run_one_snippet_success(
         mock_context_response = AsyncMock()
         mock_context_response.raise_for_status = MagicMock()
         mock_context_response.json = MagicMock(
-            return_value={"items": [{"id": "ctx-id"}]}
+            return_value={"items": [{"id": "ctx-id", "name": "SAS Job Execution compute context"}]}
         )
 
         mock_session_response = AsyncMock()
@@ -307,7 +333,7 @@ async def test_run_one_snippet_with_bearer_prefix(sample_sas_code, mock_env_vars
         mock_context_response = AsyncMock()
         mock_context_response.raise_for_status = MagicMock()
         mock_context_response.json = MagicMock(
-            return_value={"items": [{"id": "ctx-id"}]}
+            return_value={"items": [{"id": "ctx-id", "name": "SAS Job Execution compute context"}]}
         )
 
         mock_session_response = AsyncMock()
@@ -386,7 +412,9 @@ async def test_run_one_snippet_propagates_error_and_keeps_session(
 
         ctx_resp = AsyncMock()
         ctx_resp.raise_for_status = MagicMock()
-        ctx_resp.json = MagicMock(return_value={"items": [{"id": "ctx-id"}]})
+        ctx_resp.json = MagicMock(
+            return_value={"items": [{"id": "ctx-id", "name": "SAS Job Execution compute context"}]}
+        )
         sess_resp = AsyncMock()
         sess_resp.raise_for_status = MagicMock()
         sess_resp.json = MagicMock(return_value={"id": "sess-id"})
@@ -456,7 +484,7 @@ async def test_get_cached_session_recreates_when_reaped(mock_env_vars):
 
     def route_get(url, *args, **kwargs):
         if url.endswith("/contexts"):
-            return _resp({"items": [{"id": "ctx-1"}]})
+            return _resp({"items": [{"id": "ctx-1", "name": _asked_name(kwargs)}]})
         if "/state" in url:
             return _resp(status_code=404)  # session no longer exists
         return _resp()
@@ -480,7 +508,7 @@ async def test_get_cached_session_recreates_on_validation_error(mock_env_vars):
 
     def route_get(url, *args, **kwargs):
         if url.endswith("/contexts"):
-            return _resp({"items": [{"id": "ctx-1"}]})
+            return _resp({"items": [{"id": "ctx-1", "name": _asked_name(kwargs)}]})
         if "/state" in url:
             raise httpx.ConnectError("network down")
         return _resp()

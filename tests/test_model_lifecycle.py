@@ -150,7 +150,7 @@ def test_registration_code_refuses_a_line_sas_cannot_hold():
 
 async def test_run_sas_uses_a_session_of_its_own_and_deletes_it(fake):
     _, viya = fake
-    viya.add("GET", r"/compute/contexts$", {"items": [{"id": "ctx-1"}]})
+    viya.add("GET", r"/compute/contexts$", {"items": [{"id": "ctx-1", "name": "SAS Job Execution compute context"}]})
     viya.add("POST", r"/compute/contexts/ctx-1/sessions$", {"id": "s-1"})
     viya.add("POST", r"/compute/sessions/s-1/jobs$", {"id": "j-1"})
     viya.add("GET", r"/jobs/j-1/state$", "completed")
@@ -172,7 +172,7 @@ async def test_run_sas_retries_a_session_that_failed_to_start(fake, monkeypatch)
         return ({"message": "The Compute server terminated unexpectedly."}, 500) if len(attempts) == 1 else (
             {"id": "s-2"}, 201)
 
-    viya.add("GET", r"/compute/contexts$", {"items": [{"id": "ctx-1"}]})
+    viya.add("GET", r"/compute/contexts$", {"items": [{"id": "ctx-1", "name": "SAS Job Execution compute context"}]})
     viya.route("POST", r"/compute/contexts/ctx-1/sessions$", start)
     viya.add("POST", r"/compute/sessions/s-2/jobs$", {"id": "j-2"})
     viya.add("GET", r"/jobs/j-2/state$", "completed")
