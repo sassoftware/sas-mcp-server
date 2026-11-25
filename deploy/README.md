@@ -8,6 +8,7 @@ configuring Viya auth and connecting MCP clients, see
 |---|---|
 | **Container** (Docker / Podman) | [`docker.md`](docker.md) — build or pull the image, run it |
 | **Kubernetes** | this file, plus the artifacts below |
+| **Posit Connect** | [`POSIT-CONNECT.md`](POSIT-CONNECT.md): Connect signs users in, and a SAS Logon OAuth integration supplies each user's Viya token |
 
 ### Kubernetes artifacts
 

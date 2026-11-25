@@ -132,6 +132,9 @@ exact `curl` that puts the previous definition back.
 | `--redirect-uri URI` | Register one more full redirect URI. Repeatable. |
 | `MCP_EXTRA_REDIRECT_URIS` | Comma-separated extra redirect URIs, for a deployment answering on more than one URL (a tunnel beside a shared host, blue/green hostnames). |
 | `VIYA_USERNAME` / `VIYA_PASSWORD` | Skip the prompts for an unattended run. Set both. |
+| `--target posit-connect` / `posit-workbench` / `posit` | Register the confidential SAS Logon clients for Posit Connect's and Posit Workbench's OAuth integrations (`posit`: both) instead of this server's client. See [deploy/POSIT-CONNECT.md](../deploy/POSIT-CONNECT.md#1-sas-viya-register-connect-as-an-oauth-client-viya-administrator). |
+| `--env-file PATH` | With a Posit target: also read this file, e.g. the `.env` of [sas-posit-env](https://github.com/sol-eng/sas-posit-env). |
+| `SSL_CERT_FILE` | A PEM file with the certificate authority of a Viya server whose certificate is not publicly trusted. |
 
 Note that if `VIYA_USERNAME` and `VIYA_PASSWORD` are already in your `.env` -- the integration
 tests use them -- the script uses those instead of prompting, and prints which user it is
