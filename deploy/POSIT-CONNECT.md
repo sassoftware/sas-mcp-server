@@ -278,7 +278,6 @@ the tool list.
 | Content fails to start: *ALLOW_RAW_BEARER cannot be combined…* / *needs VIYA_AUTH left on* | Remove `ALLOW_RAW_BEARER` / `VIYA_AUTH=false` from the content's Vars. Neither applies on Connect. |
 | TLS errors reaching Viya (*CERTIFICATE_VERIFY_FAILED*, *self-signed certificate in certificate chain*) | The content does not trust Viya's certificate. Adding the CA to the Connect host's trust store is not enough, because `httpx` uses `certifi`'s bundle: also set `SSL_CERT_FILE` to a PEM bundle that includes the CA (see Requirements). `SSL_VERIFY=false` only as a last resort. |
 | Request to the MCP URL returns **404** with an *Unauthorized* page, though the API key is valid | Connect answers 404, not 401/403, when the key's user is not on the content's access list. Add the user or group under **Access**. |
-| Deploy fails installing packages: *… is not a trusted or secure host* | Connect's Python package repository is a plain-HTTP Package Manager. Connect's builds ignore `pip.conf`, so set `PIP_TRUSTED_HOST=<package-manager host>` (and `UV_INSECURE_HOST` for uv) in Connect's environment, or serve Package Manager over HTTPS. |
 | Deploy fails: Python version not available | The Connect server does not offer the requested version. Set `CONNECT_PYTHON_VERSION` (or `version` in the Publisher configuration) to one it offers, 3.12 or later. |
 
 **Connect under a path prefix.** With nginx in front, an internal rewrite into
