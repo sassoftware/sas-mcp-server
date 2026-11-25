@@ -1,12 +1,12 @@
 # SAS Viya MCP Server: Viya compatibility by tool
 
-_SAS Viya MCP Server 1.22.0. Checked against the public API specifications on developer.sas.com for the releases it publishes, LTS 2025.03 to Stable 2026.11, with the API versions read on 2026-11-23. Tool calls: those changed in 1.22.0 checked on 2026-11-23, the 22 tools new in 1.20.0 on 2026-11-13, the others on 2026-10-29._
+_SAS Viya MCP Server 1.22.0. Checked against the public API specifications on developer.sas.com for the releases it publishes, LTS 2025.03 to Stable 2026.11, with the API versions read on 2026-11-23. Tool calls: the three compute session and status tools added after 1.22.0 (`server_status`, `list_compute_sessions`, `delete_compute_session`) checked on 2026-11-25, those changed in 1.22.0 on 2026-11-23, the 22 tools new in 1.20.0 on 2026-11-13, the others on 2026-10-29._
 
 Tools are grouped by the tiers used for `MCP_TIERS` in the [README](README.md#limiting-exposed-tools-tiers).
 
 ## Summary
 
-**135 of the 137 tools make no call that differs between LTS 2025.03 and Stable 2026.11.** Every endpoint, method, query parameter and media type they use exists unchanged in every release checked. No release requires a parameter that the current release does not.
+**138 of the 140 tools make no call that differs between LTS 2025.03 and Stable 2026.11.** Every endpoint, method, query parameter and media type they use exists unchanged in every release checked. No release requires a parameter that the current release does not.
 
 The two tools that differ are in Tier 3 (Reports & Visualization) and Tier 11 (Model Lifecycle):
 
@@ -21,11 +21,14 @@ Tools whose release columns are all ✓ also carry spec-versus-code gaps. Those 
 
 ## Tier 0 — Compute Contexts & Code Execution
 
-| Tool                    | Viya services  | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
-| ----------------------- | -------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
-| `execute_sas_code`      | compute, files | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
-| `list_compute_contexts` | compute        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
-| `reset_compute_session` | compute        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| Tool                     | Viya services  | 2025.03 LTS | 2025.09 LTS | 2026.03 LTS | 2026.07 | 2026.08 | 2026.09 | 2026.10 | 2026.11 |
+| ------------------------ | -------------- | ----------- | ----------- | ----------- | ------- | ------- | ------- | ------- | ------- |
+| `delete_compute_session` | compute        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `execute_sas_code`       | compute, files | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_compute_contexts`  | compute        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `list_compute_sessions`  | compute        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `reset_compute_session`  | compute        | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
+| `server_status`          | identities     | ✓           | ✓           | ✓           | ✓       | ✓       | ✓       | ✓       | ✓       |
 
 ## Tier 1 — Data Discovery
 
@@ -266,7 +269,7 @@ Tier 10 is meant to run with Tier 7, which puts this content into decisions and 
 
 ## How this was checked
 
-- **Inventory:** every Viya REST call each tool can make was listed from the source code. That includes conditional branches, retries, polling and rollback calls: 564 calls across 114 tools for 1.19.0, and 138 more for the 22 tools new in 1.20.0. `describe_report_objects` makes no call.
+- **Inventory:** every Viya REST call each tool can make was listed from the source code. That includes conditional branches, retries, polling and rollback calls: 564 calls across 114 tools for 1.19.0, 138 more for the 22 tools new in 1.20.0, and 5 for the three compute session and status tools added after 1.22.0. `describe_report_objects` makes no call.
 - **Spec match:** each call's path, method, query parameters, request media type and Accept type was checked against the API version that developer.sas.com lists for each release.
 - **Request bodies:** for Visual Analytics, the operation names, object types and data-item properties the tools send were also compared. For decisions, the step types and other enumerated values were compared too. For the tools new in 1.20.0, the top-level properties and enumerated values of every request body were compared. Where an older release lacks a property, the tools were checked not to send it.
 - **Verdicts:** a cell is ✓ when a call's result in that release is the same as in the newest release, 2026.11 (in the 1.20.0 matrix, 2026.10).

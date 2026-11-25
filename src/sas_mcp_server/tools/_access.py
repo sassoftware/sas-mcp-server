@@ -39,11 +39,15 @@ open-world — for every tool, ``list_caslibs`` included. See
 :func:`annotations_for`.
 """
 
+import json
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastmcp import FastMCP
-from mcp.types import ToolAnnotations
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from fastmcp.tools.base import ToolResult  # pyright: ignore[reportMissingImports]
+from mcp.types import TextContent, ToolAnnotations
 
 # --- classification ----------------------------------------------------------
 # Grouped by tier, matching src/sas_mcp_server/tools/<module>.py.
@@ -52,6 +56,8 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         # Tier 0 — Compute Contexts & Code Execution
         "list_compute_contexts",
+        "list_compute_sessions",
+        "server_status",
         # Tier 1 — Data Discovery
         "catalog_search",
         "catalog_search_helper",
@@ -136,6 +142,7 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         # Tier 0
         "execute_sas_code",  # arbitrary code — can perform any verb
         "reset_compute_session",  # destroys the caller's session state
+        "delete_compute_session",  # ends a session and whatever runs in it
         # Tier 1
         "catalog_run_agent",  # spawns a run, leaves history
         "catalog_run_adhoc_analysis",  # spawns a profiling job
@@ -248,7 +255,8 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "execute_sas_code",  # arbitrary code
         "submit_batch_job",  # arbitrary code
         "reset_compute_session",  # destroys the caller's session
-        "cancel_job",  # kills a running job
+        "delete_compute_session",  # ends a session and any job running in it
+        "cancel_job",  # deletes the job record
         "delete_report",
         "delete_business_ruleset",
         "delete_business_rule",
@@ -319,6 +327,7 @@ IDEMPOTENT_WRITE_TOOLS: frozenset[str] = frozenset(
         "delete_decision_flow",
         "cancel_job",
         "reset_compute_session",
+        "delete_compute_session",  # a second delete finds it gone and says so
         "promote_table_to_memory",
         "update_glossary_term",
         "delete_glossary_term",
@@ -436,12 +445,92 @@ class ReadOnlyGate:
         return getattr(self._mcp, item)
 
 
+# --- expected-host guard ------------------------------------------------------
+
+
+def _host_and_port(value: str) -> tuple[str, int | None]:
+    """Lower-cased host name and explicit port of a URL or a bare ``host[:port]``."""
+    text = value.strip()
+    if "://" not in text:
+        text = f"https://{text}"
+    parts = urlsplit(text)
+    if not parts.hostname or parts.netloc.endswith(":"):
+        raise ValueError("Expected a host with an optional numeric port")
+    return parts.hostname.lower(), parts.port
+
+
+def host_check(endpoint: str, expected: str | None) -> dict[str, Any]:
+    """Compare the host of *endpoint* with the *expected* host.
+
+    Returns ``connected_host``, ``expected_host`` (``None`` when unset) and
+    ``matches``: ``None`` when nothing is expected, else whether the host names
+    agree, and the ports too when *expected* names one.
+    """
+    host, port = _host_and_port(endpoint)
+    default_port = 80 if endpoint.lower().startswith("http://") else 443
+    connected = host if port in (None, default_port) else f"{host}:{port}"
+    if not expected:
+        return {"connected_host": connected, "expected_host": None, "matches": None}
+    try:
+        want_host, want_port = _host_and_port(expected)
+    except ValueError:
+        return {"connected_host": connected, "expected_host": expected, "matches": False}
+    matches = want_host == host and (want_port is None or want_port == (port or default_port))
+    return {"connected_host": connected, "expected_host": expected, "matches": matches}
+
+
+def host_mismatch_refusal(tool: str, check: dict[str, Any]) -> dict[str, Any]:
+    """The structured refusal a write tool returns when the host check fails."""
+    return {
+        "status": "refused",
+        "reason": "unexpected_host",
+        "tool": tool,
+        "connected_host": check["connected_host"],
+        "expected_host": check["expected_host"],
+        "gated_by": "MCP_EXPECT_HOST",
+        "message": (
+            f"This server is connected to {check['connected_host']}, but MCP_EXPECT_HOST says "
+            f"{check['expected_host']}. Tools that write or run code are refused so nothing reaches "
+            "the wrong deployment; read tools still work. Restart the server against the right "
+            "environment, or correct MCP_EXPECT_HOST. Do not retry this call."
+        ),
+    }
+
+
+class HostGuardMiddleware(Middleware):
+    """Refuse every tool outside *allowed* while the host check fails.
+
+    The check compares two values fixed at startup, so it runs once. A refused
+    call never reaches the tool, so it requests no token and sends nothing to
+    SAS Viya. Fail-closed like :class:`ReadOnlyGate`: a tool that is not
+    classified read-only is refused.
+    """
+
+    def __init__(self, check: dict[str, Any], allowed: frozenset[str] = READ_ONLY_TOOLS) -> None:
+        self._check = check
+        self._allowed = allowed
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> ToolResult:
+        name = str(getattr(context.message, "name", "") or "")
+        if self._check.get("matches") is not False or name in self._allowed:
+            return await call_next(context)
+        refusal = host_mismatch_refusal(name, self._check)
+        return ToolResult(
+            content=[TextContent(type="text", text=json.dumps(refusal))],
+            structured_content=refusal,
+            is_error=True,
+        )
+
+
 __all__ = [
     "DESTRUCTIVE_TOOLS",
     "IDEMPOTENT_WRITE_TOOLS",
     "OPEN_WORLD_TOOLS",
     "READ_ONLY_TOOLS",
     "WRITE_TOOLS",
+    "HostGuardMiddleware",
     "ReadOnlyGate",
     "annotations_for",
+    "host_check",
+    "host_mismatch_refusal",
 ]

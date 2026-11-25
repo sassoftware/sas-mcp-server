@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **`server_status`** (#81) (Tier 0, read-only, registered with every tier selection) names the SAS Viya endpoint and host the server talks to, the environment profile that started it (`MCP_PROFILE`), the user its token belongs to, the token's expiry and seconds left, and whether the server can renew it. It returns no part of the token.
+- **`MCP_EXPECT_HOST`** (#81) (unset by default) names the host the server should reach. When it differs from the host of `VIYA_ENDPOINT`, every tool that is not read-only returns `status: refused`, `reason: unexpected_host` with both hosts, and sends nothing to SAS Viya. Read tools keep working.
+- **`list_compute_sessions` and `delete_compute_session`** (#81) (Tier 0). The list shows the caller's own sessions with their state and compute context, marking the one `execute_sas_code` reuses. Delete ends a session and whatever runs in it, which is how a batch job is stopped, and reports whether Viya completed or accepted the request. Both cover only the caller's own sessions unless the call passes `all_users=true`; other users' sessions are visible to an administrator only.
+- **`submit_batch_job` returns `token_lifetime`** (#81) and takes `expected_runtime_minutes`. The stdio server renews a token with less than 30 minutes left, or less than the expected run time, before it submits.
+- **`code` is accepted for `sas_code`** (#81) on `execute_sas_code` and `submit_batch_job`. The published schema still lists only `sas_code`.
+
+### Changed
+- **The `execute_sas_code` and `submit_batch_job` descriptions state the compute session's limits.** (#81) A session runs one job at a time and its memory is capped by the compute pod.
+
 ### Fixed
 - **Compute-backed tools run in the compute context you configured.** (#79) The server looked the context up with `?name=`, which the Compute API does not accept, so it got the first ten contexts on the tenant and used whichever came first. On one tenant that was "PIP Agent compute context", and a client-credentials caller got a 403 even with "SAS Job Execution compute context" configured. The lookup now filters with `eq(name,"...")` and takes only a context whose name matches exactly, so a response that ignores the filter, or lists a context with no name, cannot hand back the wrong one.
 - `cancel_job` (#80) reports that it deleted the job record. The compute session may still be running.

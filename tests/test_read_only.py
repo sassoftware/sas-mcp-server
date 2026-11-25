@@ -46,7 +46,7 @@ def test_read_and_write_sets_are_disjoint():
 async def test_read_only_registers_only_read_tools():
     names = await _register(read_only=True)
     assert names == set(READ_ONLY_TOOLS)
-    assert len(names) == 64
+    assert len(names) == 66
 
 
 async def test_read_only_withholds_every_mutating_tool():
@@ -85,7 +85,7 @@ async def test_named_read_tools_survive(tool_name):
 
 
 async def test_default_is_unfiltered():
-    assert len(await _register()) == 137
+    assert len(await _register()) == 140
 
 
 # --- composition with tier selection ------------------------------------------
@@ -99,12 +99,13 @@ async def test_composes_with_tier_selection():
         "get_report_outline",
         "describe_report_objects",
         "export_report",
+        "server_status",  # every tier selection gets it, and it is read-only
     }
 
 
 async def test_composes_with_tier_range():
     names = await _register(tiers="0-4", read_only=True)
-    assert len(names) == 30
+    assert len(names) == 32
     assert "list_compute_contexts" in names  # tier 0, read
     assert "execute_sas_code" not in names  # tier 0, write
     assert "list_mas_modules" not in names  # tier 6, not selected
@@ -117,12 +118,12 @@ async def test_env_var_drives_default(monkeypatch):
     monkeypatch.setattr(tools, "MCP_READ_ONLY", True)
     assert await _register() == set(READ_ONLY_TOOLS)
     monkeypatch.setattr(tools, "MCP_READ_ONLY", False)
-    assert len(await _register()) == 137
+    assert len(await _register()) == 140
 
 
 async def test_explicit_argument_overrides_env_var(monkeypatch):
     monkeypatch.setattr(tools, "MCP_READ_ONLY", True)
-    assert len(await _register(read_only=False)) == 137
+    assert len(await _register(read_only=False)) == 140
     monkeypatch.setattr(tools, "MCP_READ_ONLY", False)
     assert await _register(read_only=True) == set(READ_ONLY_TOOLS)
 

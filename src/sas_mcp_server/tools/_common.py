@@ -16,10 +16,11 @@ subset of tiers can be registered on its own.
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 from fastmcp import Context
+from pydantic import AliasChoices, Field
 
 from ..viya_client import logger, make_client
 from ..viya_utils import get_cached_session
@@ -31,6 +32,13 @@ from ..viya_utils import get_cached_session
 # call before the tool body runs. These BeforeValidator coercions absorb the
 # whole failure class server-side without changing the published JSON schema
 # (BeforeValidator does not alter the annotated type's schema).
+
+
+# The SAS code parameter of execute_sas_code and submit_batch_job. Agents
+# called both with ``code=`` and lost a round trip to the validation error, so
+# ``code`` is accepted too. The published schema still names only
+# ``sas_code``; passing both is refused as ambiguous.
+SasCode = Annotated[str, Field(validation_alias=AliasChoices("sas_code", "code"))]
 
 
 def coerce_json_list(value: Any) -> Any:

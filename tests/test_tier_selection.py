@@ -50,7 +50,7 @@ def test_env_var_drives_default(monkeypatch):
 
 async def test_register_all_tiers_registers_everything():
     names = await _register(None)
-    assert len(names) == 137
+    assert len(names) == 140
     assert "execute_sas_code" in names
     assert "publish_decision_flow" in names
     assert "apply_report_operations" in names
@@ -59,7 +59,7 @@ async def test_register_all_tiers_registers_everything():
 
 async def test_register_subset_excludes_other_tiers():
     names = await _register("0-4")
-    assert len(names) == 48
+    assert len(names) == 51
     assert "execute_sas_code" in names  # tier 0
     assert "list_jobs" in names  # tier 4
     assert "list_mas_modules" not in names  # tier 6
@@ -69,7 +69,7 @@ async def test_register_subset_excludes_other_tiers():
 
 async def test_register_single_tier():
     names = await _register("7")
-    assert len(names) == 34
+    assert len(names) == 35, "34 decisioning tools and server_status, which every tier selection gets"
     assert "create_business_ruleset" in names
     assert "get_mas_module_step_signature" not in names  # tier 6, not 7
     # The foundation tier reads, locks and deletes every kind of content and checks expressions...
@@ -86,6 +86,7 @@ async def test_decisioning_advanced_alone_warns_that_it_needs_the_foundation_tie
         "create_segmentation_tree", "update_segmentation_tree", "create_segmentation_tree_from_table",
         "create_code_file", "update_code_file", "create_value_list", "update_value_list_entries",
         "create_custom_function", "update_custom_function", "validate_custom_function",
+        "server_status",  # every tier selection gets it
     }
     warning.assert_called_once()
     message = warning.call_args.args[0] % warning.call_args.args[1:]
@@ -95,7 +96,7 @@ async def test_decisioning_advanced_alone_warns_that_it_needs_the_foundation_tie
 async def test_decisioning_tiers_together_do_not_warn(monkeypatch):
     warning = MagicMock()
     monkeypatch.setattr(tools.logger, "warning", warning)
-    assert len(await _register("7,10")) == 44
+    assert len(await _register("7,10")) == 45  # with server_status
     warning.assert_not_called()
 
 
@@ -107,7 +108,7 @@ async def test_register_glossary_tier_alone():
     quiet dependency on Tier 1 having registered first.
     """
     names = await _register("9")
-    assert len(names) == 16
+    assert len(names) == 17  # with server_status
     assert "search_glossary_terms" in names
     assert "assign_glossary_term" in names
     assert "catalog_search" not in names  # tier 1, not 9

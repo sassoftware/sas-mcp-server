@@ -46,6 +46,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Lock
 
 import httpx
 from dotenv import load_dotenv
@@ -58,6 +59,7 @@ from .helpers.telemetry_helpers import server_version
 from .http_debug import install_http_debug
 from .prompts import register_prompts
 from .telemetry import install_telemetry
+from .token_info import set_token_renewer
 from .tool_rename import install_tool_rename
 from .tools import TOOL_TIERS, register_tools
 from .user_log import install_user_log
@@ -392,25 +394,34 @@ def _legacy_default_usable(data: dict, path: Path, endpoint: str) -> bool:
     return True
 
 
-def _get_viya_token() -> str:
-    if not AUTH_ENABLED:
-        return ""
-    endpoint = normalize_endpoint(VIYA_ENDPOINT)
+def _token_sources(
+    files: dict[Path, dict], endpoint: str
+) -> tuple[tuple[Path, str, str, bool], ...]:
+    """The cached credential sources for *endpoint*, in the order they are tried.
+
+    Each is (file, OAuth client, block, whether it is the helper's legacy Default
+    block). *files* caches each parsed file; the helper's is read here.
+    """
     helper = _helper_credentials_path()
-    files: dict[Path, dict] = {helper: _read_credentials_file(helper)}  # each file parsed once per call
-    # (file, OAuth client, block, whether it is the helper's legacy Default block).
-    sources: tuple[tuple[Path, str, str, bool], ...]
+    if helper not in files:
+        files[helper] = _read_credentials_file(helper)
     if isinstance(files[helper].get(endpoint), dict):
         # The user logged in to this deployment: use that login and nothing else. The SAS
         # Viya CLI cache and the legacy Default block do not record their deployment, so
         # they must not stand in when this login has expired or been revoked.
-        sources = ((helper, HELPER_CLIENT_ID, endpoint, False),)
-    else:
-        sources = (
-            (_sas_cli_credentials_path(), SAS_CLI_CLIENT_ID, "Default", False),
-            (helper, HELPER_CLIENT_ID, "Default", True),
-        )
-    for path, client_id, key, legacy_default in sources:
+        return ((helper, HELPER_CLIENT_ID, endpoint, False),)
+    return (
+        (_sas_cli_credentials_path(), SAS_CLI_CLIENT_ID, "Default", False),
+        (helper, HELPER_CLIENT_ID, "Default", True),
+    )
+
+
+def _get_viya_token() -> str:
+    if not AUTH_ENABLED:
+        return ""
+    endpoint = normalize_endpoint(VIYA_ENDPOINT)
+    files: dict[Path, dict] = {}  # each file parsed once per call
+    for path, client_id, key, legacy_default in _token_sources(files, endpoint):
         if path not in files:
             files[path] = _read_credentials_file(path)
         data = files[path]
@@ -435,6 +446,40 @@ def _get_viya_token() -> str:
     return _native_device_code_token()
 
 
+_renew_lock = Lock()
+_last_renewal: tuple[str, str] | None = None
+
+
+def _renew_viya_token(current_token: str) -> str | None:
+    """Renew only the cached login used by this request, coalescing concurrent renewals."""
+    global _last_renewal
+    if not AUTH_ENABLED:
+        return None
+    endpoint = normalize_endpoint(VIYA_ENDPOINT)
+    with _renew_lock:
+        files: dict[Path, dict] = {}
+        for path, client_id, key, legacy_default in _token_sources(files, endpoint):
+            if path not in files:
+                files[path] = _read_credentials_file(path)
+            data = files[path]
+            if legacy_default and not _legacy_default_usable(data, path, endpoint):
+                continue
+            creds = _load_credentials(path, key, data)
+            if creds is None:
+                continue
+            cached = creds.get("access-token")
+            if _last_renewal == (current_token, cached) and isinstance(cached, str) and not _token_expired(creds):
+                return cached
+            if cached != current_token:
+                continue
+            bind = endpoint if legacy_default else None
+            fresh = _refresh_cached_token(path, client_id, key, endpoint=bind, data=data)
+            if fresh:
+                _last_renewal = (current_token, fresh)
+            return fresh
+    return None
+
+
 async def _stdio_get_token(ctx: Context) -> str:
     return _get_viya_token()
 
@@ -456,6 +501,9 @@ if not AUTH_ENABLED:
         "Viya API calls are sent without Authorization headers"
     )
 mcp = FastMCP(SERVER_NAME, version=SERVER_VERSION, lifespan=_lifespan)
+if AUTH_ENABLED:
+    # submit_batch_job renews a token that may not outlast the job (see token_info).
+    set_token_renewer(_renew_viya_token)
 # Opt-in tool renaming (no-op unless MCP_TOOL_RENAME is set); outermost, so a
 # call under a public name is translated back before anything else sees it.
 _tool_rename = install_tool_rename(mcp)

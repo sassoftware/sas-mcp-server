@@ -24,6 +24,7 @@ import json
 import re
 import secrets
 from contextlib import nullcontext
+from typing import Any
 
 import httpx
 
@@ -197,6 +198,22 @@ class _ComputeSessionCache:
                     "Could not delete compute session %s on shutdown", sid, exc_info=True
                 )
 
+    def session_ids(self, user_key: str | None = None) -> set[str]:
+        """Ids of the sessions this server keeps warm for *user_key*, or for every user without one."""
+        return {sid for key, (sid, _) in self._sessions.items() if user_key is None or key[0] == user_key}
+
+    def forget(self, session_id: str, user_key: str) -> bool:
+        """Drop *session_id* from the cache without deleting it; ``True`` if it was cached.
+
+        For a session deleted some other way, so the next call does not try
+        to reuse it.
+        """
+        for key, (sid, _) in list(self._sessions.items()):
+            if key[0] == user_key and sid == session_id:
+                self._sessions.pop(key, None)
+                return True
+        return False
+
     def clear(self) -> None:
         """Forget all cached sessions without deleting them server-side.
 
@@ -233,6 +250,16 @@ async def reset_cached_session(
     return await _SESSION_CACHE.reset(client, context_name, _token_user_key(token))
 
 
+def cached_session_ids(token: str | None = None) -> set[str]:
+    """Ids of the compute sessions this server keeps warm for *token*'s user, or for every user without one."""
+    return _SESSION_CACHE.session_ids(None if token is None else _token_user_key(token))
+
+
+def forget_cached_session(session_id: str, token: str) -> bool:
+    """Stop reusing *session_id*; ``True`` if this server had it cached."""
+    return _SESSION_CACHE.forget(session_id, _token_user_key(token))
+
+
 async def shutdown_session_cache() -> None:
     """Delete all cached compute sessions server-side (call from server lifespan)."""
     await _SESSION_CACHE.shutdown()
@@ -241,6 +268,81 @@ async def shutdown_session_cache() -> None:
 def clear_session_cache() -> None:
     """Forget all cached compute sessions (test isolation helper)."""
     _SESSION_CACHE.clear()
+
+
+def _session_summary(item: dict, cached: set[str], contexts: dict[str, dict]) -> dict:
+    """The fields of one compute session that say what it is and whether it is busy."""
+    context = contexts.get(str(item.get("serverId")), {})
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "state": item.get("state"),
+        "owner": item.get("owner"),
+        "created": item.get("creationTimeStamp"),
+        "context_id": context.get("contextId"),
+        "context_name": context.get("contextName"),
+        "cached_by_this_server": item.get("id") in cached,
+    }
+
+
+async def _server_contexts(client: httpx.AsyncClient, server_ids: set[str]) -> dict[str, dict]:
+    """``contextId`` and ``contextName`` of each compute server, by server id.
+
+    A session item does not name its compute context; the server that runs it
+    does. A server that cannot be read is left out, so its sessions show no
+    context rather than failing the list.
+    """
+
+    async def one(server_id: str) -> tuple[str, dict]:
+        try:
+            resp = await client.get(f"{VIYA_ENDPOINT}/compute/servers/{server_id}")
+            if resp.status_code == 200:
+                body = resp.json()
+                if isinstance(body, dict):
+                    return server_id, body
+        except httpx.HTTPError:
+            logger.debug("Could not read compute server %s", server_id, exc_info=True)
+        return server_id, {}
+
+    return dict(await asyncio.gather(*(one(sid) for sid in sorted(server_ids))))
+
+
+async def list_compute_sessions(
+    client: httpx.AsyncClient,
+    limit: int = 50,
+    start: int = 0,
+    *,
+    owner: str | None = None,
+    token: str | None = None,
+) -> tuple[list[dict], int]:
+    """Summaries of compute sessions, and the total count Viya reports.
+
+    With *owner*, only that user's sessions, filtered by Viya; without, every
+    session the caller may see, which for an administrator includes other
+    users'. The sessions include the one ``execute_sas_code`` keeps warm and
+    those that Job Execution started for batch jobs. The collection's items
+    carry the owner and state only when the full session type is requested in
+    ``Accept-Item``. ``cached_by_this_server`` covers *token*'s user.
+    """
+    params: dict[str, Any] = {"start": start, "limit": limit}
+    if owner:
+        quoted = owner.replace("\\", "\\\\").replace('"', '\\"')
+        params["filter"] = f'eq(owner,"{quoted}")'
+    resp = await client.get(
+        f"{VIYA_ENDPOINT}/compute/sessions",
+        params=params,
+        headers={
+            "Accept": "application/vnd.sas.collection+json",
+            "Accept-Item": "application/vnd.sas.compute.session+json",
+        },
+    )
+    raise_for_viya_status(resp)
+    data = resp.json()
+    items = [item for item in data.get("items", []) if isinstance(item, dict)]
+    cached = cached_session_ids(token)
+    servers = {str(item["serverId"]) for item in items if item.get("serverId")}
+    contexts = await _server_contexts(client, servers) if servers else {}
+    return [_session_summary(item, cached, contexts) for item in items], int(data.get("count", len(items)) or 0)
 
 
 async def submit_job(client: httpx.AsyncClient, session_id: str, code: str) -> str:

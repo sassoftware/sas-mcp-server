@@ -120,6 +120,17 @@ CONTEXT_NAME = os.getenv("COMPUTE_CONTEXT_NAME", "SAS Job Execution compute cont
 DEFAULT_SERVER_NAME = "SAS Viya Execution MCP Server"
 SERVER_NAME = os.getenv("MCP_SERVER_NAME", DEFAULT_SERVER_NAME)
 COMPUTE_SESSION_ID = os.getenv("COMPUTE_SESSION_ID", "").strip()
+# The SAS Viya host this server is meant to reach (default: unset, no check).
+# A launcher that starts one server per environment sets it from the same
+# source that chose the environment, e.g. ``hc-build.example.com``. When it
+# does not match VIYA_ENDPOINT's host, every tool that is not read-only refuses
+# with a structured error and read tools keep working, so the mismatch can be
+# diagnosed but nothing is written to the wrong deployment. A port is compared
+# only when the value names one. See sas_mcp_server.tools._access.
+MCP_EXPECT_HOST = os.getenv("MCP_EXPECT_HOST", "").strip()
+# Name of the environment profile that started this server (default: unset).
+# Reported by the server_status tool, nothing else reads it.
+MCP_PROFILE = os.getenv("MCP_PROFILE", "").strip()
 # Optional tool-tier selection, e.g. "0-4" or "0,1,7". Empty means all tiers.
 # Parsed by sas_mcp_server.tools.resolve_enabled_tiers.
 MCP_TIERS = os.getenv("MCP_TIERS", "")
