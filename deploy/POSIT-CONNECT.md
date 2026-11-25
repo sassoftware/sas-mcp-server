@@ -33,7 +33,14 @@ The server's own OAuth proxy, `MCP_SIGNING_KEY`, `MCP_BASE_URL` callback and
   package supports (3.12 or later). The deploy script requests the version in
   `.python-version`; set `CONNECT_PYTHON_VERSION` (for example `3.13.13`) to
   request another one.
-- Connect can reach your SAS Viya endpoint over HTTPS.
+- Connect can reach your SAS Viya endpoint over HTTPS, and the content trusts
+  its certificate. The server's HTTP client (`httpx`) uses the CA bundle that
+  ships with Python's `certifi`, **not** the host's trust store, so adding a
+  private CA to the Connect server is not enough on its own. If Viya's
+  certificate comes from an internal CA, set
+  `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` (a PEM bundle on the
+  Connect host or image that includes that CA) in the content's Vars or for
+  all content in Connect's environment.
 - The content can reach Connect's API, because the server calls Connect's
   credentials endpoint for every tool call. It uses `CONNECT_SERVER`, which
   Connect sets from
@@ -74,6 +81,29 @@ curl -X POST "https://viya.example.com/SASLogon/oauth/clients" \
        "redirect_uri": ["https://connect.example.com/__oauth__/integrations/callback"],
        "autoapprove": true}'
 ```
+
+Or let the registration script do it. It backs up any existing client,
+generates a secret if `CONNECT_VIYA_CLIENT_SECRET` is not set and reads the
+client back to check it. `--target posit` also registers the Posit Workbench
+client (`/oauth_redirect_callback`):
+
+```sh
+export VIYA_HOSTNAME=viya.example.com POSIT_CONNECT_URL=https://connect.example.com
+uv run python examples/register_mcp_client.py --target posit-connect --dry-run
+uv run python examples/register_mcp_client.py --target posit-connect
+```
+
+It reads the variable names of the
+[sas-posit-env](https://github.com/sol-eng/sas-posit-env) `.env` file
+(`--env-file path/to/.env`), whose Connect and Workbench run on `localhost`, the
+default here. Scopes come from `VIYA_SCOPES` (default
+`openid,sas-compute.user_impersonation`, what that environment requests).
+
+The client's `scope` must include every scope the Connect integration
+(step 2) requests, or SAS Logon refuses the sign-in. Registering over an
+existing client replaces its secret: when another Connect or Workbench
+already uses that client, set `CONNECT_VIYA_CLIENT_SECRET` to the secret it
+has, or pick a new `client_id`.
 
 Then allow SAS Logon to redirect to Connect after sign-in: in SAS Environment
 Manager, *Configuration → Definitions → sas.commons.web.security*, edit
@@ -116,7 +146,9 @@ Note the returned `guid`. Make sure MCP OAuth sign-in is enabled on the server
 ```sh
 export VIYA_ENDPOINT=https://viya.example.com
 deploy/posit-connect/deploy.sh -n <connect-server-nickname>
-```._mcp_server` with a `requirements.txt` pinned from
+```
+
+The script bundles `src/sas_mcp_server` with a `requirements.txt` pinned from
 `uv.lock` and runs `rsconnect deploy fastapi` with entrypoint
 `sas_mcp_server.mcp_server:app`. It sets `POSIT_CONNECT_OAUTH=true`,
 `MCP_STATELESS_HTTP=true` (Connect requires stateless Streamable HTTP) and
@@ -126,6 +158,65 @@ list is at the top of the script). Extra arguments go to `rsconnect`
 unchanged. Pass `--app-id <content-guid>` to redeploy over existing content.
 `--bundle-only <dir>` only builds the bundle.
 
+### Or from Positron with Posit Publisher
+
+Publisher's *new deployment* flow only lets you pick an entrypoint **file**,
+not the module path `sas_mcp_server.mcp_server:app`, so write its
+configuration by hand. Build the bundle first (in a Workbench session, for
+example):
+
+```sh
+deploy/posit-connect/deploy.sh --bundle-only ~/sas-mcp-bundle
+```
+
+Then create `~/sas-mcp-bundle/.posit/publish/sas-mcp-server.toml` with the
+same settings the script passes to `rsconnect`:
+
+```toml
+'$schema' = 'https://cdn.posit.co/publisher/schemas/posit-publishing-schema-v3.json'
+product_type = 'connect'
+type = 'python-fastapi'
+entrypoint = 'sas_mcp_server.mcp_server:app'
+title = 'SAS MCP Server'
+validate = true
+files = [
+  '/sas_mcp_server',
+  '/requirements.txt',
+  '/.python-version',
+  '/.posit/publish/sas-mcp-server.toml',
+]
+
+[python]
+version = '3.12.11'          # one that your Connect server offers
+package_file = 'requirements.txt'
+package_manager = 'pip'
+
+[environment]
+VIYA_ENDPOINT = 'https://viya.example.com'
+POSIT_CONNECT_OAUTH = 'true'
+MCP_STATELESS_HTTP = 'true'
+SAS_MCP_VERSION = '<version from pyproject.toml>'
+
+# The SAS Logon integration from step 2
+[[integration_requests]]
+guid = '<integration guid>'
+```
+
+Publisher lists a configuration once a deployment record points at it, so add
+`~/sas-mcp-bundle/.posit/publish/deployments/sas-mcp-server.toml`:
+
+```toml
+'$schema' = 'https://cdn.posit.co/publisher/schemas/posit-publishing-record-schema-v3.json'
+server_type = 'connect'
+server_url = 'https://connect.example.com'
+configuration_name = 'sas-mcp-server'
+type = 'python-fastapi'
+```
+
+Open the `sas-mcp-bundle` folder in Positron, pick that deployment in the
+Posit Publisher view and deploy. Publisher fills in the content ID on the
+first deploy, so later deploys update the same content.
+
 Then, in the content's settings on Connect:
 
 | Setting | Value | Why |
@@ -133,7 +224,7 @@ Then, in the content's settings on Connect:
 | **Access** | *Specific users or groups* (or *All users – login required*) | Connect login is the gate. Viya permissions still apply per user. |
 | **Integrations** | Add *SAS Viya (SAS Logon)* | Supplies each user's Viya token. If you attach more than one integration, also set `POSIT_CONNECT_INTEGRATION_GUID` to its GUID. |
 | **Runtime → Min processes** | 1 | Keeps the server warm. Connect sets this for MCP content on first deploy. |
-| **Runtime → Max processes** | 1 | Warm compute sessions are cached per process, as with `replicas: 1` in [`README.md`](README.md#deliberate-choices). |
+| **Runtime → Max processes** | 1 | Warm compute sessions are cached per process, as with `replicas: 1` in [`README.md`](README.md#deliberate-choices). Neither the script nor Publisher sets it, and nothing fails without it, so check it after the first deploy. |
 | **Runtime → Read / idle timeouts** | Above your longest SAS job | Long-running code-execution calls hold the request open. |
 | **Vanity URL** (optional) | e.g. `/sas-mcp/` | A stable client URL that survives redeploys. |
 | **Vars** (optional) | `MCP_BASE_URL=https://connect.example.com/sas-mcp` | Only used for the client snippets on the browser landing page. |
@@ -155,6 +246,21 @@ The endpoint is the content URL plus `/mcp`, e.g.
 - **API-key clients**: open the content once in a browser and authorize SAS
   Logon there, then configure the header `Authorization: Key <your Connect API key>`.
 
+- **Posit Assistant** (Positron, Workbench): add the server to the
+  `assistant.mcpServers` setting, with an API key as above. The server name
+  must not contain `_`: a name like `sas_viya` is skipped, and only the
+  Assistant's log says so.
+
+  ```json
+  "assistant.mcpServers": {
+    "sas-viya": {
+      "url": "https://connect.example.com/sas-mcp/mcp",
+      "headers": { "Authorization": "Key <your Connect API key>" },
+      "timeout": 30000
+    }
+  }
+  ```
+
 Opening the content's root URL in a browser shows Connect's MCP console with
 the tool list.
 
@@ -170,7 +276,10 @@ the tool list.
 | Browser stuck on SAS Logon after the password | `form-action` in SAS Logon's CSP does not include the Connect origin (step 1). |
 | SAS Logon: *Invalid redirect* | The client's `redirect_uri` is not exactly `https://<connect>/__oauth__/integrations/callback`. |
 | Content fails to start: *ALLOW_RAW_BEARER cannot be combined…* / *needs VIYA_AUTH left on* | Remove `ALLOW_RAW_BEARER` / `VIYA_AUTH=false` from the content's Vars. Neither applies on Connect. |
-| TLS errors reaching Viya | Connect does not trust the Viya certificate. Add the CA to the Connect host's trust store, or as a last resort set `SSL_VERIFY=false`. |
+| TLS errors reaching Viya (*CERTIFICATE_VERIFY_FAILED*, *self-signed certificate in certificate chain*) | The content does not trust Viya's certificate. Adding the CA to the Connect host's trust store is not enough, because `httpx` uses `certifi`'s bundle: also set `SSL_CERT_FILE` to a PEM bundle that includes the CA (see Requirements). `SSL_VERIFY=false` only as a last resort. |
+| Request to the MCP URL returns **404** with an *Unauthorized* page, though the API key is valid | Connect answers 404, not 401/403, when the key's user is not on the content's access list. Add the user or group under **Access**. |
+| Deploy fails installing packages: *… is not a trusted or secure host* | Connect's Python package repository is a plain-HTTP Package Manager. Connect's builds ignore `pip.conf`, so set `PIP_TRUSTED_HOST=<package-manager host>` (and `UV_INSECURE_HOST` for uv) in Connect's environment, or serve Package Manager over HTTPS. |
+| Deploy fails: Python version not available | The Connect server does not offer the requested version. Set `CONNECT_PYTHON_VERSION` (or `version` in the Publisher configuration) to one it offers, 3.12 or later. |
 
 **Connect under a path prefix.** With nginx in front, an internal rewrite into
 the location that already proxies `/connect/` is enough (adjust the prefix):
