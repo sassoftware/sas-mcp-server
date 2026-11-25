@@ -4021,30 +4021,48 @@ async def _warm_session(client, mock_client):
 
 async def test_list_compute_sessions_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
-    async with Client(mcp) as client:
-        await _warm_session(client, mock_client)
-        mock_client.get.return_value = _make_mock_response(
-            {
-                "count": 3,
-                "items": [
-                    {
-                        "id": "test-session-id",
-                        "name": "sas-mcp-shared",
-                        "state": "idle",
-                        "owner": "alice",
-                        "creationTimeStamp": "2026-11-23T09:00:00Z",
-                        "attributes": {"contextId": "ctx-1"},
-                    },
-                    {"id": "job-session", "name": "Job Execution", "state": "running", "owner": "alice"},
-                ],
-            }
-        )
-        result = (await client.call_tool("list_compute_sessions", {"limit": 2})).data
+    sessions = _make_mock_response(
+        {
+            "count": 3,
+            "items": [
+                {
+                    "id": "test-session-id",
+                    "name": "sas-mcp-shared",
+                    "state": "idle",
+                    "owner": "alice",
+                    "creationTimeStamp": "2026-11-23T09:00:00Z",
+                    "serverId": "srv-1",
+                    "attributes": {"homeDirectory": "/opt/sas"},
+                },
+                {
+                    "id": "job-session",
+                    "name": "Job Execution",
+                    "state": "running",
+                    "owner": "alice",
+                    "serverId": "srv-2",
+                },
+            ],
+        }
+    )
+    servers = {
+        "srv-1": _make_mock_response({"id": "srv-1", "contextId": "ctx-1", "contextName": "Test Context"}),
+        "srv-2": _make_mock_response(status_code=404),
+    }
 
-    url = mock_client.get.call_args[0][0]
-    assert url.endswith("/compute/sessions")
-    assert mock_client.get.call_args[1]["params"] == {"start": 0, "limit": 2}
-    assert mock_client.get.call_args.kwargs["headers"]["Accept-Item"] == "application/vnd.sas.compute.session+json"
+    def route_get(url, **kwargs):
+        if url.endswith("/compute/sessions"):
+            return sessions
+        return servers[url.rsplit("/", 1)[1]]
+
+    with patch("sas_mcp_server.tools.compute.resolve_user_id", AsyncMock(return_value="alice")):
+        async with Client(mcp) as client:
+            await _warm_session(client, mock_client)
+            mock_client.get.side_effect = route_get
+            result = (await client.call_tool("list_compute_sessions", {"limit": 2})).data
+
+    listing = next(c for c in mock_client.get.call_args_list if c[0][0].endswith("/compute/sessions"))
+    assert listing.kwargs["params"] == {"start": 0, "limit": 2, "filter": 'eq(owner,"alice")'}
+    assert listing.kwargs["headers"]["Accept-Item"] == "application/vnd.sas.compute.session+json"
     first, second = result["sessions"]
     assert first == {
         "id": "test-session-id",
@@ -4053,33 +4071,94 @@ async def test_list_compute_sessions_request(mcp_server_with_mock_client):
         "owner": "alice",
         "created": "2026-11-23T09:00:00Z",
         "context_id": "ctx-1",
+        "context_name": "Test Context",
         "cached_by_this_server": True,
     }
     assert second["state"] == "running"
-    assert second["context_id"] is None
+    assert second["context_id"] is None, "a server that cannot be read leaves the context empty"
     assert second["cached_by_this_server"] is False
     assert result["count"] == 3
     assert result["has_more"] is True
+    assert result["owner"] == "alice"
+
+
+async def test_list_compute_sessions_of_all_users(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value = _make_mock_response({"count": 1, "items": [{"id": "s", "owner": "bob"}]})
+    lookup = AsyncMock(return_value="alice")
+    with patch("sas_mcp_server.tools.compute.resolve_user_id", lookup):
+        async with Client(mcp) as client:
+            result = (await client.call_tool("list_compute_sessions", {"all_users": True})).data
+    assert "filter" not in mock_client.get.call_args.kwargs["params"]
+    assert result["owner"] is None
+    assert result["sessions"][0]["owner"] == "bob"
+    lookup.assert_not_awaited()
+
+
+async def test_list_compute_sessions_without_a_user_id_is_refused(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    with patch("sas_mcp_server.tools.compute.resolve_user_id", AsyncMock(return_value=None)):
+        async with Client(mcp) as client:
+            result = await client.call_tool("list_compute_sessions", {}, raise_on_error=False)
+    assert result.is_error
+    assert "all_users=true" in result.content[0].text
+    mock_client.get.assert_not_called()
+
+
+def _session_owned_by(owner):
+    return _make_mock_response({"id": "s", "owner": owner, "state": "idle"})
 
 
 async def test_delete_compute_session_ends_the_warm_session_and_forgets_it(mcp_server_with_mock_client):
     from sas_mcp_server.viya_utils import cached_session_ids
 
     mcp, mock_client = mcp_server_with_mock_client
-    async with Client(mcp) as client:
-        await _warm_session(client, mock_client)
-        assert cached_session_ids() == {"test-session-id"}
-        result = (await client.call_tool("delete_compute_session", {"session_id": "test-session-id"})).data
+    with patch("sas_mcp_server.tools.compute.resolve_user_id", AsyncMock(return_value="alice")):
+        async with Client(mcp) as client:
+            await _warm_session(client, mock_client)
+            assert cached_session_ids() == {"test-session-id"}
+            mock_client.get.return_value = _session_owned_by("alice")
+            result = (await client.call_tool("delete_compute_session", {"session_id": "test-session-id"})).data
 
+    assert mock_client.get.call_args[0][0].endswith("/compute/sessions/test-session-id")
     assert mock_client.delete.call_args[0][0].endswith("/compute/sessions/test-session-id")
     assert result == {"status": "deleted", "session_id": "test-session-id", "was_cached_session": True}
     assert cached_session_ids() == set()
 
 
-async def test_delete_compute_session_of_another_session(mcp_server_with_mock_client):
+async def test_delete_compute_session_refuses_another_users_session(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
-    async with Client(mcp) as client:
-        result = (await client.call_tool("delete_compute_session", {"session_id": "job-session"})).data
+    mock_client.get.return_value = _session_owned_by("bob")
+    with patch("sas_mcp_server.tools.compute.resolve_user_id", AsyncMock(return_value="alice")):
+        async with Client(mcp) as client:
+            result = (await client.call_tool("delete_compute_session", {"session_id": "job-session"})).data
+    assert result["status"] == "refused"
+    assert result["reason"] == "not_your_session"
+    assert result["owner"] == "bob"
+    assert "all_users=true" in result["message"]
+    mock_client.delete.assert_not_called()
+
+
+async def test_delete_compute_session_refuses_when_the_caller_is_unknown(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value = _session_owned_by("alice")
+    with patch("sas_mcp_server.tools.compute.resolve_user_id", AsyncMock(return_value=None)):
+        async with Client(mcp) as client:
+            result = (await client.call_tool("delete_compute_session", {"session_id": "s"})).data
+    assert result["status"] == "refused"
+    mock_client.delete.assert_not_called()
+
+
+async def test_delete_another_users_session_with_all_users(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    lookup = AsyncMock(return_value="alice")
+    with patch("sas_mcp_server.tools.compute.resolve_user_id", lookup):
+        async with Client(mcp) as client:
+            result = (
+                await client.call_tool("delete_compute_session", {"session_id": "job-session", "all_users": True})
+            ).data
+    mock_client.get.assert_not_called()
+    lookup.assert_not_awaited()
     assert mock_client.delete.call_args[0][0].endswith("/compute/sessions/job-session")
     assert result["status"] == "deleted"
     assert result["was_cached_session"] is False
@@ -4088,19 +4167,22 @@ async def test_delete_compute_session_of_another_session(mcp_server_with_mock_cl
 @pytest.mark.parametrize(("code", "expected"), [(202, "pending"), (404, "not_found")])
 async def test_delete_cached_session_reports_actual_outcome(mcp_server_with_mock_client, code, expected):
     mcp, mock_client = mcp_server_with_mock_client
-    async with Client(mcp) as client:
-        await _warm_session(client, mock_client)
-        mock_client.delete.return_value = _make_mock_response(status_code=code)
-        result = (await client.call_tool("delete_compute_session", {"session_id": "test-session-id"})).data
+    with patch("sas_mcp_server.tools.compute.resolve_user_id", AsyncMock(return_value="alice")):
+        async with Client(mcp) as client:
+            await _warm_session(client, mock_client)
+            mock_client.get.return_value = _session_owned_by("alice")
+            mock_client.delete.return_value = _make_mock_response(status_code=code)
+            result = (await client.call_tool("delete_compute_session", {"session_id": "test-session-id"})).data
     assert result == {"status": expected, "session_id": "test-session-id", "was_cached_session": True}
 
 
 async def test_delete_compute_session_already_gone(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
-    mock_client.delete.return_value = _not_found()
+    mock_client.get.return_value = _not_found()
     async with Client(mcp) as client:
         result = (await client.call_tool("delete_compute_session", {"session_id": "gone"})).data
     assert result["status"] == "not_found"
+    mock_client.delete.assert_not_called()
 
 
 async def test_delete_compute_session_passes_other_errors_through(mcp_server_with_mock_client):
@@ -4111,7 +4193,9 @@ async def test_delete_compute_session_passes_other_errors_through(mcp_server_wit
     )
     mock_client.delete.return_value = forbidden
     async with Client(mcp) as client:
-        result = await client.call_tool("delete_compute_session", {"session_id": "s"}, raise_on_error=False)
+        result = await client.call_tool(
+            "delete_compute_session", {"session_id": "s", "all_users": True}, raise_on_error=False
+        )
     assert result.is_error
 
 
@@ -4149,7 +4233,9 @@ async def test_workbench_description_states_the_session_limits():
 
     register_tools(mcp, get_token, tiers="8")
     async with Client(mcp) as client:
-        (tool,) = await client.list_tools()
+        tools = {t.name: t for t in await client.list_tools()}
+    assert set(tools) == {"execute_sas_code", "server_status"}
+    tool = tools["execute_sas_code"]
     assert "one job at a time" in tool.description
     assert "MERGE" in tool.description
 

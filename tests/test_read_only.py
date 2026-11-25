@@ -99,6 +99,7 @@ async def test_composes_with_tier_selection():
         "get_report_outline",
         "describe_report_objects",
         "export_report",
+        "server_status",  # every tier selection gets it, and it is read-only
     }
 
 

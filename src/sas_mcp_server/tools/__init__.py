@@ -25,7 +25,7 @@ from typing import Any, cast
 
 from fastmcp import Context, FastMCP
 
-from ..config import MCP_APPS, MCP_READ_ONLY, MCP_TIERS, SAS_MCP_EXPECT_HOST, VIYA_ENDPOINT
+from ..config import MCP_APPS, MCP_EXPECT_HOST, MCP_READ_ONLY, MCP_TIERS, VIYA_ENDPOINT
 from ..exceptions import ConfigError
 from ..helpers.telemetry_helpers import server_version
 from ..ui import app_config, fingerprint, register_views
@@ -233,7 +233,7 @@ def register_tools(
             does not match ``VIYA_ENDPOINT``, every tool that is not read-only
             refuses with a structured error (see
             :class:`~sas_mcp_server.tools._access.HostGuardMiddleware`). ``None``
-            uses the ``SAS_MCP_EXPECT_HOST`` env var; empty means no check.
+            uses the ``MCP_EXPECT_HOST`` env var; empty means no check.
     """
     enabled = resolve_enabled_tiers(tiers)
     ro = MCP_READ_ONLY if read_only is None else bool(read_only)
@@ -252,13 +252,13 @@ def register_tools(
             "flow, and listing, reading, locking, copying or deleting them, needs Tier %d: add %d to MCP_TIERS.",
             DECISIONING_ADVANCED, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION,
         )
-    expected = SAS_MCP_EXPECT_HOST if expect_host is None else expect_host.strip()
+    expected = MCP_EXPECT_HOST if expect_host is None else expect_host.strip()
     check = host_check(VIYA_ENDPOINT, expected)
     if expected:
         mcp.add_middleware(HostGuardMiddleware(check))
         if check["matches"] is False:
             logger.warning(
-                "Connected to %s but SAS_MCP_EXPECT_HOST is %s: tools that write or run code will refuse.",
+                "Connected to %s but MCP_EXPECT_HOST is %s: tools that write or run code will refuse.",
                 check["connected_host"], expected,
             )
     seen: list[str] = []
@@ -266,14 +266,16 @@ def register_tools(
     # One fingerprint for the whole registration: the tools advertise it in
     # their view URIs and the views are published under it (see ui.fingerprint).
     fp = fingerprint(version, enabled, ro) if with_apps else None
+    # server_status describes the server itself, not compute, so every tier
+    # selection gets it. TOOL_TIERS lists it under Tier 0, as the README does.
+    status_recorder = _TierRecorder(target, 0, apps=with_apps, seen=seen, fingerprint=fp)
+    compute.register_status(cast(FastMCP, status_recorder), get_token, check)
     for tier in sorted(enabled):
         # Tier 8's sole tool is already included when Tier 0 is enabled.
         if tier == 8 and 0 in enabled:
             continue
         # Wrapped per tier so TOOL_TIERS learns the tier each tool came from.
         recorder = _TierRecorder(target, tier, apps=with_apps, seen=seen, fingerprint=fp)
-        if tier == 0:
-            compute.register_status(cast(FastMCP, recorder), get_token, check)
         _TIER_REGISTRARS[tier](cast(FastMCP, recorder), get_token)
     if gate is not None:
         logger.info(

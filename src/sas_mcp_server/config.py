@@ -127,10 +127,10 @@ COMPUTE_SESSION_ID = os.getenv("COMPUTE_SESSION_ID", "").strip()
 # with a structured error and read tools keep working, so the mismatch can be
 # diagnosed but nothing is written to the wrong deployment. A port is compared
 # only when the value names one. See sas_mcp_server.tools._access.
-SAS_MCP_EXPECT_HOST = os.getenv("SAS_MCP_EXPECT_HOST", "").strip()
+MCP_EXPECT_HOST = os.getenv("MCP_EXPECT_HOST", "").strip()
 # Name of the environment profile that started this server (default: unset).
 # Reported by the server_status tool, nothing else reads it.
-SAS_MCP_PROFILE = os.getenv("SAS_MCP_PROFILE", "").strip()
+MCP_PROFILE = os.getenv("MCP_PROFILE", "").strip()
 # Optional tool-tier selection, e.g. "0-4" or "0,1,7". Empty means all tiers.
 # Parsed by sas_mcp_server.tools.resolve_enabled_tiers.
 MCP_TIERS = os.getenv("MCP_TIERS", "")

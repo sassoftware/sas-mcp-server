@@ -94,7 +94,7 @@ def test_host_check_names_a_non_default_port():
 async def test_server_status_reports_endpoint_user_and_token_expiry(monkeypatch):
     monkeypatch.setattr(tools, "VIYA_ENDPOINT", "https://hc-build.example.com")
     monkeypatch.setattr(compute, "VIYA_ENDPOINT", "https://hc-build.example.com")
-    monkeypatch.setattr(compute, "SAS_MCP_PROFILE", "hc-build")
+    monkeypatch.setattr(compute, "MCP_PROFILE", "hc-build")
     exp = int(time.time()) + 3600
     token = make_jwt({"sub": "u1", "exp": exp})
     mcp, _ = await _server(token, expect_host="hc-build.example.com")
@@ -117,7 +117,7 @@ async def test_server_status_reports_endpoint_user_and_token_expiry(monkeypatch)
 
 
 async def test_server_status_without_a_token_still_names_the_endpoint(monkeypatch):
-    monkeypatch.setattr(compute, "SAS_MCP_PROFILE", "")
+    monkeypatch.setattr(compute, "MCP_PROFILE", "")
     mcp = FastMCP("status-test")
 
     async def get_token(ctx):
@@ -151,7 +151,7 @@ async def test_wrong_host_refuses_writes_without_requesting_a_token(monkeypatch)
             assert refusal["tool"] == tool
             assert refusal["expected_host"] == "hc-build.example.com"
             assert refusal["connected_host"] == host_check(tools.VIYA_ENDPOINT, None)["connected_host"]
-            assert refusal["gated_by"] == "SAS_MCP_EXPECT_HOST"
+            assert refusal["gated_by"] == "MCP_EXPECT_HOST"
     assert calls == []  # nothing was sent to SAS Viya
 
 
@@ -331,3 +331,12 @@ async def test_short_lifetime_warning_identifies_the_already_submitted_job():
     assert job["id"] == "job-1"
     assert "Monitor the submitted job" in job["token_lifetime"]["warning"]
     assert "resubmit" not in job["token_lifetime"]["warning"]
+
+
+@pytest.mark.parametrize("tiers", ["0", "3", "9"])
+async def test_every_tier_selection_gets_server_status(tiers):
+    mcp, _ = await _server("t", tiers=tiers)
+    async with Client(mcp) as client:
+        names = {t.name for t in await client.list_tools()}
+    assert "server_status" in names
+    assert tools.TOOL_TIERS["server_status"] == 0

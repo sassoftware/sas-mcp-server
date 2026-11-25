@@ -256,7 +256,7 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "submit_batch_job",  # arbitrary code
         "reset_compute_session",  # destroys the caller's session
         "delete_compute_session",  # ends a session and any job running in it
-        "cancel_job",  # kills a running job
+        "cancel_job",  # deletes the job record
         "delete_report",
         "delete_business_ruleset",
         "delete_business_rule",
@@ -487,12 +487,12 @@ def host_mismatch_refusal(tool: str, check: dict[str, Any]) -> dict[str, Any]:
         "tool": tool,
         "connected_host": check["connected_host"],
         "expected_host": check["expected_host"],
-        "gated_by": "SAS_MCP_EXPECT_HOST",
+        "gated_by": "MCP_EXPECT_HOST",
         "message": (
-            f"This server is connected to {check['connected_host']}, but SAS_MCP_EXPECT_HOST says "
+            f"This server is connected to {check['connected_host']}, but MCP_EXPECT_HOST says "
             f"{check['expected_host']}. Tools that write or run code are refused so nothing reaches "
             "the wrong deployment; read tools still work. Restart the server against the right "
-            "environment, or correct SAS_MCP_EXPECT_HOST. Do not retry this call."
+            "environment, or correct MCP_EXPECT_HOST. Do not retry this call."
         ),
     }
 

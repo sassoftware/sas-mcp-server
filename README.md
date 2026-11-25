@@ -203,12 +203,12 @@ Classification is fail-closed: a tool that is not explicitly classified as read-
 
 ### Expected-host check
 
-A launcher that runs one server per environment can point it at the wrong one, and a job then runs on a deployment nobody meant to touch. Set `SAS_MCP_EXPECT_HOST` to the host the server should reach (`hc-build.example.com`, or a URL). If it does not match the host of `VIYA_ENDPOINT`, every tool that is not read-only returns this instead of running, and asks SAS Viya for nothing:
+A launcher that runs one server per environment can point it at the wrong one, and a job then runs on a deployment nobody meant to touch. Set `MCP_EXPECT_HOST` to the host the server should reach (`hc-build.example.com`, or a URL). If it does not match the host of `VIYA_ENDPOINT`, every tool that is not read-only returns this instead of running, and asks SAS Viya for nothing:
 
 ```json
 {"status": "refused", "reason": "unexpected_host", "tool": "submit_batch_job",
  "connected_host": "other.example.com", "expected_host": "hc-build.example.com",
- "gated_by": "SAS_MCP_EXPECT_HOST", "message": "..."}
+ "gated_by": "MCP_EXPECT_HOST", "message": "..."}
 ```
 
 Read tools keep working, so `server_status` and the list and get tools can show what the server is connected to. The check uses the read-only classification above: a tool outside the read-only set is refused. Host names are compared without case, and ports only when the value names one. Unset (the default), nothing is checked. For the check to catch a wrong environment, the launcher has to set the variable from a different source than the one that chose `VIYA_ENDPOINT`, for example from the project's own setting.
@@ -271,10 +271,10 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 #### Tier 0 — Compute Contexts & Code Execution
 - **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output), plus a link to the [HTML results](#html-results) unless `html_results=false`. Runs in a reusable, per-user compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls — use **reset_compute_session** to start fresh. The code goes in `sas_code`; `code` is accepted too, here and in `submit_batch_job`, because agents reach for it. The session runs one job at a time, so a long job blocks the next call; `submit_batch_job` runs in a session of its own. Its memory is capped by the deployment's compute pod, and a PROC SQL join or hash object can exhaust it where a sorted DATA step MERGE does not.
 - **list_compute_contexts**: List available compute contexts
-- **server_status**: Name the SAS Viya endpoint this server talks to, the environment profile that started it (`SAS_MCP_PROFILE`), the user its token belongs to, when the token expires and whether the server can renew it, and the result of the [expected-host check](#expected-host-check). It returns no secrets. Read-only, so it works when the check refuses writes
+- **server_status**: Name the SAS Viya endpoint this server talks to, the environment profile that started it (`MCP_PROFILE`), the user its token belongs to, when the token expires and whether the server can renew it, and the result of the [expected-host check](#expected-host-check). It returns no secrets. Read-only, so it works when the check refuses writes, and registered with every tier selection, so `MCP_TIERS` cannot leave it out
 - **reset_compute_session**: Delete the cached compute session for a context, discarding its SAS state and forcing a fresh session on the next call
-- **list_compute_sessions**: Inspect sessions visible to the caller, including their owner, state, and whether this server caches them.
-- **delete_compute_session**: Request deletion of a session by ID. Viya reports pending when current work must finish first.
+- **list_compute_sessions**: List your own compute sessions, with each one's state, the compute context it was started from, and whether this server keeps it warm for `execute_sas_code`. With `all_users=true` it lists every session SAS Viya lets the caller see, which includes other users' sessions only for an administrator.
+- **delete_compute_session**: End one of your compute sessions and whatever runs in it, a batch job included. Another user's session is refused unless the call passes `all_users=true`. Viya reports `pending` while the session finishes its current work.
 
 #### Tier 1 — Data Discovery
 *SAS Data Governance (metadata discovery & profiling):*
