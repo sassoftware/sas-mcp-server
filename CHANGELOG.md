@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.23.0] - 2026-11-25
 
 ### Added
 - **`server_status`** (#81) (Tier 0, read-only, registered with every tier selection) names the SAS Viya endpoint and host the server talks to, the environment profile that started it (`MCP_PROFILE`), the user its token belongs to, the token's expiry and seconds left, and whether the server can renew it. It returns no part of the token.
@@ -16,6 +16,11 @@
 - **Compute-backed tools run in the compute context you configured.** (#79) The server looked the context up with `?name=`, which the Compute API does not accept, so it got the first ten contexts on the tenant and used whichever came first. On one tenant that was "PIP Agent compute context", and a client-credentials caller got a 403 even with "SAS Job Execution compute context" configured. The lookup now filters with `eq(name,"...")` and takes only a context whose name matches exactly, so a response that ignores the filter, or lists a context with no name, cannot hand back the wrong one.
 - `cancel_job` (#80) reports that it deleted the job record. The compute session may still be running.
 - `get_job_status` (#80) returns `not_found` when Job Execution has no record for the requested ID.
+
+### Upgrading
+- **Compute-backed tools may now run in a different compute context.** (#79) They run in `COMPUTE_CONTEXT_NAME` (default "SAS Job Execution compute context") as configured. Before, they ran in whichever context Viya listed first. Code that only worked because of that context's settings, such as its autoexec or librefs, needs `COMPUTE_CONTEXT_NAME` set to that context.
+- **`get_job_status` returns `status: not_found` for a missing job** (#80) instead of failing with HTTP 404.
+- **`server_status` appears with every `MCP_TIERS` selection** (#81). A deployment with an explicit `MCP_TIERS` that includes Tier 0 also gets `list_compute_sessions` and `delete_compute_session`; `MCP_READ_ONLY=true` withholds `delete_compute_session`.
 
 ## [1.22.0] - 2026-11-23
 
