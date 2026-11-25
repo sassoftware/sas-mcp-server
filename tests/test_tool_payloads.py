@@ -1524,7 +1524,8 @@ async def test_list_jobs_request(mcp_server_with_mock_client):
 async def test_cancel_job_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
     async with Client(mcp) as client:
-        await client.call_tool("cancel_job", {"job_id": "job-789"})
+        result = (await client.call_tool("cancel_job", {"job_id": "job-789"})).data
+    assert result == "Deleted the record for job job-789. Its compute session may still be running."
 
     url = mock_client.delete.call_args[0][0]
     assert "/jobExecution/jobs/job-789" in url
@@ -3918,3 +3919,33 @@ async def test_get_compute_table_data_request(mcp_server_with_mock_client):
     assert result.data["count"] == 19
     assert result.data["truncated"] is True, "5 + 2 rows read of 19"
     assert result.data["column_types"] == {"Name": "char", "Age": "num"}
+
+
+def _not_found():
+    missing = _make_mock_response(status_code=404)
+    missing.content = b""
+    missing.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=missing)
+    )
+    return missing
+
+
+async def test_get_job_status_missing_record(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value = _not_found()
+    async with Client(mcp) as client:
+        result = (await client.call_tool("get_job_status", {"job_id": "job-789"})).data
+    assert result["status"] == "not_found"
+    assert result["job_id"] == "job-789"
+
+
+async def test_get_job_status_passes_other_errors_through(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    forbidden = _make_mock_response(status_code=403)
+    forbidden.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError("403", request=MagicMock(), response=forbidden)
+    )
+    mock_client.get.return_value = forbidden
+    async with Client(mcp) as client:
+        result = await client.call_tool("get_job_status", {"job_id": "job-789"}, raise_on_error=False)
+    assert result.is_error

@@ -188,6 +188,13 @@
     clearTimeout(pollTimer);
     try {
       job = await sas.call("get_job_status", { job_id: id });
+      if (job.status === "not_found") {
+        badge("Record missing");
+        $("log").textContent = job.message;
+        $("refresh").hidden = true;
+        sas.busy(false);
+        return;
+      }
       renderJob(job);
       badge(job.state);
       if (TERMINAL.has(String(job.state))) {

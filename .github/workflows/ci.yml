@@ -33,6 +33,9 @@ jobs:
       - name: Type check (pyright)
         run: uv run pyright src
 
+      - name: Job viewer regression test
+        run: node --test tests/test_job_view.mjs
+
       - name: Unit tests
         env:
           VIYA_ENDPOINT: https://ci.invalid.example.com

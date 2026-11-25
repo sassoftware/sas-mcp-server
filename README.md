@@ -314,9 +314,9 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 
 #### Tier 4 — Batch Jobs & Async Execution
 - **submit_batch_job**: Submit a SAS job for async execution
-- **get_job_status**: Check job state
+- **get_job_status**: Check job state. A missing record returns `not_found` and the requested job ID
 - **list_jobs**: List recent/running jobs
-- **cancel_job**: Cancel a running job
+- **cancel_job**: Delete the job record. Its compute session may still be running
 - **get_job_log**: Retrieve job log
 
 #### Tier 5 — Automated Machine Learning

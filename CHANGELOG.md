@@ -4,6 +4,8 @@
 
 ### Fixed
 - **Compute-backed tools run in the compute context you configured.** (#79) The server looked the context up with `?name=`, which the Compute API does not accept, so it got the first ten contexts on the tenant and used whichever came first. On one tenant that was "PIP Agent compute context", and a client-credentials caller got a 403 even with "SAS Job Execution compute context" configured. The lookup now filters with `eq(name,"...")` and takes only a context whose name matches exactly, so a response that ignores the filter, or lists a context with no name, cannot hand back the wrong one.
+- `cancel_job` (#80) reports that it deleted the job record. The compute session may still be running.
+- `get_job_status` (#80) returns `not_found` when Job Execution has no record for the requested ID.
 
 ## [1.22.0] - 2026-11-23
 

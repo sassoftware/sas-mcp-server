@@ -6,6 +6,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import httpx
 from fastmcp import Context, FastMCP
 
 from ..config import CONTEXT_NAME, VIYA_ENDPOINT
@@ -48,13 +49,22 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
     @mcp.tool()
     async def get_job_status(job_id: str, ctx: Context) -> dict[str, Any]:
-        """Check the status of a submitted job.
+        """Check job state. A missing record returns status="not_found" and the requested job ID.
 
         Args:
             job_id: ID of the job.
         """
         async with viya_session("get_job_status", ctx) as client:
-            return await get_json(f"/jobExecution/jobs/{job_id}", client)
+            try:
+                return await get_json(f"/jobExecution/jobs/{job_id}", client)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+                return {
+                    "status": "not_found",
+                    "job_id": job_id,
+                    "message": "Job Execution has no record with this ID. It may have expired or been deleted.",
+                }
 
     @mcp.tool()
     async def list_jobs(ctx: Context, limit: int = 20) -> list[dict[str, Any]]:
@@ -69,14 +79,14 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
     @mcp.tool()
     async def cancel_job(job_id: str, ctx: Context) -> str:
-        """Cancel a running job.
+        """Delete the Job Execution record. The compute session may still be running.
 
         Args:
             job_id: ID of the job to cancel.
         """
         async with viya_session("cancel_job", ctx) as client:
             await delete_resource(f"/jobExecution/jobs/{job_id}", client)
-            return f"Job {job_id} cancelled."
+            return f"Deleted the record for job {job_id}. Its compute session may still be running."
 
     @mcp.tool()
     async def get_job_log(job_id: str, ctx: Context) -> str:
