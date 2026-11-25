@@ -5,6 +5,12 @@ Reads VIYA_ENDPOINT, CLIENT_ID, HOST_PORT and MCP_BASE_URL from the
 environment (or .env). Set VIYA_USERNAME and VIYA_PASSWORD to run without
 prompts. Use --dry-run to see exactly what would be registered first.
 
+With --target posit-connect, posit-workbench or posit (both), it registers the
+SAS Logon clients for Posit instead: the confidential client behind Posit
+Connect's OAuth integration (deploy/POSIT-CONNECT.md) and the one behind Posit
+Workbench's. Those targets read the variable names of the sas-posit-env
+.env file (--env-file), so one file configures Viya and the Posit products.
+
 This deletes and re-creates the client, which is privileged and briefly leaves
 the deployment without one, so it is a deliberate manual step -- the running
 server never does it.
@@ -14,12 +20,16 @@ import argparse
 import getpass
 import json
 import os
+import secrets
 import ssl
 import sys
 import tempfile
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from textwrap import indent
+from urllib.parse import urlsplit
 
 import httpx
 from dotenv import load_dotenv
@@ -69,6 +79,147 @@ else:
 
 # The path the server actually serves its OAuth callback on.
 CALLBACK_PATH = "/auth/callback"
+
+# --- Posit targets ------------------------------------------------------------
+# Connect and Workbench are confidential OAuth clients of SAS Logon (they hold
+# a client secret and keep each user's grant), unlike this server's own public
+# PKCE client. The variable names and defaults match sas-posit-env's .env, so
+# that file can be passed with --env-file.
+POSIT_TARGETS = ("posit-connect", "posit-workbench")
+TARGET_CHOICES = ("mcp", "posit", *POSIT_TARGETS)
+# Workbench requests these by default (comma-separated); Connect requests the
+# same set space-separated. The client must allow every scope requested.
+DEFAULT_POSIT_SCOPES = "openid,sas-compute.user_impersonation"
+
+
+@dataclass(frozen=True)
+class PositProduct:
+    """Where one Posit product's settings live and what its callback is."""
+
+    target: str
+    name: str
+    id_var: str
+    default_id: str
+    secret_var: str
+    url_var: str
+    default_url: str
+    callback_path: str
+
+
+POSIT_PRODUCTS = {
+    "posit-connect": PositProduct(
+        target="posit-connect",
+        name="Posit Connect",
+        id_var="CONNECT_VIYA_CLIENT_ID",
+        default_id="posit-connect",
+        secret_var="CONNECT_VIYA_CLIENT_SECRET",
+        url_var="POSIT_CONNECT_URL",
+        default_url="http://localhost:3939",
+        callback_path="/__oauth__/integrations/callback",
+    ),
+    "posit-workbench": PositProduct(
+        target="posit-workbench",
+        name="Posit Workbench",
+        id_var="WORKBENCH_VIYA_CLIENT_ID",
+        default_id="posit-workbench",
+        secret_var="WORKBENCH_VIYA_CLIENT_SECRET",
+        url_var="POSIT_WORKBENCH_URL",
+        default_url="http://localhost:8787",
+        callback_path="/oauth_redirect_callback",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class PositClient:
+    """One confidential client to register, resolved from the environment."""
+
+    product: PositProduct
+    client_id: str
+    secret: str
+    secret_generated: bool
+    redirect_uri: list[str]
+
+
+def env_value(env: Mapping[str, str], name: str) -> str:
+    """A setting, treating a commented-out placeholder like an empty one."""
+    value = env.get(name, "").strip()
+    return "" if value.startswith("#") else value
+
+
+def posit_scopes(env: Mapping[str, str]) -> list[str]:
+    """The scopes to allow, from VIYA_SCOPES (comma-separated) or the default."""
+    raw = env_value(env, "VIYA_SCOPES") or DEFAULT_POSIT_SCOPES
+    scopes: list[str] = []
+    for scope in raw.replace(" ", ",").split(","):
+        if scope and scope not in scopes:
+            scopes.append(scope)
+    return scopes
+
+
+def posit_endpoint(env: Mapping[str, str]) -> str:
+    """The Viya URL: https://VIYA_HOSTNAME (sas-posit-env), else VIYA_ENDPOINT."""
+    hostname = env_value(env, "VIYA_HOSTNAME")
+    if hostname:
+        if "://" not in hostname:
+            hostname = f"https://{hostname}"
+        return hostname.rstrip("/")
+    return env_value(env, "VIYA_ENDPOINT").rstrip("/")
+
+
+def resolve_posit_clients(
+    targets: list[str], env: Mapping[str, str], extra_redirect_uris: list[str] | None = None
+) -> list[PositClient]:
+    """The clients to register. A secret that is not set is generated."""
+    clients = []
+    for target in targets:
+        product = POSIT_PRODUCTS[target]
+        base_url = (env_value(env, product.url_var) or product.default_url).rstrip("/")
+        uris: list[str] = []
+        for uri in (f"{base_url}{product.callback_path}", *(extra_redirect_uris or [])):
+            if uri.strip() and uri.strip() not in uris:
+                uris.append(uri.strip())
+        secret = env_value(env, product.secret_var)
+        clients.append(
+            PositClient(
+                product=product,
+                client_id=env_value(env, product.id_var) or product.default_id,
+                secret=secret or secrets.token_urlsafe(32),
+                secret_generated=not secret,
+                redirect_uri=uris,
+            )
+        )
+    return clients
+
+
+def posit_client_payload(client: PositClient, scopes: list[str], *, show_secret: bool = True) -> dict:
+    """The body sent to POST /oauth/clients for a confidential Posit client."""
+    if show_secret:
+        secret = client.secret
+    elif client.secret_generated:
+        secret = "<generated at registration>"
+    else:
+        secret = f"<from {client.product.secret_var}>"
+    return {
+        "client_id": client.client_id,
+        "client_secret": secret,
+        "scope": scopes,
+        "authorized_grant_types": ["authorization_code", "refresh_token"],
+        "redirect_uri": client.redirect_uri,
+        "autoapprove": True,
+    }
+
+
+def callback_origins(uris: list[str]) -> list[str]:
+    """The scheme://host[:port] of each URI, for SAS Logon's CSP form-action."""
+    origins: list[str] = []
+    for uri in uris:
+        parts = urlsplit(uri)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        if parts.netloc and origin not in origins:
+            origins.append(origin)
+    return origins
+
 
 # Fields SASLogon accepts on POST /oauth/clients that are worth carrying over
 # when rebuilding a client from its previous definition. GET never returns
@@ -208,11 +359,19 @@ def back_up_client(existing: dict) -> Path | None:
 def print_restore_hint(base_url: str, existing: dict, backup: Path | None) -> None:
     """Print exactly how to put the previous definition back."""
     payload = {field: existing[field] for field in RESTORE_FIELDS if field in existing}
+    confidential = not existing.get("allowpublic")
+    if confidential:
+        # GET never returns the secret, so a confidential client can only be
+        # put back with the secret its consumers (e.g. Posit) already hold.
+        payload["client_secret"] = "<the previous client secret>"
     print("\nTo restore the previous registration, get an admin token and run:\n")
     print(f'  curl -X POST "{base_url}/SASLogon/oauth/clients" \\')
     print('    -H "Content-Type: application/json" \\')
     print('    -H "Authorization: Bearer $BEARER_TOKEN" \\')
     print(f"    -d '{json.dumps(payload)}'")
+    if confidential:
+        print("\nViya never returns a client secret, so replace the placeholder with the")
+        print("secret the client's users are configured with.")
     if backup:
         print(f"\nThe same definition is saved at {backup}")
 
@@ -284,7 +443,7 @@ def client_payload(client_id: str, redirect_uri: list[str]) -> dict:
     }
 
 
-def register_client(base_url: str, token: str, client_id: str, redirect_uri: list[str]):
+def register_client(base_url: str, token: str, payload: dict):
     """Register a new OAuth client with SASLogon."""
     resp = httpx.post(
         f"{base_url}/SASLogon/oauth/clients",
@@ -292,18 +451,21 @@ def register_client(base_url: str, token: str, client_id: str, redirect_uri: lis
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
-        json=client_payload(client_id, redirect_uri),
+        json=payload,
         verify=ssl_context,
     )
     resp.raise_for_status()
-    print(f"Client '{client_id}' registered successfully.")
-    for uri in redirect_uri:
+    print(f"Client '{payload['client_id']}' registered successfully.")
+    for uri in payload["redirect_uri"]:
         print(f"  Redirect URI: {uri}")
-    print("  Scopes: openid")
-    print("  Grant types: authorization_code, refresh_token")
+    print(f"  Scopes: {', '.join(payload['scope'])}")
+    print(f"  Grant types: {', '.join(payload['authorized_grant_types'])}")
+    print(f"  Type: {'public (PKCE)' if payload.get('allowpublic') else 'confidential (client secret)'}")
 
 
-def verify_registration(base_url: str, token: str, client_id: str, expected: list[str]) -> bool:
+def verify_registration(
+    base_url: str, token: str, client_id: str, expected: list[str], scopes: list[str] | None = None
+) -> bool:
     """Read the client back and check Viya stored what was asked for.
 
     Printing the fields is not enough. The failure this guards against is Viya
@@ -337,6 +499,15 @@ def verify_registration(base_url: str, token: str, client_id: str, expected: lis
         print("  registered values' until they are registered.")
         return False
 
+    stored_scopes = client_data.get("scope") or []
+    if isinstance(stored_scopes, str):
+        stored_scopes = [stored_scopes]
+    missing_scopes = [scope for scope in (scopes or []) if scope not in stored_scopes]
+    if missing_scopes:
+        print(f"\n  FAIL: Viya did not store these scopes: {', '.join(missing_scopes)}")
+        print("  Sign-in fails with 'invalid_scope' while a client requests them.")
+        return False
+
     if client_data.get("access_token_validity") is None:
         print("\n  Note: Viya reported no access_token_validity, so its default applies.")
 
@@ -346,8 +517,27 @@ def verify_registration(base_url: str, token: str, client_id: str, expected: lis
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Register (or re-register) the MCP server's OAuth client in SAS Viya.",
-        epilog="Set VIYA_USERNAME and VIYA_PASSWORD to run without prompts.",
+        description="Register (or re-register) the MCP server's OAuth client in SAS Viya, "
+        "or the SAS Logon clients for Posit Connect and Posit Workbench.",
+        epilog="Set VIYA_USERNAME and VIYA_PASSWORD to run without prompts. If Viya uses a "
+        "private certificate authority, set SSL_CERT_FILE to a PEM file with its certificate.",
+    )
+    parser.add_argument(
+        "--target",
+        choices=TARGET_CHOICES,
+        default="mcp",
+        help="What to register: mcp (default) is this server's own public client (CLIENT_ID). "
+        "posit-connect and posit-workbench are the confidential clients behind the Posit OAuth "
+        "integrations, posit registers both. The posit targets read CONNECT_/WORKBENCH_VIYA_CLIENT_ID "
+        "and _SECRET (a missing secret is generated), POSIT_CONNECT_URL / POSIT_WORKBENCH_URL "
+        "(default: localhost:3939 / :8787), VIYA_SCOPES and VIYA_HOSTNAME or VIYA_ENDPOINT.",
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        metavar="PATH",
+        help="Also read settings from this file, e.g. sas-posit-env's .env. Variables already set "
+        "in the environment win. Posit targets only.",
     )
     parser.add_argument(
         "--dry-run",
@@ -360,9 +550,148 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="URI",
-        help="An additional full redirect URI to register. Repeatable. Adds to MCP_EXTRA_REDIRECT_URIS.",
+        help="An additional full redirect URI to register. Repeatable. Adds to MCP_EXTRA_REDIRECT_URIS. "
+        "With a posit target, only together with posit-connect or posit-workbench.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.env_file and args.target == "mcp":
+        parser.error("--env-file applies to the posit targets only; the mcp target reads .env.")
+    if args.redirect_uri and args.target == "posit":
+        parser.error(
+            "--redirect-uri is ambiguous with --target posit; register posit-connect and posit-workbench separately."
+        )
+    if args.env_file and not args.env_file.is_file():
+        parser.error(f"--env-file {args.env_file} does not exist.")
+    return args
+
+
+def authenticate(base_url: str) -> str | None:
+    """Prompt for (or read) admin credentials and return a bearer token."""
+    credentials = get_credentials()
+    if credentials is None:
+        return None
+    username, password = credentials
+
+    print("\nAuthenticating...")
+    try:
+        token = get_bearer_token(base_url, username, password)
+    except httpx.HTTPError as exc:
+        print(f"Authentication failed: {http_detail(exc)}")
+        return None
+    print("Authenticated successfully.\n")
+    return token
+
+
+def replace_client(
+    base_url: str, token: str, payload: dict, expected: list[str], scopes: list[str] | None = None
+) -> bool:
+    """Back up, delete, re-create and verify one client. True on success."""
+    client_id = payload["client_id"]
+    # Registering means deleting and re-creating the client, so a failure part
+    # way through leaves the deployment with no client at all and nobody able
+    # to sign in. This read is the only chance to record what to put back.
+    try:
+        existing = fetch_client(base_url, token, client_id)
+    except httpx.HTTPError as exc:
+        print(f"Could not read the existing client: {http_detail(exc)}")
+        return False
+
+    backup = None
+    if existing is None:
+        print(f"No existing client '{client_id}'; registering a new one.\n")
+    else:
+        print(f"Current registration for '{client_id}' (about to be replaced):")
+        print(indent(json.dumps(existing, indent=2), "  "))
+        backup = back_up_client(existing)
+        if backup:
+            print(f"  Backed up to {backup}")
+        print()
+
+    try:
+        delete_client(base_url, token, client_id)
+    except httpx.HTTPError as exc:
+        print(f"Could not delete the existing client: {http_detail(exc)}")
+        print("Nothing was changed.")
+        return False
+
+    try:
+        register_client(base_url, token, payload)
+    except httpx.HTTPError as exc:
+        print(f"\nRegistration FAILED: {http_detail(exc)}")
+        if existing is not None:
+            print(
+                f"\nThe old client was already deleted, so '{client_id}' does not exist "
+                "right now\nand nobody can sign in until it is registered again."
+            )
+            print_restore_hint(base_url, existing, backup)
+        return False
+
+    return verify_registration(base_url, token, client_id, expected, scopes)
+
+
+def main_posit(args: argparse.Namespace) -> int:
+    """Register the confidential SAS Logon clients for Posit Connect / Workbench."""
+    if args.env_file:
+        load_dotenv(args.env_file, override=False)
+    env = os.environ
+    targets = list(POSIT_TARGETS) if args.target == "posit" else [args.target]
+
+    base_url = posit_endpoint(env)
+    if not base_url:
+        print("Error: set VIYA_HOSTNAME (as in sas-posit-env's .env) or VIYA_ENDPOINT.")
+        return 1
+    hostname, endpoint = env_value(env, "VIYA_HOSTNAME"), env_value(env, "VIYA_ENDPOINT").rstrip("/")
+    if hostname and endpoint and endpoint != base_url:
+        print(f"Note: VIYA_HOSTNAME wins over VIYA_ENDPOINT ({endpoint}).")
+
+    scopes = posit_scopes(env)
+    clients = resolve_posit_clients(targets, env, args.redirect_uri)
+    print(f"Viya endpoint: {base_url}")
+    print(f"Scopes: {', '.join(scopes)}")
+    for client in clients:
+        print(f"\n{client.product.name}: client '{client.client_id}' (confidential)")
+        for uri in client.redirect_uri:
+            print(f"  Redirect URI: {uri}")
+        if client.secret_generated:
+            print(f"  {client.product.secret_var} is not set; a secret will be generated.")
+    print()
+
+    if args.dry_run:
+        print("--dry-run: nothing was contacted and nothing was changed.")
+        print("These are the request bodies that would be sent to POST /SASLogon/oauth/clients:\n")
+        for client in clients:
+            print(indent(json.dumps(posit_client_payload(client, scopes, show_secret=False), indent=2), "  "))
+            print()
+        return 0
+
+    token = authenticate(base_url)
+    if token is None:
+        return 1
+
+    failed = []
+    for client in clients:
+        print(f"--- {client.product.name} ---")
+        if not replace_client(base_url, token, posit_client_payload(client, scopes), client.redirect_uri, scopes):
+            failed.append(client)
+        print()
+
+    registered = [client for client in clients if client not in failed]
+    generated = [client for client in registered if client.secret_generated]
+    if generated:
+        print("Generated client secrets. Put them in the .env of sas-posit-env (shown only now):\n")
+        for client in generated:
+            print(f"  {client.product.id_var}={client.client_id}")
+            print(f"  {client.product.secret_var}={client.secret}")
+        print()
+    if registered:
+        origins = callback_origins([uri for client in registered for uri in client.redirect_uri])
+        print("Next: SAS Logon must allow the redirect back to Posit after sign-in. In SAS Environment")
+        print("Manager, Configuration > Definitions > sas.commons.web.security, add these origins to")
+        print(f"form-action in SAS Logon Manager's content-security-policy: {' '.join(origins)}")
+    if failed:
+        print(f"\nFAILED: {', '.join(client.product.name for client in failed)}")
+        return 1
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -370,6 +699,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not _ssl_verify_env:
         print("WARNING: SSL_VERIFY is false, so TLS certificate verification is disabled.\n")
+
+    if args.target != "mcp":
+        return main_posit(args)
 
     if not VIYA_ENDPOINT:
         print("Error: VIYA_ENDPOINT is not set. Check your .env file.")
@@ -389,59 +721,11 @@ def main(argv: list[str] | None = None) -> int:
         print(indent(json.dumps(client_payload(CLIENT_ID, expected), indent=2), "  "))
         return 0
 
-    credentials = get_credentials()
-    if credentials is None:
-        return 1
-    username, password = credentials
-
-    print("\nAuthenticating...")
-    try:
-        token = get_bearer_token(VIYA_ENDPOINT, username, password)
-    except httpx.HTTPError as exc:
-        print(f"Authentication failed: {http_detail(exc)}")
-        return 1
-    print("Authenticated successfully.\n")
-
-    # Registering means deleting and re-creating the client, so a failure part
-    # way through leaves the deployment with no client at all and nobody able
-    # to sign in. This read is the only chance to record what to put back.
-    try:
-        existing = fetch_client(VIYA_ENDPOINT, token, CLIENT_ID)
-    except httpx.HTTPError as exc:
-        print(f"Could not read the existing client: {http_detail(exc)}")
+    token = authenticate(VIYA_ENDPOINT)
+    if token is None:
         return 1
 
-    backup = None
-    if existing is None:
-        print(f"No existing client '{CLIENT_ID}'; registering a new one.\n")
-    else:
-        print(f"Current registration for '{CLIENT_ID}' (about to be replaced):")
-        print(indent(json.dumps(existing, indent=2), "  "))
-        backup = back_up_client(existing)
-        if backup:
-            print(f"  Backed up to {backup}")
-        print()
-
-    try:
-        delete_client(VIYA_ENDPOINT, token, CLIENT_ID)
-    except httpx.HTTPError as exc:
-        print(f"Could not delete the existing client: {http_detail(exc)}")
-        print("Nothing was changed.")
-        return 1
-
-    try:
-        register_client(VIYA_ENDPOINT, token, CLIENT_ID, expected)
-    except httpx.HTTPError as exc:
-        print(f"\nRegistration FAILED: {http_detail(exc)}")
-        if existing is not None:
-            print(
-                f"\nThe old client was already deleted, so '{CLIENT_ID}' does not exist "
-                "right now\nand nobody can sign in until it is registered again."
-            )
-            print_restore_hint(VIYA_ENDPOINT, existing, backup)
-        return 1
-
-    return 0 if verify_registration(VIYA_ENDPOINT, token, CLIENT_ID, expected) else 1
+    return 0 if replace_client(VIYA_ENDPOINT, token, client_payload(CLIENT_ID, expected), expected) else 1
 
 
 if __name__ == "__main__":
